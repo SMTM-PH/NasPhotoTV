@@ -1,0 +1,26 @@
+# Gradle / Android build
+.gradle/
+.kotlin/
+build/
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+
+# Local machine config
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Signing material
+*.jks
+*.keystore
+
+# Python scratch
+__pycache__/
+*.pyc

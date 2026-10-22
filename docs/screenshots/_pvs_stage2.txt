@@ -1,0 +1,648 @@
+package com.nasphoto.tv.ui.viewer
+
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusTarget
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import com.nasphoto.tv.data.model.MediaItem
+import com.nasphoto.tv.data.model.MediaType
+import com.nasphoto.tv.ui.common.MediaImage
+import com.nasphoto.tv.ui.theme.NasPhotoTvTheme
+import com.nasphoto.tv.ui.theme.TvColor
+import com.nasphoto.tv.ui.theme.TvDimen
+import com.nasphoto.tv.ui.theme.TvType
+import kotlinx.coroutines.delay
+import java.time.LocalDate
+
+/** 控制栏无操作自动隐藏时长 */
+private const val ChromeAutoHideMs = 3000L
+
+/** 幻灯片每张停留时长 */
+private const val SlideshowIntervalMs = 5000L
+
+/** 放大平移的步进（0.5 倍：一次方向键平移半张图） */
+private const val PanStep = 0.5f
+
+/**
+ * ================= 全屏图片浏览器（viewer-dev / 现由 viewer-fixer 维护） =================
+ *
+ * ┌ 图片区（默认焦点在这里）
+ * │   ◀ / ▶ 或 PREV/NEXT   上一张 / 下一张（带方向滑动动画，首尾循环）
+ * │   ENTER                视频 → onOpenVideo；图片 → 切换控制栏显隐
+ * │   DPAD_DOWN            进入工具按钮行（同时弹出控制栏）
+ * │   放大模式下 ◀ ▶ ▲ ▼   以 0.5 倍步进平移画面
+ * ├ 按钮行（焦点在按钮之间自由移动）
+ * │   ◀ ▶ 工具之间移动；▲ 回到图片区；ENTER 触发；BACK 关闭
+ * └ 全局
+ *      BACK                 关闭浏览器
+ *      PLAY_PAUSE           幻灯片播放/暂停
+ *      任意方向键            立刻暂停幻灯片
+ *      任意按键              重新显示控制栏（且同一个 key 事件继续执行原动作，不被吞掉）
+ */
+    onClose: () -> Unit,
+    onOpenVideo: (MediaItem, List<MediaItem>) -> Unit = { _, _ -> },
+    modifier: Modifier = Modifier,
+) {
+    // ---- 绌哄垪琛ㄧ洿鎺ラ€€鍑猴紙涓嶈兘宕╋級 ----
+    LaunchedEffect(items.isEmpty()) {
+        if (items.isEmpty()) onClose()
+    }
+    if (items.isEmpty()) {
+        Box(modifier.fillMaxSize().background(TvColor.Bg))
+        return
+    }
+
+    val state = rememberPhotoViewerState(items = items, initialIndex = initialIndex)
+    val filmState = rememberLazyListState()
+    val imageFocus = remember { FocusRequester() }
+    val tabFocus = remember { FocusRequester() }
+
+    val currentOnClose by rememberUpdatedState(onClose)
+    val currentOnOpenVideo by rememberUpdatedState(onOpenVideo)
+
+    /** 鎺у埗鏍忛噷鐨勬寜閽?鑳剁墖鏉℃寔鏈夌劍鐐规椂涓?true锛氭鏃?鈼€ 鈻?浜ょ粰 Compose 鐒︾偣绯荤粺澶勭悊 */
+    var toolbarFocused by remember { mutableIntStateOf(0) }
+    val inToolbar = toolbarFocused > 0
+
+    // ---- 杩涘叆椤甸潰锛氱劍鐐硅惤鍒板浘鐗囧尯 ----
+    LaunchedEffect(Unit) {
+        runCatching { imageFocus.requestFocus() }
+    }
+    /** 控制栏里的按钮/胶片条持有焦点时为 true：此时 ◀ ▶ 交给 Compose 焦点系统处理 */
+    // ---- 鎺у埗鏍?3 绉掕嚜鍔ㄩ殣钘?----
+    LaunchedEffect(state.chromeVisible, state.index, state.infoExpanded, state.slideshowPlaying, state.zoomed) {
+        if (!state.chromeVisible) return@LaunchedEffect
+        delay(ChromeAutoHideMs)
+        // 鐒︾偣鍦ㄦ寜閽涓婃椂涓嶇畻銆屾棤鎿嶄綔銆嶏紝涓嶉殣钘忥紙鍚﹀垯鐢ㄦ埛鐪嬩笉鍒拌嚜宸辨寜鍒板摢浜嗭級
+        if (toolbarFocused == 0 && !state.infoExpanded && !state.slideshowPlaying) {
+            state.hideChromeIfIdle()
+        }
+    }
+
+    // ---- 骞荤伅鐗囪嚜鍔ㄦ挱鏀撅細姣?5 绉掍笅涓€寮狅紝鍒版湯灏惧惊鐜?----
+    LaunchedEffect(state.slideshowPlaying) {
+        // 焦点在按钮行上时不算「无操作」，不隐藏（否则用户看不到自己按到哪了）
+        while (true) {
+            delay(SlideshowIntervalMs)
+            state.advanceSlideshow()
+        }
+    }
+
+    // ---- 鍏ㄥ眬鎸夐敭锛堥瑙堥樁娈碉細浠讳綍鎸夐敭鍏堟樉绀烘帶鍒舵爮锛屽啀鎵ц鍘熷姩浣滐級 ----
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(TvColor.Bg)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // 1) 浠绘剰鎸夐敭閮介噸鏂版樉绀烘帶鍒舵爮 鈥斺€?浣嗕笉鍚炰簨浠?                if (!state.chromeVisible) state.showChrome()
+    // ---- 全局按键（预览阶段：任何按键先显示控制栏，再执行原动作） ----
+                when (event.key) {
+                    Key.Back, Key.Escape -> {
+                        currentOnClose()
+                        true
+                    }
+
+                    Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
+                        state.toggleSlideshow()
+                        true
+                    }
+
+                    else -> false
+                }
+            },
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            // ================= 涓婇儴锛氬浘鐗?瑙嗛鍖猴紙鍗犳弧鍓╀綑楂樺害锛岃儗鏅帇鏆楃儤鎵樺浘鐗囷級 =================
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(StageBackground)
+                    .padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceM),
+                contentAlignment = Alignment.Center,
+            // ================= 上部：图片/视频区（占满剩余高度，背景压暗烘托图片） =================
+                // 鍒囨崲鍔ㄧ敾鍙寘浣忓浘鐗囧眰锛?                // 1) targetState 鐢ㄣ€屽綋鍓嶉」銆嶈繖涓笉鍙彉瀵硅薄锛屽姩鐢婚棴鍖呴噷鎷垮埌鐨勬案杩滄槸杩欎竴寮犲浘锛?                //    涓嶄細鍐嶅嚭鐜般€岄棴鍖呮寜鏃?index 鍙?item 鑰?state.index 宸插彉銆嶇殑閿欎綅锛?                // 2) 娣″叆娣″嚭鐢卞鍣ㄨ繃娓¤礋璐ｏ紝鍐呭閲屼笉鍐嶈嚜宸卞彔鍔?alpha/缂╂斁锛?                //    閬垮厤鍑虹幇杩囦竴娆?alpha 鍋滃湪 0銆佸浘鐗囨案杩滀笉鍙鐨勩€岄粦灞忚垶鍙般€嶃€?                AnimatedContent(
+                    targetState = state.current,
+                    transitionSpec = {
+                        val d = if (state.direction >= 0) 1 else -1
+                        val spec = tween<androidx.compose.ui.unit.IntOffset>(durationMillis = 320, easing = FastOutSlowInEasing)
+                        (slideInHorizontally(spec) { w -> d * w / 3 } + fadeIn(tween(220)))
+                            .togetherWith(
+                                slideOutHorizontally(spec) { w -> -d * w / 3 } + fadeOut(tween(160)),
+                // 切换动画只负责「换页」：
+                // - targetState 改成「当前项」本身，动画闭包里拿到的永远是这一张要显示的图，
+                //   不会再出现「闭包按旧 index 取 item、state.index 已变化」的错位；
+                // - 内容里不再自己叠加 graphicsLayer 的 alpha/缩放动画，
+                //   避免出现过一次 appear 值停在 0 就永远黑屏的舞台。
+                    if (item == null) return@AnimatedContent
+                    StageContent(
+                        item = item,
+                        active = item == state.current,
+                        state = state,
+                        imageFocus = imageFocus,
+                        onOpenVideo = { currentOnOpenVideo(item, items) },
+                        onToggleChrome = { state.toggleChrome() },
+                        onPauseSlideshow = { state.pauseSlideshow() },
+                        onNext = { state.go(1) },
+                        onPrev = { state.go(-1) },
+                        onEnterToolbar = {
+                            state.showChrome()
+                            runCatching { tabFocus.requestFocus() }
+                        },
+                        onFocusChanged = { toolbarFocused += if (it) 1 else -1 },
+                        inToolbar = { inToolbar },
+                    )
+                }
+            }
+            // ================= 下部：控制栏（信息条 + 按钮行 + 胶片条） =================
+            // ================= 涓嬮儴锛氭帶鍒舵爮锛堜俊鎭潯 + 鎸夐挳琛?+ 鑳剁墖鏉★級 =================
+            AnimatedVisibilityCompat(visible = state.chromeVisible) {
+                Column(Modifier.fillMaxWidth()) {
+                    InfoBar(
+                        state = state,
+                        contextTitle = contextTitle,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = TvDimen.ScreenPadding),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ViewerToolBar(
+                            state = state,
+                            onPrev = { state.go(-1) },
+                            onNext = { state.go(1) },
+                            onToggleInfo = { state.toggleInfo() },
+                            onToggleStar = { state.toggleStar() },
+                            onToggleSlideshow = { state.toggleSlideshow() },
+                            onToggleZoom = { state.toggleZoom() },
+                            onClose = { currentOnClose() },
+                        )
+                    }
+                    // 閿綅鎻愮ず锛氬伐鍏锋寜閽í鎺掑嚑涔庡崰婊℃暣涓搴︼紝
+                    // 鍓╀綑绌洪棿鏀句笉涓嬩竴鏁村彞锛屾墍浠ユ斁鍒版寜閽涓嬫柟鐙崰涓€琛屽苟鍙冲榻愩€?                    // 锛堜箣鍓嶅鍦ㄦ寜閽鍚屼竴涓?Row 閲岋紝琚帇鎴愪竴鍒楃珫瀛楀苟婧㈠嚭灞忓箷鍙崇紭锛?                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceXs),
+                    ) {
+                        Spacer(Modifier.weight(1f))
+                        HintText("鏂瑰悜閿?鍒囨崲 路 涓嬮敭 宸ュ叿 路 鍥炶溅 纭 路 杩斿洖 鍏抽棴")
+                    // 键位提示：7 个工具按钮横排几乎占满 1920dp 画布，
+                    // 同一行放不下整句，会被压成一列竖字并溢出右缘 —— 因此独占一行、右对齐。
+                    FilmStrip(
+                        state = state,
+                        listState = filmState,
+                        onSelect = { state.goTo(it) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(104.dp)
+                            .onFocusChanged { toolbarFocused += if (it.isFocused) 1 else -1 },
+                    )
+                    Spacer(Modifier.height(TvDimen.SpaceM))
+                        HintText("方向键 切换 · 下键 工具 · 回车 确认 · 返回 关闭")
+            }
+        }
+
+        // ================= 鍙充笂瑙掞細骞荤伅鐗囩姸鎬?=================
+        // 锛堢浉鍐屼笂涓嬫枃宸茬粡骞惰繘 InfoBar锛屼笉鍐嶅崟鐙诞鍦ㄥ乏涓婅鐩栦綇鏍囬锛?        SlideshowIndicator(
+            state = state,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = TvDimen.ScreenPadding, top = TvDimen.SpaceM),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 鑸炲彴鍐呭锛氬浘鐗囷紙Fit/1:1 缂╂斁骞崇Щ锛夋垨瑙嗛灏侀潰
+// ---------------------------------------------------------------------------
+
+        // ================= 右上角：幻灯片状态 =================
+        // 相册上下文已并入 InfoBar 左侧，不再单独浮在左上角压住标题
+private fun StageContent(
+    item: MediaItem,
+    active: Boolean,
+    state: PhotoViewerState,
+// 舞台内容：图片（Fit/1:1 放大）或视频封面
+    onOpenVideo: () -> Unit,
+    onToggleChrome: () -> Unit,
+    onPauseSlideshow: () -> Unit,
+    onNext: () -> Unit,
+    onPrev: () -> Unit,
+    onEnterToolbar: () -> Unit,
+    onFocusChanged: (Boolean) -> Unit,
+    inToolbar: () -> Boolean,
+) {
+    val zoomed = active && state.zoomed
+    val stage = Modifier
+        .fillMaxSize()
+        .then(if (active) Modifier.focusRequester(imageFocus) else Modifier)
+        .onFocusChanged { onFocusChanged(it.isFocused) }
+        .focusable()
+        .onPreviewKeyEvent { event ->
+            if (!active || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            when (event.key) {
+                Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown,
+                Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Tab, Key.Menu,
+                -> Unit
+                else -> return@onPreviewKeyEvent false
+            }
+            // 鐒︾偣鍦ㄦ寜閽鏃讹紝鏂瑰悜閿氦缁?Compose 鐒︾偣绯荤粺锛堣鎸夐挳涔嬮棿鑳借蛋锛?            if (inToolbar() && event.key != Key.DirectionCenter &&
+                event.key != Key.Enter && event.key != Key.NumPadEnter &&
+                event.key != Key.Tab && event.key != Key.Menu
+            ) {
+                return@onPreviewKeyEvent false
+            }
+
+            // 浠绘剰鏂瑰悜閿細鏆傚仠骞荤伅鐗囷紙鍚屼竴鎸夐敭缁х画鎵ц鍒囨崲鍔ㄤ綔锛?            if (event.key == Key.DirectionLeft || event.key == Key.DirectionRight ||
+                event.key == Key.DirectionUp || event.key == Key.DirectionDown
+            ) {
+                onPauseSlideshow()
+            }
+
+            if (item.isVideo()) {
+                // 瑙嗛锛氬彧鏈?ENTER 鏈夋剰涔?                if (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter) {
+                    onOpenVideo()
+                    return@onPreviewKeyEvent true
+                }
+                return@onPreviewKeyEvent false
+            }
+
+            when (event.key) {
+                Key.DirectionLeft -> {
+                    if (zoomed) state.panBy(-PanStep, 0f) else onPrev()
+                    true
+                }
+
+                Key.DirectionRight -> {
+                    if (zoomed) state.panBy(PanStep, 0f) else onNext()
+                    true
+                }
+
+                Key.DirectionUp -> {
+                    if (zoomed) state.panBy(0f, -PanStep) else true
+                    true
+                }
+
+                Key.DirectionDown -> {
+                    if (zoomed) {
+                        state.panBy(0f, PanStep)
+                        true
+                    } else {
+                        onEnterToolbar()
+                        true
+                    }
+                }
+
+                Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                    onToggleChrome()
+                    true
+                }
+
+                Key.Tab, Key.Menu -> {
+                    onEnterToolbar()
+                    true
+                }
+
+                else -> false
+            }
+        }
+
+    Box(stage, contentAlignment = Alignment.Center) {
+        if (item.isVideo()) {
+            VideoStage(item = item)
+        } else {
+            PhotoStage(item = item, zoomed = zoomed, panX = state.panX, panY = state.panY)
+        }
+    }
+}
+
+/**
+ * 鍥剧墖鑸炲彴銆? *
+ * 娉ㄦ剰锛歁ediaImage 鍐呴儴鏄?`Box(modifier) { Image(Modifier.fillMaxSize()) }`锛? * 灏哄瀹屽叏鐢辫皟鐢ㄦ柟缁欏畾 鈥斺€?璋冪敤鏂逛笉缁欑‘瀹氬昂瀵告椂 Image 浼氶噺鎴?0x0锛? 涓€鐗囬粦锛夛紝
+ * 缁欐灏哄锛堝師鏉ョ殑 960x540dp锛夊張浼氬鑷村浘鐗囧懆鍥寸暀鍑虹伆鑹茶垶鍙板簳銆傛墍浠ヨ繖閲岋細
+ * - 鍥剧墖鏈韩 `aspectRatio(16/9)` + `fillMaxSize`锛氬緱鍒般€屽～婊″彲鐢ㄥ尯鍩熺殑鏈€澶?16:9 鐭╁舰銆嶏紝
+ *   閰嶅悎 ContentScale.Fit锛?080p 绱犳潗姝ｅソ閾烘弧锛岀珫鍥?瓒呭鍥句篃鍦ㄦ鍐呯瓑姣斿眳涓紱
+ * - 澶栭潰鍙敾涓€涓€屽惈鍥剧墖鍖哄煙鐨勫渾瑙掓弿杈广€嶄綔涓鸿垶鍙版劅锛屼笉閾哄簳鑹诧紝閬垮厤鍑虹幇鐏拌壊鐣欑櫧鏉°€? */
+@Composable
+private fun PhotoStage(item: MediaItem, zoomed: Boolean, panX: Float, panY: Float) {
+/**
+ * 图片舞台。
+ *
+ * 重要：MediaImage 内部是 `Box(modifier) { Image(Modifier.fillMaxSize()) }`，
+ * 尺寸完全由调用方给出 —— 不给确定尺寸时 Image 会被量成 0x0（= 一片黑）。
+ * 反过来给死尺寸（原来写死 960x540dp）又会在图片四周留出舞台底色。所以这里：
+ * - `aspectRatio(16f/9f)` + `fillMaxSize`：得到「填满可用区域的最大 16:9 框」，
+ *   配合 ContentScale.Fit，1080p 素材正好铺满，其它比例也在框内等比居中；
+ * - 不铺底色，只在非放大态给图片框一个圆角裁剪，避免出现灰色留白条。
+ */
+                .aspectRatio(16f / 9f)
+                .fillMaxSize()
+                .then(if (zoomed) Modifier else Modifier.clip(RoundedCornerShape(TvDimen.RadiusL))),
+            contentScale = ContentScale.Fit,
+            targetWidth = 1600,
+        )
+        if (zoomed) {
+            ZoomHint(
+                panX = panX,
+                panY = panY,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = TvDimen.SpaceS),
+            )
+        }
+    }
+}
+
+@Composable
+private fun VideoStage(item: MediaItem) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = TvDimen.SpaceXl, vertical = TvDimen.SpaceL),
+        contentAlignment = Alignment.Center,
+    ) {
+        MediaImage(
+            url = item.thumbnailUrl,
+            contentDescription = item.title,
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(TvDimen.RadiusS)),
+            contentScale = ContentScale.Fit,
+            targetWidth = 1280,
+        )
+        // 鎾斁閬僵
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.45f)))),
+        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+        // 播放遮罩
+                    .size(112.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(56.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = "鎾斁瑙嗛",
+                    tint = TvColor.TextPrimary,
+                    modifier = Modifier.size(56.dp),
+                )
+            }
+            Spacer(Modifier.height(TvDimen.SpaceM))
+            Text(
+                text = "鎸夈€屽洖杞︺€嶆挱鏀捐棰?,
+                    contentDescription = "播放视频",
+                fontSize = TvType.Body,
+                fontWeight = FontWeight.Medium,
+            )
+            val dur = formatDuration(item.durationMs)
+            if (dur.isNotEmpty()) {
+                Spacer(Modifier.height(TvDimen.SpaceXs))
+                text = "按「回车」播放视频",
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 灏忛儴浠?// ---------------------------------------------------------------------------
+
+@Composable
+private fun SlideshowIndicator(state: PhotoViewerState, modifier: Modifier = Modifier) {
+    if (!state.slideshowPlaying && !state.chromeVisible) return
+    if (!state.slideshowPlaying) return
+    Row(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(TvDimen.RadiusM))
+            .padding(horizontal = TvDimen.SpaceM, vertical = TvDimen.SpaceS),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.Pause,
+            contentDescription = "骞荤伅鐗囨挱鏀句腑",
+            tint = TvColor.Accent,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(TvDimen.SpaceXs))
+        Text(
+            text = "骞荤伅鐗囨挱鏀句腑 路 鎸夋柟鍚戦敭鏆傚仠",
+            color = TvColor.TextPrimary,
+            fontSize = TvType.Caption,
+        )
+        // 5 绉掕繘搴︽潯
+        SlideshowProgressBar()
+    }
+}
+
+@Composable
+private fun SlideshowProgressBar() {
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            progress.snapTo(0f)
+            progress.animateTo(1f, tween(SlideshowIntervalMs.toInt(), easing = LinearEasing))
+        }
+    }
+    Spacer(Modifier.width(TvDimen.SpaceS))
+    Box(
+        Modifier
+            .width(96.dp)
+            .height(4.dp)
+            .background(TvColor.Divider, RoundedCornerShape(2.dp)),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth(progress.value)
+                .height(4.dp)
+                .background(TvColor.Accent, RoundedCornerShape(2.dp)),
+        )
+    }
+}
+
+// 娉細鍘熸潵鐨勫乏涓婅 ContextBadge 宸插垹闄?鈥斺€?涓婁笅鏂囦俊鎭苟鍏?InfoBar 宸︿晶锛岄伩鍏嶅拰鏍囬鍙犲瓧銆?
+@Composable
+private fun HintText(text: String) {
+    // 鐢佃 10-foot UI锛氭彁绀哄繀椤诲崟琛?+ 闄愬 + 鐪佺暐鍙凤紝
+    // 鍚﹀垯鍦ㄥ墿浣欏搴︿笉瓒虫椂浼氳閫愪釜瀛楃鎹㈣锛屽帇鎴愪竴鍒楃珫瀛楀苟婧㈠嚭鍙崇紭銆?    Text(
+        text = text,
+        color = TvColor.TextTertiary,
+        fontSize = TvType.Tiny,
+// 注：原来的左上角 ContextBadge 已删除 —— 上下文信息并入 InfoBar 左侧，避免和标题叠字。
+        softWrap = false,
+private fun HintText(text: String) {
+    // 电视 10-foot UI：提示必须单行 + 限宽 + 省略号，
+    // 否则在剩余宽度不足时会被逐个字符换行，压成一列竖字并溢出右缘。
+}
+
+@Composable
+private fun ZoomHint(panX: Float, panY: Float, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(TvDimen.RadiusM))
+            .padding(horizontal = TvDimen.SpaceM, vertical = TvDimen.SpaceXs),
+        horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = "1:1 鏀惧ぇ", color = TvColor.Accent, fontSize = TvType.Tiny, fontWeight = FontWeight.SemiBold)
+        Text(
+            text = "鏂瑰悜閿钩绉?路 鍋忕Щ %.1f / %.1f".format(panX, panY),
+            color = TvColor.TextSecondary,
+            fontSize = TvType.Tiny,
+        )
+    }
+}
+
+/** 鍥剧墖鍖虹殑鑳屾櫙锛氫笂娣变笅鐣ヤ寒鐨勭珫鍚戞笎鍙橈紝鍜屽簳閮ㄦ帶鍒舵爮鐨?scrim 琛旀帴锛屽浘鐗囧尯鏈韩涔熸案杩滀笉浼氭槸銆岀函榛戞棤鍐呭銆?*/
+            text = "方向键平移 · 偏移 %.1f / %.1f".format(panX, panY),
+    listOf(TvColor.Bg, Color(0xFF0E1016), TvColor.Bg),
+)
+
+// ---------------------------------------------------------------------------
+// 鍏煎灏忓伐鍏?// ---------------------------------------------------------------------------
+
+/** 图片区背景：上深下略亮的竖向渐变，图片区本身永远不会是「纯黑无内容」的舞台 */
+@Composable
+private fun AnimatedVisibilityCompat(visible: Boolean, content: @Composable () -> Unit) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = visible,
+// 兼容小工具
+        exit = fadeOut(tween(180)) + slideOutVertically(tween(200)) { it / 4 },
+    ) {
+/** AnimatedVisibility 的简易包装（避免与 AnimatedContent 作用域混用） */
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Preview
+// ---------------------------------------------------------------------------
+
+@Preview(widthDp = 1920, heightDp = 1080, showBackground = true, backgroundColor = 0xFF08090D)
+@Composable
+private fun PhotoViewerScreenPreview() {
+    NasPhotoTvTheme {
+        PhotoViewerScreen(
+            items = previewItems(),
+            initialIndex = 1,
+            contextTitle = "澶х悊娲辨捣",
+            onClose = {},
+        )
+    }
+}
+
+@Preview(widthDp = 1920, heightDp = 1080, showBackground = true, backgroundColor = 0xFF08090D)
+@Composable
+private fun PhotoViewerScreenVideoPreview() {
+    NasPhotoTvTheme {
+        PhotoViewerScreen(
+            items = previewItems(),
+            initialIndex = 3,
+            contextTitle = "鏈€杩戞坊鍔?,
+            onClose = {},
+        )
+    }
+}
+
+private fun previewItems(): List<MediaItem> = listOf(
+    MediaItem(
+            contextTitle = "最近添加",
+        dateTaken = LocalDate.of(2025, 5, 12), sizeBytes = 4_865_000L, resolution = "4032x3024",
+        albumId = "a_dali", extension = "JPG", starred = true,
+    ),
+    MediaItem(
+        id = "p2", title = "鑻嶅北浜戞捣", type = MediaType.PHOTO, url = "raw/wall_aurora",
+        dateTaken = LocalDate.of(2025, 5, 13), sizeBytes = 6_120_000L, resolution = "6000x4000",
+        albumId = "a_dali", extension = "HEIC",
+        id = "p1", title = "大理洱海 · 日出", type = MediaType.PHOTO, url = "raw/wall_sunset",
+    MediaItem(
+        id = "p3", title = "娲辨捣杈圭殑鏍堟ˉ", type = MediaType.PHOTO, url = "raw/wall_ocean",
+        dateTaken = LocalDate.of(2025, 5, 14), sizeBytes = 3_210_000L, resolution = "3840x2160",
+        albumId = "a_dali", extension = "JPG",
+        id = "p2", title = "苍山云海", type = MediaType.PHOTO, url = "raw/wall_aurora",
+    MediaItem(
+        id = "p4", title = "娴疯竟瀹跺涵瑙嗛", type = MediaType.VIDEO, url = "raw/video_family",
+        thumbnailUrl = "raw/video_family", durationMs = 96_000L,
+        dateTaken = LocalDate.of(2025, 5, 15), sizeBytes = 48_200_000L, resolution = "1920x1080",
+        id = "p3", title = "洱海边的栈桥", type = MediaType.PHOTO, url = "raw/wall_ocean",
+    ),
+    MediaItem(
+        id = "p5", title = "鏆壊妫灄", type = MediaType.PHOTO, url = "raw/wall_forest",
+        dateTaken = LocalDate.of(2025, 4, 2), sizeBytes = 2_480_000L, resolution = "4032x3024",
+        id = "p4", title = "海边家庭视频", type = MediaType.VIDEO, url = "raw/video_family",
+    ),
+    MediaItem(
+        id = "p6", title = "榛戠櫧琛楁櫙", type = MediaType.PHOTO, url = "raw/wall_mono",
+        dateTaken = LocalDate.of(2025, 3, 21), sizeBytes = 1_980_000L, resolution = "4032x3024",
+        albumId = "a_street", extension = "JPG",
+        id = "p5", title = "暮色森林", type = MediaType.PHOTO, url = "raw/wall_forest",
+    MediaItem(
+        id = "p7", title = "绯栨灉鑹插北璋?, type = MediaType.PHOTO, url = "raw/wall_candy",
+        dateTaken = LocalDate.of(2025, 3, 1), sizeBytes = 3_880_000L, resolution = "4032x3024",
+        albumId = "a_valley", extension = "PNG",
+        id = "p6", title = "黑白街景", type = MediaType.PHOTO, url = "raw/wall_mono",
+)
