@@ -96,7 +96,10 @@ fun NasPhotoTvApp() {
             }
             loadState = LibraryLoad.Loading
             try {
-                val recent = repository.getRecent(24)
+                // 「最近添加」横排与「年·月·日」时间线共用这份数据：
+                // 取 24 会让时间线只剩最近一天、用户永远看不到更早的照片，
+                // 这里按服务端可分页上限取足，保证时间线覆盖整个照片库。
+                val recent = repository.getRecent(1000)
                 val albums = repository.getAlbums()
                 val albumMedia = coroutineScope {
                     albums.map { album ->

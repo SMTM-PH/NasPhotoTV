@@ -46,8 +46,10 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -88,6 +90,8 @@ fun VideoPlayerScreen(
     var positionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
     var buffering by remember { mutableStateOf(true) }
+    /** 非空表示当前素材播放失败，舞台层需要显示可见的错误提示 */
+    var playError by remember { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
     val focusRequester = remember { FocusRequester() }
@@ -125,6 +129,18 @@ fun VideoPlayerScreen(
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
             }
+
+            /**
+             * 解码/网络失败时必须给出可见反馈：4K 60fps HEVC 10bit 这类
+             * 超出设备解码能力的素材会让 ExoPlayer 抛 MediaCodecVideoRenderer
+             * error，若不处理用户只能看到一块永久黑屏。
+             */
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                playError = describePlayerError(error)
+                buffering = false
+                isPlaying = false
+                controlsVisible = true
+            }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
@@ -132,6 +148,7 @@ fun VideoPlayerScreen(
 
     LaunchedEffect(index) {
         val item = items.getOrNull(index) ?: return@LaunchedEffect
+        playError = null
         player.setMediaItem(androidx.media3.common.MediaItem.fromUri(item.url))
         player.prepare()
         player.play()
@@ -200,6 +217,24 @@ fun VideoPlayerScreen(
                         true
                     }
 
+                    // 遥控器没有独立的「下一个」键时，播放失败后用户会被困在
+                    // 同一个视频里；媒体键 NEXT/PREVIOUS 直接切相邻素材。
+                    Key.MediaNext, Key.MediaSkipForward -> {
+                        if (index < items.lastIndex) {
+                            index += 1
+                            controlsVisible = true
+                        }
+                        true
+                    }
+
+                    Key.MediaPrevious, Key.MediaSkipBackward -> {
+                        if (index > 0) {
+                            index -= 1
+                            controlsVisible = true
+                        }
+                        true
+                    }
+
                     else -> false
                 }
             },
@@ -219,7 +254,40 @@ fun VideoPlayerScreen(
             update = { it.player = player },
         )
 
-        if (buffering) {
+        val err = playError
+        if (err != null) {
+            // 解码失败时给出明确原因，避免用户面对一块永久黑屏
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 64.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = "这个视频无法播放",
+                    color = TvColor.TextPrimary,
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = err,
+                    color = TvColor.TextSecondary,
+                    fontSize = 18.sp,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = if (index < items.lastIndex) {
+                        "按遥控器「下一曲」跳到下一个（第 ${index + 1} / ${items.size} 个）"
+                    } else {
+                        "已经是最后一个（第 ${index + 1} / ${items.size} 个），按 BACK 返回"
+                    },
+                    color = TvColor.TextTertiary,
+                    fontSize = 16.sp,
+                )
+            }
+        } else if (buffering) {
             CircularProgressIndicator(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -338,3 +406,35 @@ private fun formatTime(ms: Long): String {
     val s = total % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }
+
+/**
+ * 把 ExoPlayer 的 PlaybackException 翻成电视上看得懂的一句话。
+ *
+ * 原型阶段素材直接来自相机/无人机：4K 60fps HEVC 10bit 这类格式
+ * 在电视盒子与模拟器上常被判为 NO_EXCEEDS_CAPABILITIES，必须让用户
+ * 知道是「设备解不了」而不是「NAS 挂了」。
+ */
+private fun describePlayerError(error: androidx.media3.common.PlaybackException): String =
+    when (error.errorCode) {
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+        -> "设备解码能力不足（可能是 4K / 10bit / 高帧率素材）"
+
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+        -> "这台电视不支持该视频格式"
+
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+        -> "网络连接失败，检查电视与 NAS 是否在同一局域网"
+
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+        -> "NAS 上没有找到这个视频文件"
+
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+        -> "读取视频数据失败"
+
+        else -> error.errorCodeName
+    }

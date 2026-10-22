@@ -7,25 +7,26 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 - 版本：`1.0.0-prototype`（versionCode 1）
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
-- 数据来源：**全部本地 Mock**（`data/mock/MockData.kt` + `res/raw/*.jpg`），不联网
+- 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
 
 ---
 
 ## 0. 快速开始（TL;DR）
 
-```powershell
-# 1. 构建
-cd E:\NasPhotoTV
-.\gradlew.bat :app:assembleDebug
+```bash
+# 1. 构建（Windows 用 gradlew.bat，Linux/macOS 用 ./gradlew）
+./gradlew :app:assembleDebug
 
 # 2. 安装到已连接的电视 / 模拟器
-E:\Android\Sdk\platform-tools\adb.exe install -r app\build\outputs\apk\debug\app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 # 3. 启动（Activity 名与包名一致：com.nasphoto.tv/.MainActivity）
-E:\Android\Sdk\platform-tools\adb.exe shell am start -n com.nasphoto.tv/.MainActivity
+adb shell am start -n com.nasphoto.tv/.MainActivity
 ```
 
-APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 16 MB，含 9 张占位图）。
+APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 21 MB，含 Media3/OkHttp/Coil）。
+
+首次运行需要在设置页填 NAS 地址（默认 `5667`）+ 账号密码，或等局域网自动发现。
 
 ---
 
@@ -35,7 +36,7 @@ APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 16 MB，含 9 张
 |---|---|---|
 | **媒体库 / 相册浏览** | `ui/library/` | 顶栏（Logo + NAS 状态点 + 5 个 Tab + 搜索/屏保/设置按钮）；「全部照片」Tab 有 Hero 大图 + 最近添加横排 + 相册横排；「年 · 月 · 日」Tab 四级下钻（年 → 月 → 日 → 当天媒体网格）；「相册」Tab 4 列网格；「最近添加」Tab 6 列网格；「收藏 · 人物 · 地点」Tab（收藏网格 + 人物/地点/回忆横排）；相册详情页（返回按钮 + 6 列媒体网格）；各层级空状态 |
 | **全屏看图** | `ui/viewer/` | **图片优先铺满整屏**（无常驻侧栏，信息都是瞬态浮层）；左上 LIVE 徽标 + 控制栏可见时的状态句/来源/拍摄/标题/序号；`UP` 展开尺寸/文件/ID；左右切换（循环）+ 方向滑动动画；7 个工具按钮（上一张/下一张/信息/收藏/幻灯片/放大查看/关闭）；缩略图胶片条；幻灯片自动播放（5s/张，方向键暂停）；2× 放大 + 方向键平移；视频项显示封面 + ▶ |
-| **视频播放（模拟）** | `ui/video/` | 16:9 画面窗 + 控制层 3 秒自动隐藏；播放/暂停；进度条 + 伪缓冲；快进快退 ±10s + OSD；上一个/下一个（跳过图片项）；字幕开关（样片字幕）；循环；右侧信息面板（MENU）；播完 5 秒倒计时自动连播 / 结束面板；媒体键完整映射；**无真实解码**（详见 §8） |
+| **视频播放** | `ui/video/` | **真实 Media3 ExoPlayer 解码**，走带 AccessToken 的 OkHttp 数据源串流 NAS 原片；全屏播放 + 控制层 3 秒自动隐藏；播放/暂停；进度条 + 当前/总时长；快进快退 ±10s；媒体键 `NEXT/PREVIOUS` 切换视频；播完自动连播；**解码失败显示可见错误原因**（4K/10bit 超规格等，详见 §8） |
 | **屏保待机显示** | `ui/screensaver/` | 5 种时钟（CINEMA 巨幕/FLIP/THIN/MINIMAL/DATE_FOCUS）× 3 种背景（照片轮播/极光动态/纯黑极简）；农历干支小字；**前景只有时钟与退出提示，不显示任何图片信息**（标题、拍摄日期、分辨率、地点都不上屏）；Ken Burns 推拉；像素位移 + 夜间呼吸防烧屏；任意键退出 |
 | **设置** | `ui/settings/` | 两栏（左列表 420dp + 右面板）：NAS 连接（协议/地址/端口/账号/共享目录/测试连接/重扫）、屏保与待机（10 项 + 预览）、视频播放（4 项）、关于（版本/引擎/设备/设计说明/恢复默认）；右栏随聚焦项切换为 连接拓扑 / 屏保实时小预览 / 播放摘要 / 关于 |
 
@@ -70,10 +71,10 @@ APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 16 MB，含 9 张
 
 | 项 | 要求 | 本机实测 |
 |---|---|---|
-| JDK | **17+**（工程 `sourceCompatibility/targetCompatibility = 17`、`jvmTarget = 17`） | JDK 24.0.1 可用（Gradle 8.10.2） |
+| JDK | **17+**（工程 `sourceCompatibility/targetCompatibility = 17`、`jvmTarget = 17`） | JDK 17 (Temurin) 实测通过 |
 | Gradle | 用仓库自带 Wrapper（**8.10.2**），不要用全局 gradle | 已含 `gradle/wrapper/gradle-wrapper.jar` |
-| Android SDK | **compileSdk 35**（platforms;android-35 + build-tools），路径写在 `local.properties` 的 `sdk.dir` | `E:\Android\Sdk` |
-| 运行设备 | Android **8.0（API 26）及以上**；Android TV / Google TV / 电视盒子；`android.software.leanback` 为 **required**，touchscreen 非必需 | 当前连接的 `emulator-5554` 是手机镜像（API 35），也能跑，见 §3.4 |
+| Android SDK | **compileSdk 35**（platforms;android-35 + build-tools 34/35），路径写在 `local.properties` 的 `sdk.dir` | 已用 build-tools 34/35 实测 |
+| 运行设备 | Android **8.0（API 26）及以上**；Android TV / Google TV / 电视盒子；`android.software.leanback` 为 **required**，touchscreen 非必需 | Android TV 官方镜像（API 36 / 1920×1080 / density 320）实测通过 |
 
 Manifest 已声明：`leanback` required + `touchscreen` not required + `LEANBACK_LAUNCHER` 与 `LAUNCHER` 双入口、`android:banner`、
 `INTERNET` / `ACCESS_NETWORK_STATE` / `WAKE_LOCK` 权限、`usesCleartextTraffic="true"`、`screenOrientation="landscape"`、
@@ -81,34 +82,45 @@ Manifest 已声明：`leanback` required + `touchscreen` not required + `LEANBAC
 
 ### 3.2 构建
 
-```powershell
-# Debug（推荐）
-.\gradlew.bat :app:assembleDebug
-# 只验证编译（最快，团队协作时用这个）
-.\gradlew.bat :app:compileDebugKotlin
+```bash
+# Debug（推荐）—— Windows 用 gradlew.bat，Linux/macOS 用 ./gradlew
+./gradlew :app:assembleDebug
+# 只验证编译（最快）
+./gradlew :app:compileDebugKotlin
 # Release（未签名、未混淆，仅供体积评估）
-.\gradlew.bat :app:assembleRelease
+./gradlew :app:assembleRelease
+```
+
+内存受限的机器（如 8 GB NAS / 小主机）建议显式压低堆与并行度，否则 Gradle daemon 可能被 OOM kill：
+
+```bash
+./gradlew --no-daemon --no-parallel \
+  -Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=512m" :app:assembleDebug
 ```
 
 产物路径：
 - Debug：`app/build/outputs/apk/debug/app-debug.apk`
 - Release：`app/build/outputs/apk/release/app-release-unsigned.apk`
 
-> ⚠ 团队协作注意：**同一时刻只跑一个 gradle**。契约约定用目录锁 `E:\NasPhotoTV\.buildgate` 互斥，
-> 跑完务必删除该目录，否则其他成员的编译会一直等待。
+> ⚠ 团队协作注意：**同一时刻只跑一个 gradle**（多人/多 Agent 并行编译会争抢 `~/.gradle` 与模块构建目录）。
+> 需要互斥时用一个简单的目录锁（如 `mkdir .buildgate`）串行化，跑完删掉即可。
 
 ### 3.3 安装到电视 / 盒子
 
-```powershell
+```bash
 # 第一次连接（电视需在 设置 → 系统 → 开发者选项 中开启 ADB 调试）
 adb connect 192.168.1.50:5555
 adb devices                      # 确认设备状态为 device
 
 # 安装 / 覆盖安装
-adb install -r app\build\outputs\apk\debug\app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 # 启动
 adb shell am start -n com.nasphoto.tv/.MainActivity
+
+# 遥控器按键（无真机时也能验证焦点导航）
+adb shell input keyevent KEYCODE_DPAD_RIGHT
+adb shell input keyevent KEYCODE_DPAD_CENTER
 
 # 看崩溃日志
 adb logcat -s AndroidRuntime:E
@@ -116,36 +128,46 @@ adb logcat -s AndroidRuntime:E
 
 也可以用 U 盘 + 电视自带「文件管理」安装 APK（需允许安装未知来源应用）。
 
-### 3.4 模拟器（AVD）
+### 3.4 模拟器 / 无头验证
 
-工程自己包含 `@Preview(widthDp = 1920, heightDp = 1080)`（媒体库首页/相册/智能/空状态、看图页 ×2、屏保 ×4 等），
-**最省事的验证方式是在 Android Studio 里直接看 Preview**，不依赖任何设备。
+工程自带 `@Preview(widthDp = 1920, heightDp = 1080)`（媒体库/看图/屏保/设置等），
+**最省事的是在 Android Studio 里直接看 Preview**，不依赖任何设备。
 
-> ⚠ 关于 `android.software.leanback`：Manifest 里它是 `required="true"`，而**普通手机 AVD 镜像不声明 leanback**，
-> 直接 `adb install` 可能报 `INSTALL_FAILED_MISSING_SHARED_LIBRARY` / 不满足特性。当前机器上的两个 AVD
-> （`Pixel_8_API_35`、`Finexy_API_35_Clean`，均为 `google_apis/x86_64` 手机镜像）就是这种情况。
-> 原型的处理办法与正式构建一致，见下表。
+> ⚠ Manifest 里 `android.software.leanback` 是 `required="true"`，**手机镜像不声明 leanback**，
+> 直接 `adb install` 会被特性校验拒绝。请用 TV 镜像（下表第一行）。
 
 | 场景 | 做法 |
 |---|---|
-| **推荐：Android TV 模拟器** | SDK Manager 安装 `system-images;android-35;android-tv;x86`（TV 镜像自带 leanback），用它新建 AVD；或装 Android Studio 的 **TV 模板**（分辨率 1920×1080，density 320 → 1dp ≈ 1px，与设计稿 1:1） |
-| **只有手机 AVD** | 把 `app/src/main/AndroidManifest.xml` 里 `android.software.leanback` 的 `android:required` 改成 `false`（一行改动，仅本地验证用，**不要提交**），然后 `adb install -r` |
-| **真机电视** | 无需任何改动，直接安装 |
+| **推荐：Android TV 镜像** | SDK Manager 安装 `system-images;android-36;android-tv;x86_64`（或 android-35 的 TV 版），新建 AVD 时选 `tv_1080p` 设备模板（1920×1080 / density 320 → 1dp ≈ 1px，与设计稿 1:1） |
+| **只有手机 AVD** | 临时把 `android.software.leanback` 的 `required` 改 `false`（仅本地验证，**不要提交**） |
+| **真机电视** | 无需改动，直接安装 |
 
-手机镜像下 App 仍是横屏铺满的电视版布局，只是**按键要映射**：
+#### 无头（headless）跑 TV 镜像的四个关键参数
 
-```powershell
-# 方向键 = 键盘方向键；确认 = Enter；返回 = Esc / 遥控器 Back
-# 物理键盘映射（AVD 默认就支持）：方向键、Enter、Esc、Tab(=菜单键)
+在没有显示器的服务器/NAS 上用 `-no-window` 跑 TV 镜像时，下面四个参数缺一个就会出现**周期性 SIGSEGV（exit 139）**，
+表现为「跑几分钟容器就退出」，很容易被误判成内存不足：
+
+```bash
+emulator -avd tv36 -no-window -no-audio -no-snapshot \
+  -gpu swangle_indirect \      # swiftshader_indirect 在渲染 Compose 模糊/辉光时会崩
+  -feature -ModemSimulator \   # 默认 modem 模拟器会因容器内 IPv6 解析失败而崩
+  -timezone Asia/Shanghai \    # 否则屏保时钟差 8 小时（系统时区为 UTC）
+  -cores 2 -memory 1536
+# 容器还需 --shm-size=2g：Docker 默认 64MB 不够 1080p 的帧缓冲
 ```
 
-仿真页的"方向键"在 AVD 上可以只用键盘，也可以用 `adb shell input keyevent`：
+#### 用 adb 当遥控器
 
+```bash
+adb shell input keyevent 19   # UP
+adb shell input keyevent 20   # DOWN
+adb shell input keyevent 21   # LEFT
+adb shell input keyevent 22   # RIGHT
+adb shell input keyevent 23   # DPAD_CENTER（确认）
+adb shell input keyevent 4    # BACK
+adb shell input keyevent 127  # MENU
+adb shell input keyevent 88   # MEDIA_NEXT（切下一个视频）
 ```
-19/20/21/22 = 上/下/左/右     23 = DPAD_CENTER     66 = ENTER     4 = BACK     127 = MENU
-```
-
----
 
 ## 4. 遥控器操作总表
 
@@ -196,26 +218,23 @@ adb logcat -s AndroidRuntime:E
 
 ### 4.3 视频播放 — `ui/video/VideoPlayerScreen`
 
-形状：**16:9 画面窗**（`aspectRatio(16/9)` + `fillMaxHeight(0.78f)`，1920×1080 上约 1478×831，上下留黑边），
-所有控制元素都在画面窗内。焦点由 `VideoPlayerState.focusSlot` 驱动（不参与 Compose 焦点链，避免双触发），
-分区顺序：**顶部返回 → 进度条 → 中央播放键 → 底部按钮行**，上下穿梭时记住每个分区上次的位置。
+形状：**全屏播放**（`Box` 铺满，视频用 `PlayerView` + `RESIZE_MODE_FIT` 自适应），控制层是覆盖在画面上的瞬态浮层。
 
 | 键 | 控制层显示中 | 控制层隐藏时 |
 |---|---|---|
-| `UP` / `DOWN` | 在 4 个分区之间移动焦点 | 只唤出控制层 |
-| `LEFT` / `RIGHT` | 底栏按钮行内移动：`快退10s → 播放/暂停 → 快进10s → 上一个 → 下一个 → 字幕 → 循环 → 信息`；**焦点在进度条上时 = 快退/快进 10 秒** | 快退 / 快进 10 秒（并弹出 OSD） |
-| `ENTER` / `DPAD_CENTER` | 执行当前焦点控件（返回 / 进度条与播放键 = 播放暂停 / 各按钮） | 播放 / 暂停 |
-| `MENU` | 打开 / 关闭右侧信息面板 | 同左 |
-| `BACK` / `ESC` | 信息面板开着 → 先关面板；否则关闭播放器 | 关闭播放器 |
-| 媒体键 | `PLAY/PAUSE/PLAY_PAUSE` 播放暂停；`FAST_FORWARD/REWIND` ±10 秒；`NEXT/PREVIOUS` 切换视频 | 同左 |
+| `UP` / `DOWN` | 唤出 / 隐藏控制层 | 唤出控制层 |
+| `LEFT` / `RIGHT` | 快退 / 快进 10 秒（并唤出控制层） | 同左 |
+| `ENTER` / `DPAD_CENTER` | 播放 / 暂停 | 播放 / 暂停 |
+| `BACK` / `ESC` | 关闭播放器，返回媒体库 | 同左 |
+| 媒体键 | `PLAY/PAUSE/PLAY_PAUSE` 播放暂停；`NEXT` / `SKIP_FORWARD` 下一个视频；`PREVIOUS` / `SKIP_BACKWARD` 上一个视频 | 同左 |
 | 任意按键 | 每次操作都会重启控制层 3 秒倒计时 | 同上 |
 
 其他行为：
-- 控制层在 **3 秒** 无操作后自动隐藏（信息面板 / 结束面板打开时不隐藏）；
-- 画面窗顶部条：`←` 返回按钮（52dp 圆形，聚焦放大 1.12）+ 标题 + `来自 <contextTitle> · 第 n / m 集` + 右上角 `NAS 直连 · 原片` / `NAS 转码 · 1080p`（随 `PlaybackSettings.transcode`）；
-- 底栏按钮：`快退 10s` `播放/暂停` `快进 10s` ｜ `上一个` `下一个`（无上/下一个时置灰不可用）｜ `字幕 开/关` `循环 开/关` ｜ 右侧 `信息`；
-- 进度条：已播放青色渐变 + 已缓冲白 24%（伪值，取 60% 与当前进度的较大者）；聚焦时轨道加高 12→20dp 并加白描边；
-- 播完分支：`autoPlayNext && 有下一个` → 右下角倒计时角标「即将播放：xxx · N 秒后自动连播 · 回车取消」（`ENTER` 或 `信息` 键取消）；`loopMode` → 从头播；否则 → **结束面板**「重新播放 / 下一个 / 返回媒体库」（`◀ ▶` 选择、`ENTER` 确认、`BACK` 关闭）；
+- 控制层在 **3 秒** 无操作后自动隐藏；
+- 顶部条：标题 + `来自 <contextTitle>` + 右上角 `第 n / m 个`；
+- 底部：进度条（已播放青色）+ 当前时间 / 总时长 + 右侧按键提示；
+- 播完分支：`autoPlayNext && 有下一个` → 自动切下一个；否则停下并显示控制层；
+- **解码失败**：`onPlayerError` 会显示「这个视频无法播放」+ 具体原因（设备解码能力不足 / 格式不支持 / 网络失败 / 文件不存在），并提示可用「下一曲」跳过；这对 4K 60fps HEVC 10bit 等超出电视解码能力的素材尤其重要；
 - 列表里混排图片：进入播放器时若初始项是图片，直接把列表交给图片浏览器（`onOpenPhoto`）；
 - `items` 为空 → 直接 `onClose()`。
 
@@ -260,7 +279,7 @@ adb logcat -s AndroidRuntime:E
 ## 5. 目录结构
 
 ```
-E:\NasPhotoTV
+<仓库根目录>
 ├─ CONTRACT.md                     团队协作契约（只读参考）
 ├─ README.md                       本文
 ├─ DESIGN.md                       设计规范（token / 布局 / 焦点 / 屏保 / 动效 / 可访问性）
@@ -298,13 +317,7 @@ E:\NasPhotoTV
          │  ├─ viewer/ViewerState.kt             PhotoViewerState：切换/控制栏/收藏/缩放平移/幻灯片
          │  ├─ viewer/ViewerToolBar.kt           7 个工具按钮 + KeyHint 键位胶囊
          │  ├─ viewer/ViewerInfoBar.kt           左上瞬态浮层 HUD（LIVE 徽标 + 来源/拍摄/标题/序号）+ 缩略图胶片条
-         │  ├─ video/VideoPlayerScreen.kt        播放器页：16:9 画面窗 + 控制层 + 面板装配
-         │  ├─ video/VideoKeyHandler.kt          按键映射（分区焦点 moveVertical/moveHorizontal、结束面板、媒体键）
-         │  ├─ video/VideoPlayerState.kt         播放状态机（100ms 步进模拟）+ 列表查找工具 + 时长格式化
-         │  ├─ video/VideoControls.kt            顶部条 / 中央播放键 / 进度条 / 底栏按钮
-         │  ├─ video/VideoStage.kt               画面层：封面 + 暗角 + 压暗 + 字幕条 + 快进 OSD + 正在播放角标
-         │  ├─ video/VideoOverlays.kt            右侧信息面板 / 自动连播倒计时角标 / 结束面板
-         │  ├─ video/TvFocusSurface.kt           播放器专用焦点外框（页面状态驱动，1.08/1.12 + 白描边 + 青光晕）
+         │  ├─ video/VideoPlayerScreen.kt        播放器页：全屏 Media3 播放 + 顶部标题条 + 底部进度/播放键 + 解码失败提示
          │  ├─ screensaver/ScreensaverScreen.kt  屏保入口：背景/遮罩/防烧屏容器/时钟前景/按键退出（不显示图片信息）
          │  ├─ screensaver/ScreensaverClock.kt   5 种时钟 + GlassCard + EntranceFade
          │  ├─ screensaver/ScreensaverBackground.kt 照片轮播 + Ken Burns、极光、纯黑、可读性遮罩
@@ -321,12 +334,17 @@ E:\NasPhotoTV
             ├─ model/Models.kt                   ★ MediaItem / Album / AlbumType / MediaType / NasConnection /
             │                                       ScreensaverSettings / PlaybackSettings / WeatherInfo
             ├─ MediaRepository.kt                ★ 仓库接口（唯一需要替换的抽象边界）
-            ├─ RepositoryProvider.kt             RepositoryProvider.current + MockMediaRepository 实现
+            ├─ FnOsMediaRepository.kt            真实飞牛相册实现（时间线/相册/人物/视频串流）
             ├─ SettingsStore.kt                  ★ 全局设置（Compose State）+ cycle* 便捷方法 + SharedPreferences persist/restore
-            └─ mock/
-               ├─ MockData.kt                    20 项 recent / 11 个相册 / 每个相册 9~24 项；screensaverPool()
-               ├─ MockWeatherProvider.kt         按小时稳定的 3 组天气
-               └─ MockMedia.kt                    res/raw 解码 + LruCache(24) + 降采样；AppContextHolder
+            ├─ MediaCache.kt                    最近一次拉取快照（设置页屏保预览/播放摘要读它）
+            ├─ FavoritesStore.kt                收藏（内存态，见 §8）
+            ├─ AppContextHolder.kt              全局 applicationContext
+            └─ fn/
+               ├─ FnOsApi.kt                    WSS 握手 + 加密登录 + 签名请求
+               ├─ FnOsTransport.kt              OkHttp 单例（TLS/TOFU/cookie/token 注入）+ ExoPlayer 数据源
+               ├─ FnOsCrypto.kt FnOsSigner.kt FnOsReqId.kt   加密/签名/reqid
+               ├─ FnOsTofu.kt                   首次信任 + 指纹变化检测
+               └─ LanNasDiscovery.kt            局域网 /24 扫描 + 证书识别
 ```
 
 ★ = 公共基础文件（契约规定不要改），也是接入真实 NAS 时真正要动的边界。
@@ -352,118 +370,28 @@ E:\NasPhotoTV
 
 ---
 
-## 6. 接入真实 NAS 的路线图
+## 6. 真实 NAS 接入状态（已实现）
 
-原型的设计前提：**所有"可能变成网络/解码"的地方都被收在 3 个边界后面**，所以接通真机不需要重写 UI。
+> 本章原为「接入路线图」，数据层与播放层现已全部落地，故改写为**实现说明**。
 
-```
-        UI 层（一字不改）
-  LibraryScreen / PhotoViewerScreen / VideoPlayerScreen / ScreensaverScreen / SettingsScreen
-        │                     │                          │
-        │ 数据              │ 图片解码               │ 视频解码
-        ▼                     ▼                          ▼
-  ① MediaRepository      ② MediaImage             ③ VideoStage
-   RepositoryProvider     (换 Coil)               (换 Media3 ExoPlayer)
-```
+### 6.1 已实现
 
-### 步骤 0：为什么原型这样设计（设计取舍）
-
-| 决策 | 原型做法 | 原因 | 接真机时的收益 |
-|---|---|---|---|
-| 数据抽象 | `MediaRepository` 接口 + `RepositoryProvider.current` | UI 只依赖接口；Mock 与真实实现可在一行内切换 | 只要实现接口，5 个页面零改动 |
-| `MediaItem.url` 是"可加载地址" | Mock 用 `"raw/wall_aurora"`，注释已约定真实环境为 `http(s)://` 或 `file://` | 加载层只认字符串，协议细节被挡在数据层 | URL 只换值，不改类型 |
-| 图片加载 | 自己写的 `MediaImage` + `MockMedia`（`BitmapFactory` + `LruCache`） | 原型只依赖本地资源，不加 Coil 依赖、构建更快、离线可跑 | 只替换 `MediaImage` 内部实现，调用点全不动 |
-| 播放 | 100ms 时间步进模拟，`VideoPlayerState` 里只有 `positionMs/playing` 两个"播放器真相" | 没有 media3 依赖；先把手感与按键验证完 | 把这两个字段换成 `Player` 的 `stateFlow` 收集即可 |
-| 设置 | `SettingsStore` 用 `mutableStateOf`，可选 `persist()/restore()` | 原型不强制落盘，重启回默认值 | 换成 DataStore/加密存储时只改这一个文件 |
-| 网络 | 全 App 零网络请求 | 演示不会被网络状态干扰 | 新增依赖集中在数据层三个文件 + Manifest |
-
-### 步骤 1：实现 `MediaRepository`（本项目最关键的一步）
-
-接口（`data/MediaRepository.kt`，全部 `suspend`，注释要求真实实现放在 `Dispatchers.IO`）：
-
-```kotlin
-interface MediaRepository {
-    val connection: NasConnection
-    suspend fun ping(): Boolean
-    suspend fun getRecent(limit: Int = 20): List<MediaItem>
-    suspend fun getAlbums(): List<Album>
-    suspend fun getMedia(albumId: String): List<MediaItem>
-    suspend fun search(query: String): List<MediaItem>
-    suspend fun getScreensaverPhotos(): List<MediaItem>   // 默认实现：getRecent(50) 里挑 PHOTO
-    suspend fun getMediaItem(id: String): MediaItem?      // 默认返回 null
-}
-```
-
-三种实现建议 **按优先级**（家庭 NAS 场景 WebDAV 命中率最高、依赖最轻）：
-
-| 实现 | 协议 / 依赖 | 映射方式 | 适用 / 注意 |
-|---|---|---|---|
-| `WebDavMediaRepository` | OkHttp + `PROPFIND`（可自写 XML 解析，或引入 sardine/jackrabbit-webdav） | 目录 → `Album`（`AlbumType.FOLDER`，`subtitle` 放路径）；目录下文件 → `MediaItem`；`getcontentlength`→`sizeBytes`、`getlastmodified`→`dateTaken`、扩展名→`extension`/`type` | 群晖/威联通/极空间/Nextcloud 都开 WebDAV；HTTP 走 80/443，穿 NAT 简单；`Range` 请求支持流式播放 |
-| `SmbMediaRepository` | jcifs-ng（`smb://user@host:445/photo`） | 同上，`SmbFile.listFiles()` | NAS 原生协议、速度最好；Android 上要自己管 NetBIOS/签名/guest，库维护活跃度需评估；**建议与步骤 3 的 SMB 流式播放一起做** |
-| `JellyfinMediaRepository` | Jellyfin REST API（`/Users/{u}/Items`、`/Items/{id}/Images/Primary`） | `Movie/Video/Photo` → `MediaItem`；`getAlbums` 用媒体库/Library | 已有 Jellyfin 服务端的家庭最省事：缩略图、转码、封面、进度全都有；**但要接受"再部署一个服务端"** |
-| `LocalFolderMediaRepository`（补充） | `MediaStore` / SAF / 已挂载 SMB 的 `file://` | — | 盒子/部分电视插 U 盘或系统级挂载的情况，零网络依赖，适合当兜底 |
-
-实现要点：
-- `ping()`：一次轻量调用（PROPFIND 目录深度 0 / SMB 列目录）计时，写回 `SettingsStore.reportNasResult(latencyMs)`（该方法已存在但**目前无人调用**，是给真实实现准备的钩子）；
-- `search(query)`：拿不到服务端搜索就用本地索引（见步骤 6），日期/文件名/类型匹配；
-- 错误处理：抛出可区分的 `NasException`（网络不可达 / 认证失败 / 路径不存在），UI 用空状态 + 提示承接（现有空状态文案已经写了「检查 NAS 连接」）；
-- **切换方式**：
-
-```kotlin
-// data/RepositoryProvider.kt
-val current: MediaRepository by lazy { MockMediaRepository() }   // 改成 ↓
-// val current: MediaRepository by lazy { WebDavMediaRepository(SettingsStore.nas) }
-```
-或者按设置页开关/构建变体（`BuildConfig.DEBUG`）二选一。
-
-> ⚠️ 当前外壳 `NasPhotoTvApp` 直接把 `MockData` 同步填进 `LibraryState`，并把 `MockData.screensaverPool()` / `MockWeatherProvider.current()` 传屏保。
-> 接真机的第一步其实是：外壳改成 `LaunchedEffect { state = repo.getRecent() ... }` 的异步装配（页面签名不用变，`LibraryState` 字段也不用变）。
-> 这一步是**唯一**需要 Lead 动的"接线"改动。
-
-### 步骤 2：图片加载换成 Coil
-
-- 替换文件：**只有 `ui/common/MediaImage.kt`**（把 `MockMedia.loadImage` 换成 `AsyncImage(model = url, contentScale, placeholder/failure = Placeholder(colorForUrl(url)))`）。
-  所有调用方（库卡片 / Hero / 看图 / 屏保 / 胶片条）签名不变。
-- 已为 Coil 预留的参数：`targetWidth`（缩略图/大图分级）、`cornerRadiusDp`、`ContentScale`、`contentDescription`。
-- 建议配置：`crossfade(180)`、`diskCache` 独立文件缓存（限制 512MB~1GB）、`memoryCache` 按 1/8 堆、
-  `ImageRequest.size` 用 `targetWidth` 限定（电视 1080p 屏不需要 6000px 原图）；
-- 屏保请用**中尺寸**（现在传 `targetWidth = 1280`），不要原图直读（见步骤 7 性能）。
-- HEIC：Coil 在 API 28+ 系统解码器支持 HEIC/HEIF，API 26/27 需要额外解码器或服务端转 JPG（见 §7 量产清单与 §8 已知限制）。
-
-### 步骤 3：视频播放换成 Media3 ExoPlayer
-
-- 替换文件：`ui/video/VideoStage.kt`（把 `MediaImage` 换成 `AndroidView { PlayerView(it) }`）+ `VideoPlayerState.kt`（`positionMs/playing` 改为收集 `Player` 状态）。
-- 数据源：
-  - **HTTP/WebDAV 直链**：`DefaultMediaSourceFactory` + `Datasource.Factory` 直接用，最简单、支持 Range 拖动；
-  - **SMB**：ExoPlayer 没有官方 SMB DataSource，可选 ① 服务端 WebDAV/HTTP 暴露同一文件（推荐）② 用 jcifs-ng 写自定义 `DataSource`（需要支持 seek，实现成本高）③ 先落地到本地缓存再播。
-- 转码（`PlaybackSettings.transcode`）：如果 NAS 上有 Jellyfin/Plex，直接把 `MediaItem.url` 指向它的 HLS/直链即可；否则在 NAS 侧用 ffmpeg 转（盒子解码能力有限时是唯一解）。
-- 字幕：ExoPlayer `addTextOutput` / `MediaItem.SubtitleConfiguration`（`.srt/.ass` 需转换或服务端烧录）。
-- 现有 UI 已经处理了：伪缓冲条（改成 `bufferedPercentage`）、快进快退 ±10s（`seekTo`）、自动连播、循环、字幕开关。
-
-### 步骤 4：缩略图与元数据缓存
-
-| 缓存对象 | 位置 | 建议 |
+| 能力 | 位置 | 说明 |
 |---|---|---|
-| 缩略图（列表/胶片条） | 本地磁盘 | 统一生成 ~320px 缩略图（前端生成或 NAS 侧 `thumb` 接口），Coil disk cache 即可；**不要用原图缩放列表** |
-| 目录列表 / 相册 | 内存 + 磁盘 JSON | 冷启动先渲染上次快照，再后台刷新（避免电视开机转圈） |
-| EXIF（拍摄时间、分辨率、GPS） | 磁盘 DB | Room 表 `media(id, dateTaken, w, h, size, ext, albumId, starred, exifJson)` |
-| 收藏 / 星标 | 本地 DB + NAS 侧 `.nasPhotoTvStar` 文件或扩展属性 | 写回 NAS 才能多设备同步（见 §7「多 NAS 账户」） |
+| 局域网自动发现 | `data/fn/LanNasDiscovery.kt` | 扫本机所在 /24 网段的 5667 端口，按 TLS 证书里的 `O=fnOS` 识别飞牛设备（兼容自签证书），只读证书不发凭据 |
+| WSS 加密登录 | `data/fn/FnOsApi.kt` | `wss://<host>:5667/websocket?type=main` → `util.crypto.getRSAPub` 取 RSA 公钥与 `si` → AES-CBC 加密 `user.login` → 拿 AccessToken |
+| 签名 HTTP | `data/fn/FnOsSigner.kt` `FnOsCrypto.kt` `FnOsReqId.kt` | 每个业务请求带签名与递增 reqid |
+| TOFU 证书信任 | `data/fn/FnOsTofu.kt` | 首次见到的证书指纹落盘，变化时提示并可重试 |
+| AccessToken 注入 | `data/fn/FnOsTransport.kt` | OkHttp 拦截器统一注入；Coil 图片与 ExoPlayer 视频共用同一客户端 |
+| 相册数据 | `data/FnOsMediaRepository.kt` | 时间线 `gallery/getList`、相册 `album/list` + `album/photos`、共享相册、AI 人物、视频串流 `/p/api/v1/stream/v/<id>` |
+| 真实解码 | `ui/video/VideoPlayerScreen.kt` | Media3 ExoPlayer + 带 token 的 OkHttp 数据源；解码失败显示可见原因 |
 
-### 步骤 5：局域网发现（DLNA/SSDP/NSD）
+### 6.2 尚未实现（详见 §8）
 
-- 现在 `NasConnection` 是手填（`host/port/username/sharePath`，`displayPath` 生成 `smb://media@192.168.1.20:445/photo`）。
-- 建议：设置页「测试连接」旁边加「扫描局域网」→ ① `NsdManager` 发现 `_webdav._tcp` / `_smb._tcp` / `_http._tcp`；② SSDP `M-SEARCH` 找 `upnp:rootdevice`，读 `Location` 的 description xml 找媒体服务器；③ 兜底做 `/24` 网段 445/5005 端口快扫（仅演示用）。
-- 注意：Android 对多播/广播有权限与省电限制；TV 盒子常把组播屏蔽，做超时降级即可。
-
-### 步骤 6：认证与 TLS
-
-- 凭据存储：`EncryptedSharedPreferences` / Keystore 包装；**不要**把密码写进 `SettingsStore` 的明文持久化。
-- SMB：`smb://user:pwd@host` 只是展示；实际登录走 jcifs-ng `Nmblookup`/`CIFSContext`，密码不落日志。
-- WebDAV：优先 Digest/Bearer Token（群晖/Nextcloud 的 app password），自签证书用 `network_security_config.xml` 做**域名固定信任**，不要全局 `trustAllCerts`。
-- 现在 Manifest 里 `usesCleartextTraffic="true"` 是为了原型方便，量产应改为 `false` 并对局域网 IP 段单独放行（`domain-config`）。
-- 多 NAS：`NasConnection` 是单条配置，量产需要 `List<NasConnection>` + 当前选中项（见 §7「多 NAS 账户 / 共享照片」）。
-
----
+- 4K / 10bit / 高帧率素材的自动降级或 NAS 端转码请求；
+- 字幕文件解析（`.srt/.ass`）；
+- 搜索输入界面；
+- 收藏持久化写回数据层。
 
 ## 7. 量产改造清单
 
@@ -474,8 +402,8 @@ val current: MediaRepository by lazy { MockMediaRepository() }   // 改成 ↓
 | 项 | 现状 | 改造方案 | 动的层 |
 |---|---|---|---|
 | **空闲检测** | 外壳用 `System.currentTimeMillis()` + `View.OnKeyListener` 记录最后按键，每秒轮询 | ① 改用 `MainActivity.dispatchKeyEvent` 已有的时间戳 + `onUserInteraction()` + `View.OnGenericMotionListener`（遥控器鼠标/手柄）；② 加入 `PowerManager.isInteractive` 判断，屏幕熄灭时不算空闲（或直接进屏保）；③ 用协程 `select` 替代 1 秒轮询；④ 遮罩：播放视频/幻灯片时不进屏保 | Activity + 外壳 |
-| **真实数据** | Mock | 步骤 1~4 | data |
-| **真实解码** | 模拟播放 | 步骤 3 | video |
+| **真实数据** | ✅ 已接入飞牛相册（WSS 登录 + 签名 HTTP） | 完成 | data |
+| **真实解码** | ✅ 已接入 Media3 ExoPlayer | 补 4K/10bit 素材的降级与转码 | video |
 | **设置持久化** | `SettingsStore.persist()/restore()` 已写好，但**全工程没有任何调用点**（外壳启动时不 `restore()`、改动后不 `persist()`），所以重启回默认值 | 在 `MainActivity.onCreate` / 外壳首帧调 `SettingsStore.restore()`，在 `updateXxx` 之后或切后台时调 `persist()` | 外壳 |
 | **崩溃与空态** | 已处理大部分空列表 | 给 `NasException` 类错误配 UI 提示 + 重试按钮；NAS 断线时屏保要退回「极光动态」而不是黑屏 | 各页 |
 
@@ -504,32 +432,37 @@ val current: MediaRepository by lazy { MockMediaRepository() }   // 改成 ↓
 
 ## 8. 已知限制（原型**没有**做的事）
 
+> 数据层已接入真实飞牛相册（WSS 加密登录 + 签名 HTTP + AccessToken 注入），
+> 下表只列**仍未实现**的能力。原「全部 Mock」时期的条目已作废。
+
 | # | 限制 | 说明 / 影响 |
 |---|---|---|
-| 1 | **没有真实视频解码** | `VideoPlayerState` 用 100ms 时间步进模拟进度（`withFrameNanos` 计量真实流逝），画面是 `res/raw` 的封面图。播放、暂停、快进、连播、循环、字幕**全是 UI 行为**，不产生声音与真实帧。`VideoStage.kt` 与 `VideoPlayerState.tick` 已留好接 Media3 的替换点。 |
-| 2 | **没有真实 NAS 连接** | 零网络请求。`MockMediaRepository.ping()` 只是 `Thread.sleep(300)` 后返回 `true`；`SettingsStore.reportNasResult` 从未被真实调用；设置页的「测试连接/重扫」是 `SettingsFeedback` 里的纯 UI 假状态（首次必失败一次，之后成功）。 |
-| 3 | **没有字幕文件** | 字幕开关只显示一条写死的中文样片（`SAMPLE_SUBTITLE`），不解析 `.srt/.ass`（设置页 `PB_SUBTITLES` 的提示文案写的是"同名 srt/ass 自动加载"，那是规划）。 |
-| 4 | **没有 HEIC 解码** | Mock 数据里有 `extension = "HEIC"`，但实际加载的是同名 JPG 占位图；API 26/27 无系统 HEIC 解码器。 |
-| 5 | **没有账号体系** | 无登录、无多用户、无儿童模式；`NasConnection` 只有 `username`（没有密码字段），设置页的「账号」行是在候选字母/序号间循环的演示值。 |
-| 6 | **收藏不持久化** | 看图页的星标是 `PhotoViewerState.starredOverrides`（内存），退出即丢；没有写回 `MediaItem.starred` 或数据层。 |
-| 7 | **没有真实搜索 UI** | 顶栏「搜索」按钮只会切到「全部照片」Tab；`MediaRepository.search()` 与 `MockMediaRepository.search()` 已实现但没有输入法/搜索页（电视端软键盘体验差，建议按首字母/日期筛选）。 |
-| 8 | **相册分组是 Mock 结果** | 「人物/地点/回忆/收藏」智能相册在 `MockData` 里是静态数据，没有真实人脸聚类/GPS 聚合/时间回忆生成。 |
-| 9 | **农历是近似值** | `lunarLabel` 以 2026-10-10 = 九月初一为锚点、29/30 天交替推算；干支年公式准确，月/日在锚点附近准确，远日期会有偏差。 |
-| 10 | **天气是本地假数据** | `MockWeatherProvider` 按小时轮换 3 组预置天气，不请求任何网络。 |
-| 11 | **设置不落盘（默认）** | `SettingsStore.persist()/restore()` 已实现（SharedPreferences `nas_photo_tv_settings`），但外壳没有在启动时调用 `restore()`，也没有在任何改动后调用 `persist()`，所以重启回默认值。 |
-| 12 | **不支持长按/双击/手势** | 契约明确不支持；看图页没有双指缩放/旋转/滑动翻页。 |
-| 13 | **不扫码 / 不投屏 / 不分享** | 没有手机端配网、没有 DLNA 投屏出口、没有分享/下载。 |
-| 14 | **性能只验证到 1080p** | 所有尺寸按 1920×1080 dp 画布设计（1080p 电视 1dp≈1px）；4K 面板下依赖系统 density 缩放，未做 4K 实测。 |
-| 15 | **播放设置的"NAS 端转码/字幕"只是展示** | `transcode` 只影响播放器右上角角标文案与信息面板里的一行；`showSubtitles` 只控制字幕层初始可见性。 |
-| 16 | **构建环境验证状态** | 工程可编译（`app/build/outputs/apk/debug/app-debug.apk` 已产出，约 16 MB）。本轮文档改动只涉及 md 文件，未重跑编译。 |
+| 1 | **4K / 10bit / 高帧率视频可能无法播放** | 素材直接来自相机/无人机原片。实测 DJI 4K 60fps HEVC 10bit 在模拟器与部分电视盒子上被判 `NO_EXCEEDS_CAPABILITIES`。已加 `onPlayerError` 提示与「下一曲」跳过，但**没有自动转码或降级选流**。 |
+| 2 | **没有字幕文件** | 字幕开关只显示一条写死的中文样片，不解析 `.srt/.ass`。 |
+| 3 | **没有 HEIC 解码（API 26/27）** | 低版本 Android 无系统 HEIC 解码器；RAW 走 NAS 生成的高清 JPG 预览规避。 |
+| 4 | **收藏不持久化** | 看图页星标是内存态 `starredOverrides`，退出即丢，未写回数据层。 |
+| 5 | **没有搜索输入 UI** | 顶栏「搜索」只会切到「全部照片」Tab；`MediaRepository.search()` 已实现但无电视端输入界面。 |
+| 6 | **人物/地点依赖 NAS 侧聚类** | 「收藏 · 人物 · 地点」读的是 `ai-person` 接口，NAS 未开启 AI 相册时为空。 |
+| 7 | **农历是近似值** | `lunarLabel` 以锚点推算，远日期有偏差。 |
+| 8 | **天气是本地假数据** | `MockWeatherProvider` 按小时轮换预置天气，不请求网络。 |
+| 9 | **不支持长按/双击/手势** | 看图页无双指缩放/旋转/滑动翻页（遥控器 2× 放大 + 方向键平移代替）。 |
+| 10 | **不扫码 / 不投屏 / 不分享** | 无手机端配网、无 DLNA 投屏出口。 |
+| 11 | **性能只验证到 1080p** | 尺寸按 1920×1080 设计；4K 面板未实测。 |
+| 12 | **播放设置里的「转码」只是展示** | `transcode` 只影响角标文案，不真正请求 NAS 转码流。 |
 
 ### 本轮文档实测到的环境事实
 
-- 本机 JDK 24.0.1 + Gradle 8.10.2 + AGP 8.7.3 + compileSdk 35（`local.properties` → `E:\Android\Sdk`）；
-- debug APK 已成功产出（`app/build/outputs/apk/debug/app-debug.apk`，16,361,957 字节）；
-- 已连接的 `emulator-5554` 为手机镜像（SDK 35 / Android 15、`sdk_gphone64_x86_64`、1080×2400、density 420），
-  **没有** `android.software.leanback` 特性，因此直接安装会因 `required="true"` 被拒 —— 请按 §3.4 用 TV 镜像或临时把 `required` 改 `false`；
-- 本机可用 AVD：`Pixel_8_API_35`、`Finexy_API_35_Clean`（都是 `system-images\android-35\google_apis\x86_64` 手机镜像，未安装 TV 镜像）。
+- **本次实测环境（Linux / 飞牛 fnOS）**：JDK 17 (Temurin) + Gradle 8.10.2 + AGP 8.7.3 + compileSdk 35 + build-tools 34/35；
+- debug APK 已成功产出（`app/build/outputs/apk/debug/app-debug.apk`，约 21 MB）；
+- 运行环境：Android TV 官方系统镜像 `system-images;android-36;android-tv;x86_64`（Android 16、`sdk_google_atv64_x86_64`、1920×1080 / density 320），
+  在 Docker + KVM 中无头运行（`-no-window`），通过 `adb` 驱动遥控器按键；
+- **模拟器稳定性关键参数**（缺一会周期性 SIGSEGV）：
+  `-gpu swangle_indirect`（`swiftshader_indirect` 在渲染 Compose 模糊/辉光时会崩）、
+  `-feature -ModemSimulator`（默认 modem 模拟器会因容器内 IPv6 解析失败而崩）、
+  `--shm-size=2g`（Docker 默认 64MB 不够 1080p 帧缓冲）、`-timezone Asia/Shanghai`；
+- **已用真实 NAS 数据跑通**：登录 → 时间线（9 个年份 / 2470 项）→ 年/月/日四级下钻 → 相册（33 个文件夹）→ 全屏看图 → 屏保待机 → 设置页；
+- 已知差异：本机 NAS 视频素材为 DJI 4K 60fps HEVC 10bit，超出模拟器解码能力，故视频「播放」未取得真实画面，
+  但解码器启动、错误提示、切换视频三条路径均已验证。
 
 ---
 
