@@ -26,6 +26,8 @@ adb shell am start -n com.nasphoto.tv/.MainActivity
 
 APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 21 MB，含 Media3/OkHttp/Coil）。
 
+不想自己构建？可直接从 [GitHub Releases](https://github.com/SMTM-PH/NasPhotoTV/releases) 下载 APK 安装包。
+
 首次运行需要在设置页填 NAS 地址（默认 `5667`）+ 账号密码，或等局域网自动发现。
 
 ---
@@ -52,16 +54,16 @@ APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 21 MB，含 Media
 |---|---|
 | ![全屏看图](docs/screenshots/03-photo-viewer.png) | ![视频播放](docs/screenshots/04-video-player.png) |
 
-| 屏保 · 翻页数字 | 屏保 · 日期日历 |
+| 屏保 · 翻页数字 | 屏保 · 巨幕时钟 |
 |---|---|
-| ![屏保翻页数字](docs/screenshots/05-screensaver-flip.png) | ![屏保日期日历](docs/screenshots/06-screensaver-date.png) |
+| ![屏保翻页数字](docs/screenshots/05-screensaver-flip.png) | ![屏保巨幕时钟](docs/screenshots/06-screensaver-date.png) |
 
 | 设置页 | |
 |---|---|
 | ![设置页](docs/screenshots/07-settings.png) | |
 
-> 截图位于 `docs/screenshots/`（1920×1080，10-foot UI 画布），命名即上表的 `01-library.png` … `07-settings.png`。
-> 尚未放入的文件会显示为破图，不影响文档阅读。
+> 截图位于 `docs/screenshots/`（1920×1080），全部来自连接真实飞牛 NAS 的 Android TV 模拟器实测画面，命名即上表的 `01-library.png` … `07-settings.png`。
+> 摄于 10 月 20 日版本；此后看图页已改为图片优先铺满整屏（信息浮层化）、屏保前景不再显示图片信息，最新布局以 §4 的文字描述为准。
 
 ---
 

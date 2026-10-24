@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-24",
+  "timezone": "Asia/Shanghai",
+  "source": {
+    "repository": "https://github.com/SMTM-PH/NasPhotoTV",
+    "commit": "c77588aa36301f54ebb659993028be4abdf21845",
+    "branch": "main",
+    "sync": "fast-forward; HEAD equals origin/main"
+  },
+  "build": {
+    "variant": "debug",
+    "version": "1.0.0-prototype",
+    "command": "gradlew.bat --offline --no-daemon --no-parallel :app:assembleDebug",
+    "jdk": "17.0.15",
+    "result": "BUILD SUCCESSFUL",
+    "seconds": 55,
+    "apk": "artifacts/NasPhotoTV-1.0.0-prototype-c77588a-debug.apk",
+    "bytes": 27602038,
+    "sha256": "FE4E10EB2E949116DF81A38EF30C715F91FB919B02EC870966E75F7A44FC71B2",
+    "deviceTestThisRun": false
+  },
+  "forum": {
+    "url": "https://club.fnnas.com/forum.php?mod=viewthread&tid=75453",
+    "status": "审核中",
+    "threadId": "75453",
+    "category": "应用分享 / 三方应用"
+  },
+  "xiaohongshu": {
+    "url": "https://www.xiaohongshu.com/explore/6adc76720000000033033090",
+    "managementUrl": "https://creator.xiaohongshu.com/new/note-manager?source=official",
+    "noteId": "6adc76720000000033033090",
+    "status": "已发布",
+    "publishedAt": "2026-10-24 17:12",
+    "visibility": "公开可见",
+    "cover": "平台文字配图 / 科技 / 1张",
+    "contentDeclaration": "笔记含AI合成内容",
+    "publicUrlCheck": "裸直链打开返回“当前笔记暂时无法浏览”（300031）；后台已发布列表已核对。"
+  }
+}
+

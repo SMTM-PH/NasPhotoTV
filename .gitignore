@@ -24,3 +24,6 @@ local.properties
 # Python scratch
 __pycache__/
 *.pyc
+
+# Promotion distribution archives (contents already tracked in docs/promotion/)
+docs/promotion/**/*.zip
