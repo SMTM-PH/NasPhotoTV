@@ -19,6 +19,13 @@
     "sha256": "FE4E10EB2E949116DF81A38EF30C715F91FB919B02EC870966E75F7A44FC71B2",
     "deviceTestThisRun": false
   },
+  "githubRelease": {
+    "url": "https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.0.0-prototype",
+    "tagName": "v1.0.0-prototype",
+    "targetCommit": "392cccd5404041d12f58324c4b9efcb16f9ae773",
+    "asset": "NasPhotoTV-1.0.0-prototype-c77588a-debug.apk",
+    "status": "已发布"
+  },
   "forum": {
     "url": "https://club.fnnas.com/forum.php?mod=viewthread&tid=75453",
     "status": "审核中",
