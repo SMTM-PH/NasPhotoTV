@@ -26,6 +26,17 @@
     "asset": "NasPhotoTV-1.0.0-prototype-c77588a-debug.apk",
     "status": "已发布"
   },
+  "apkPromo": {
+    "posters": "apk-posters.html",
+    "images": [
+      "images-apk/01-cover.png",
+      "images-apk/02-video.png",
+      "images-apk/03-frame.png",
+      "images-apk/04-install.png"
+    ],
+    "photoEnhanced": true,
+    "xiaohongshuStatus": "未发布：创作者中心登录态失效（401→短信登录页），待重新登录"
+  },
   "forum": {
     "url": "https://club.fnnas.com/forum.php?mod=viewthread&tid=75453",
     "status": "审核中",
