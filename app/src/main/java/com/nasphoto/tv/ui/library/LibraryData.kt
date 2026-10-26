@@ -5,6 +5,7 @@ import com.nasphoto.tv.data.model.Album
 import com.nasphoto.tv.data.model.AlbumType
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
+import com.nasphoto.tv.data.model.Person
 import com.nasphoto.tv.ui.AppRoute
 import com.nasphoto.tv.ui.LibraryState
 import java.time.LocalDate
@@ -18,13 +19,19 @@ import java.util.Locale
  * 返回空列表而不是抛异常；UI 侧只消费这些结果。
  */
 
-/** 顶栏 Tab 定义（顺序即 selectedTabIndex 语义） */
+/**
+ * 顶栏 Tab 定义（顺序即 selectedTabIndex 语义）。
+ *
+ * 「人物」独立成 Tab 后，SMART 的标题里不再重复人物/地点：
+ * 1920dp 画布要放 6 个 Tab，label 每短一个字，中间那排就多一分余量。
+ */
 enum class LibraryTab(val label: String) {
     ALL("全部照片"),
     CHRONO("年 · 月 · 日"),
     ALBUMS("相册"),
+    PEOPLE("人物"),
     RECENT("最近添加"),
-    SMART("收藏 · 人物 · 地点"),
+    SMART("收藏 · 回忆"),
 }
 
 /** 一次横向行的数据模型：标题 + 媒体列表（用于「最近添加」等） */
@@ -410,6 +417,25 @@ object LibraryPreviewData {
         }
     }
 
+    /** 人物预览：故意混入一个没有 coverUrl + 一个没有名字的人物，验证首字头像与兜底文案 */
+    val people: List<Person> = listOf(
+        Person("p1", "妈妈", "raw/wall_candy", 128),
+        Person("p2", "爸爸", "raw/wall_forest", 96),
+        Person("p3", "外婆", "raw/wall_aurora", 41),
+        Person("p4", "小满", "raw/video_family", 63),
+        Person("p5", "阿杰", "", 18),
+        Person("p6", "", "raw/wall_sunset", 0),
+        Person("p7", "邻居小孩", "raw/wall_ocean", 7),
+    )
+
+    /** 人物详情预览：按人物 id 给一组照片（点开任意人物都能看到网格） */
+    val personPhotos: Map<String, List<MediaItem>> = people.associate { person ->
+        person.id to (recent + mediaByAlbum.values.flatten())
+            .distinctBy { it.id }
+            .filter { it.type == MediaType.PHOTO }
+            .take((person.itemCount % 9).coerceAtLeast(1))
+    }
+
     val fullState: LibraryState = LibraryState(
         recent = recent,
         albums = albums,
@@ -417,6 +443,10 @@ object LibraryPreviewData {
         selectedTabIndex = 0,
         connectionName = "Home-NAS",
         isOnline = true,
+        accountName = "林小满",
+        accountCount = 3,
+        people = people,
+        peopleLoaded = true,
     )
 
     /** 空数据：验证不崩（MockData 尚未就绪时的真实状态） */
@@ -427,5 +457,8 @@ object LibraryPreviewData {
         selectedTabIndex = 0,
         connectionName = "Home-NAS",
         isOnline = false,
+        accountName = "",
+        people = emptyList(),
+        peopleLoaded = true,
     )
 }

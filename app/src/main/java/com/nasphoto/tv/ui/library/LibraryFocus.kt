@@ -205,6 +205,15 @@ fun TvFocusBox(
 }
 
 /**
+ * 按 index 懒创建 FocusRequester（列表项数量随数据变化，不能预分配固定数组）。
+ * 放这里而不是某个 Tab 文件里：人物 Tab、首页行、网格都要用同一份实现。
+ */
+internal fun requesterAt(list: MutableList<FocusRequester>, index: Int): FocusRequester {
+    while (list.size <= index) list += FocusRequester()
+    return list[index.coerceAtLeast(0)]
+}
+
+/**
  * 横向行自动滚动（契约 5：聚焦项必须可见）。
  * 非 @Composable 的挂起函数，在页面的 LaunchedEffect(focusedIndex) 里调用；
  * focus 回调里只记录 index（不滚动），由 LaunchedEffect 在布局后执行。

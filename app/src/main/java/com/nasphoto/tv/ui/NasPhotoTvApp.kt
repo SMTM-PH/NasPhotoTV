@@ -25,9 +25,12 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalView
+import com.nasphoto.tv.data.AppContextHolder
+import com.nasphoto.tv.data.FavoritesStore
 import com.nasphoto.tv.data.FnOsMediaRepository
 import com.nasphoto.tv.data.MediaCache
 import com.nasphoto.tv.data.SettingsStore
+import com.nasphoto.tv.data.fn.FnOsTransport
 import com.nasphoto.tv.data.fn.LanNasDevice
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
@@ -35,6 +38,7 @@ import com.nasphoto.tv.data.model.ScreensaverSettings
 import com.nasphoto.tv.ui.connection.ConnectionMode
 import com.nasphoto.tv.ui.connection.ConnectionScreen
 import com.nasphoto.tv.ui.library.LibraryScreen
+import com.nasphoto.tv.ui.common.NasImageLoader
 import com.nasphoto.tv.ui.screensaver.ScreensaverScreen
 import com.nasphoto.tv.ui.settings.SettingsScreen
 import com.nasphoto.tv.ui.theme.NasPhotoTvTheme
@@ -71,11 +75,14 @@ fun NasPhotoTvApp() {
         // 用 SaveableStateHolder 保住 Tab、年/月层级和滚动位置，BACK 才能回到原处。
         val libraryStateHolder = rememberSaveableStateHolder()
 
-        // 只有连接参数变化才重建仓库；「测试连接」只改 connected/latency，不应触发重连
+        // 只有连接参数变化才重建仓库；「测试连接」只改 connected/latency，不应触发重连。
+        // activeAccountId 必须进 key：两个账号可能共用同一套地址，只比较 username/password
+        // 也能区分，但显式带上账号 id 能保证"切回同一个账号"也会走一遍重建（token 已过期）。
         val repository = remember(
             nas.name,
             nas.host,
             nas.port,
+            nas.activeAccountId,
             nas.username,
             nas.password,
             nas.accessCode,
@@ -84,6 +91,27 @@ fun NasPhotoTvApp() {
         }
         DisposableEffect(repository) {
             onDispose { repository?.close() }
+        }
+
+        // 换账号：清干净上一个账号留下的一切，再让下面的数据加载重新跑。
+        // 顺序很重要 —— 先清 MediaCache/图片缓存、丢掉旧 AccessToken，再重建仓库，最后才发请求，
+        // 否则旧账号的照片会在新账号的界面上闪现。这不是显示问题，是隐私问题：
+        // 家人切到自己账号后，不能看到上一个账号的缓存缩略图和星标。
+        val activeAccountId = nas.activeAccountId
+        var previousAccountId by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(activeAccountId) {
+            val switched = previousAccountId != null && previousAccountId != activeAccountId
+            previousAccountId = activeAccountId
+            if (activeAccountId.isBlank()) return@LaunchedEffect
+            // 首次进入只加载该账号的星标，不做破坏性清理（冷启动没有旧数据可清）
+            if (switched) {
+                MediaCache.clear()
+                NasImageLoader.clearCaches(AppContextHolder.context)
+                // token 是全局单例，仓库 close() 不会带走它：不清的话新账号登录前
+                // 图片请求会带着旧账号的 token 打到 NAS 上
+                FnOsTransport.token = null
+            }
+            FavoritesStore.load(activeAccountId)
         }
 
         LaunchedEffect(repository, refreshToken, route) {
@@ -111,6 +139,8 @@ fun NasPhotoTvApp() {
                 }
                 val screensaverPhotos = runCatching { repository.getScreensaverPhotos() }
                     .getOrDefault(emptyList())
+                // 人物列表：NAS 没开 AI 相册时接口会失败或返回空，不能让它拖垮整个媒体库
+                val people = runCatching { repository.getPeople() }.getOrDefault(emptyList())
                 val stats = runCatching { repository.stats() }.getOrNull()
 
                 MediaCache.update(
@@ -119,6 +149,8 @@ fun NasPhotoTvApp() {
                     screensaverPhotos = screensaverPhotos,
                     photoCount = stats?.photoCount ?: recent.count { it.type == MediaType.PHOTO },
                     videoCount = stats?.videoCount ?: recent.count { it.type == MediaType.VIDEO },
+                    people = people,
+                    ownerAccountId = nas.activeAccountId,
                 )
                 SettingsStore.updateNas { it.copy(connected = true) }
                 loadState = LibraryLoad.Ready(
@@ -128,6 +160,10 @@ fun NasPhotoTvApp() {
                         mediaByAlbum = albumMedia,
                         connectionName = nas.name.ifBlank { "Home-NAS" },
                         isOnline = true,
+                        accountName = nas.activeAccount?.displayName.orEmpty(),
+                        accountCount = nas.accounts.size.coerceAtLeast(1),
+                        people = people,
+                        peopleLoaded = true,
                     ),
                     screensaverPhotos = screensaverPhotos,
                 )
@@ -337,6 +373,15 @@ fun NasPhotoTvApp() {
                                     },
                                     onOpenVideo = { items, index, title ->
                                         player = PlayerRequest(items, index, title)
+                                    },
+                                    // 人物照片不在相册里，只能走人脸接口：把仓库的这个能力注入进去。
+                                    // 返回 null = 这次请求失败了（网络/鉴权/AI 服务没响应），
+                                    // 不能折叠成 emptyList —— 否则详情页会把「失败」说成「这个人没有照片」。
+                                    // repository 为 null（凭据还没配好）同样算失败，让用户看到可重试的提示。
+                                    onLoadPersonPhotos = { personId ->
+                                        repository?.let { repo ->
+                                            runCatching { repo.getPersonPhotos(personId) }.getOrNull()
+                                        }
                                     },
                                     onNavigate = { next ->
                                         if (next == AppRoute.ScreensaverPreview) {

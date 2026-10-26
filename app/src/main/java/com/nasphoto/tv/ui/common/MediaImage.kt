@@ -22,6 +22,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil.ImageLoader
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
 import coil.compose.SubcomposeAsyncImage
@@ -55,6 +57,22 @@ object NasImageLoader {
     fun get(context: Context): ImageLoader = instance ?: synchronized(this) {
         instance ?: ImageLoader.Builder(context.applicationContext)
             .okHttpClient(FnOsTransport.client)
+            // 电视盒子内存普遍很小（实测本机模拟器 2.8G 上限、整机 7.7G 无 swap），
+            // Coil 默认按 JVM 堆百分比取内存缓存，在低内存设备上会把整机拖到 OOM。
+            // 这里显式压到 8%（约 20MB 级别），代价是滑动时偶尔要重解码，
+            // 收益是长时间浏览不再把进程/宿主压死 —— 相册是长驻页，稳定性优先。
+            .memoryCache {
+                MemoryCache.Builder(context.applicationContext)
+                    .maxSizePercent(0.08)
+                    .build()
+            }
+            // 磁盘缓存同理给个上限，避免电视存储被原图缩略图长期撑大
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(context.applicationContext.cacheDir.resolve("image_cache"))
+                    .maxSizeBytes(96L * 1024 * 1024)
+                    .build()
+            }
             .components {
                 // GIF / 动态 WebP / 动画 HEIF：API 28+ 用系统 ImageDecoder，旧版本用 GifDecoder
                 if (Build.VERSION.SDK_INT >= 28) {
@@ -66,6 +84,23 @@ object NasImageLoader {
             .crossfade(true)
             .build()
             .also { instance = it }
+    }
+
+    /**
+     * 清空内存与磁盘缓存。
+     *
+     * 切换飞牛账号时必须调 —— 缓存是按 URL 索引的，而不同账号完全可能命中同一个
+     * 地址键（同一台 NAS、同一套图床），一旦命中就会把上一个账号的照片画到下一个
+     * 账号的界面上。这不是性能问题，是隐私问题。
+     *
+     * [context] 为 null（还没初始化过 ImageLoader）时什么都不做：没有实例就没有缓存。
+     */
+    fun clearCaches(context: Context?) {
+        val loader = instance ?: return
+        loader.memoryCache?.clear()
+        // DiskCache.clear() 会删掉缓存目录里的所有文件；不用再手删目录 ——
+        // 目录被删掉后 Coil 不会自动重建，下一次写入会失败。
+        loader.diskCache?.clear()
     }
 }
 

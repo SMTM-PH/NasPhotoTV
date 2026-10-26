@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.nasphoto.tv.data.MediaCache
 import com.nasphoto.tv.data.SettingsStore
+import com.nasphoto.tv.data.model.NasAccount
 import com.nasphoto.tv.data.model.ScreensaverSettings
 import com.nasphoto.tv.data.fn.FnOsApi
 import com.nasphoto.tv.data.fn.toFnOsAccess
@@ -19,6 +20,7 @@ import com.nasphoto.tv.data.fn.toFnOsAccess
 
 enum class SettingsGroup(val title: String) {
     NAS("NAS 连接"),
+    ACCOUNTS("账号切换"),
     SCREENSAVER("屏保与待机"),
     PLAYBACK("视频播放"),
     ABOUT("关于"),
@@ -33,11 +35,16 @@ enum class SettingsKey(
     NAS_DEVICE(SettingsGroup.NAS, "名称", "显示在顶栏与本机的 NAS 名称"),
     NAS_HOST(SettingsGroup.NAS, "地址", "NAS 的局域网 IP 或 DDNS 域名"),
     NAS_PORT(SettingsGroup.NAS, "端口", "飞牛 Web HTTPS 端口，默认 5667"),
-    NAS_ACCOUNT(SettingsGroup.NAS, "账号", "飞牛账号"),
+    NAS_ACCOUNT(SettingsGroup.NAS, "账号", "当前账号的飞牛用户名"),
     NAS_PASSWORD(SettingsGroup.NAS, "密码", "账号密码，仅保存在这台电视上"),
     NAS_ACCESS_CODE(SettingsGroup.NAS, "访问码", "飞牛「访问码」网关，未启用可留空"),
     NAS_TEST(SettingsGroup.NAS, "测试连接", "真实登录 + 签名请求，验证地址与凭据"),
     NAS_REFRESH(SettingsGroup.NAS, "刷新媒体库", "重新从 NAS 拉取时间线与相册"),
+
+    ACC_CURRENT(SettingsGroup.ACCOUNTS, "当前账号", "这台 NAS 上保存了多个账号时，← → 直接切换"),
+    ACC_LABEL(SettingsGroup.ACCOUNTS, "备注名", "只显示在本机，方便区分家人的账号"),
+    ACC_ADD(SettingsGroup.ACCOUNTS, "添加账号", "同一台 NAS 再加一个飞牛账号，填完账号密码即可"),
+    ACC_REMOVE(SettingsGroup.ACCOUNTS, "删除当前账号", "至少保留一个账号；删除后回到第一个账号"),
 
     SS_ENABLED(SettingsGroup.SCREENSAVER, "屏保", "关闭后空闲也不再进入待机显示"),
     SS_IDLE(SettingsGroup.SCREENSAVER, "静止后进入", "多久没有操作就进入屏保"),
@@ -84,8 +91,12 @@ class SettingsActions(
         feedback.invalidateNasTest()
     }
 
+    /**
+     * 账号/密码/访问码都是「当前账号」的字段，走 updateActiveAccount。
+     * 没有任何账号时这里会自动建一个空账号 —— 用户第一次填就能落地，不用先点「添加账号」。
+     */
     fun setAccount(value: String) {
-        store.updateNas { it.copy(username = value.trim()) }
+        store.updateActiveAccount { it.copy(username = value.trim()) }
         feedback.invalidateNasTest()
     }
 
@@ -96,13 +107,94 @@ class SettingsActions(
     }
 
     fun setPassword(value: String) {
-        store.updateNas { it.copy(password = value) }
+        store.updateActiveAccount { it.copy(password = value) }
         feedback.invalidateNasTest()
     }
 
     fun setAccessCode(value: String) {
-        store.updateNas { it.copy(accessCode = value) }
+        store.updateActiveAccount { it.copy(accessCode = value) }
         feedback.invalidateNasTest()
+    }
+
+    /** 账号备注名（列表里显示的名字，不影响登录） */
+    fun setAccountLabel(value: String) {
+        store.updateActiveAccount { it.copy(label = value.trim()) }
+    }
+
+    // ---------------- 多账号 ----------------
+
+    /**
+     * 切换当前账号。
+     * 外壳（NasPhotoTvApp）会监听 activeAccountId 变化 → 重建仓库 + 清空 MediaCache，
+     * 所以这里只负责改状态和给一句提示。
+     */
+    fun switchAccount(accountId: String) {
+        val target = store.nas.account(accountId) ?: return
+        if (store.nas.activeAccountId == accountId) {
+            feedback.toast = "已经在使用「${target.displayName}」"
+            return
+        }
+        if (store.switchAccount(accountId)) {
+            feedback.invalidateNasTest()
+            feedback.toast = "已切换到「${target.displayName}」"
+        }
+    }
+
+    /** 新增账号并切过去；新账号是空的，用户接着填账号密码 */
+    fun addAccount() {
+        store.addAccount()
+        feedback.invalidateNasTest()
+        feedback.toast = "已添加账号，请填写账号与密码"
+    }
+
+    /** 删除账号（最后一个不能删，UI 会禁用并给出说明） */
+    fun removeAccount(accountId: String) {
+        val target = store.nas.account(accountId) ?: return
+        if (store.nas.accounts.size <= 1) {
+            feedback.toast = "至少要保留一个账号"
+            return
+        }
+        if (store.removeAccount(accountId)) {
+            feedback.invalidateNasTest()
+            feedback.toast = "已删除账号「${target.displayName}」"
+        }
+    }
+
+    /**
+     * 删除当前账号（设置页「删除当前账号」那行动作）。
+     * 两步确认：凭据删了不可恢复，遥控器上又很容易手滑连按两下。
+     */
+    fun requestRemoveActiveAccount() {
+        val current = store.nas.activeAccount
+        if (current == null) {
+            feedback.toast = "还没有保存账号"
+            return
+        }
+        if (!feedback.removeAccountArmed) {
+            feedback.armRemoveAccount()
+            return
+        }
+        feedback.disarmRemoveAccount()
+        removeAccount(current.id)
+    }
+
+    /**
+     * 「当前账号」行上按 ← → ：在已保存的账号之间循环。
+     * 只有一个账号时给一句提示而不是静默无反应 —— 遥控器上「按了没动静」最难判断。
+     */
+    fun cycleAccount(reverse: Boolean = false) {
+        val accounts = store.nas.accounts
+        if (accounts.isEmpty()) {
+            feedback.toast = "还没有保存账号，先添加一个"
+            return
+        }
+        if (accounts.size == 1) {
+            feedback.toast = "只有「${accounts.first().displayName}」一个账号，可按「添加账号」新增"
+            return
+        }
+        val currentIndex = accounts.indexOfFirst { it.id == store.nas.activeAccountId }.takeIf { it >= 0 } ?: 0
+        val nextIndex = (currentIndex + (if (reverse) -1 else 1) + accounts.size) % accounts.size
+        switchAccount(accounts[nextIndex].id)
     }
 
     // ---------------- 屏保 ----------------
@@ -175,6 +267,14 @@ class SettingsFeedback {
 
     var resetArmed by mutableStateOf(false)
         private set
+
+    /**
+     * 「删除当前账号」的二次确认。
+     * 不能和 resetArmed 复用：两个动作都在左栏，复用会让"按了重置却在删账号"这种
+     * 错位状态出现，这是数据丢失级别的坑。
+     */
+    var removeAccountArmed by mutableStateOf(false)
+        private set
     /** 底部提示（2 秒后由页面自动清空） */
     var toast by mutableStateOf<String?>(null)
 
@@ -228,6 +328,14 @@ class SettingsFeedback {
 
     fun disarmReset() {
         resetArmed = false
+    }
+
+    fun armRemoveAccount() {
+        removeAccountArmed = true
+    }
+
+    fun disarmRemoveAccount() {
+        removeAccountArmed = false
     }
 }
 

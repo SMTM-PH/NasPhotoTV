@@ -3,6 +3,7 @@ package com.nasphoto.tv.data
 import com.nasphoto.tv.data.model.Album
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.NasConnection
+import com.nasphoto.tv.data.model.Person
 
 /**
  * ================= NAS 媒体仓库抽象接口 =================
@@ -37,6 +38,18 @@ interface MediaRepository {
 
     /** 屏保用：人物照片池（fnOS 人脸聚类）；AI 未开启或没有人物时返回空列表 */
     suspend fun getPeoplePhotos(limit: Int = 120): List<MediaItem> = emptyList()
+
+    /**
+     * 人物列表（fnOS 人脸聚类）：按照片数量倒序。
+     * NAS 没开启「AI 相册 / 人脸识别」时返回空列表，UI 必须显示空状态而不是空白页。
+     */
+    suspend fun getPeople(): List<Person> = emptyList()
+
+    /**
+     * 某个人的全部照片（按时间倒序）。[personId] 来自 [getPeople] 返回的 [Person.id]。
+     * 服务端接口只能按「天」分页取，实现方负责聚合成一个列表。
+     */
+    suspend fun getPersonPhotos(personId: String, limit: Int = 600): List<MediaItem> = emptyList()
 
     /** 获取单张媒体详情（可能补充 EXIF 等信息） */
     suspend fun getMediaItem(id: String): MediaItem? = null

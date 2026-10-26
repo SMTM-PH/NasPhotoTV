@@ -1,6 +1,7 @@
 package com.nasphoto.tv.ui.library
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -54,6 +56,7 @@ import com.nasphoto.tv.data.model.Album
 import com.nasphoto.tv.data.model.AlbumType
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
+import com.nasphoto.tv.data.model.Person
 import com.nasphoto.tv.data.model.pixelSize
 import com.nasphoto.tv.ui.AppRoute
 import com.nasphoto.tv.ui.LibraryState
@@ -80,22 +83,36 @@ fun LibraryScreen(
     onOpenPhoto: (items: List<MediaItem>, index: Int, contextTitle: String) -> Unit,
     onOpenVideo: (items: List<MediaItem>, index: Int, contextTitle: String) -> Unit,
     onNavigate: (AppRoute) -> Unit,
+    /**
+     * 拉取某个人物下的照片。人物照片不属于任何相册，只能走 NAS 的人脸接口，
+     * 所以由外壳注入（本页不持有仓库）。
+     *
+     * 返回 null 表示**这次请求失败**（断网 / 鉴权过期 / NAS 侧异常），
+     * 与「这个人确实没有照片」（空列表）必须分开：前者该让用户退出去重试，
+     * 后者是正常结果，提示重试只会把人绕进死循环。
+     */
+    onLoadPersonPhotos: suspend (personId: String) -> List<MediaItem>? = { emptyList() },
     modifier: Modifier = Modifier,
 ) {
     var selectedTab by rememberSaveable(state.selectedTabIndex) {
         mutableStateOf(initialTabOf(state.selectedTabIndex))
     }
     var openedAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
+    var openedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    // 从人物详情 BACK 回来时要落回原来那张脸，否则一排人里跳回第一个很别扭
+    var peopleFocusIndex by rememberSaveable { mutableStateOf(0) }
 
     // 派生数据（全部空安全）
     val hero = remember(state) { buildHero(state) }
     val allItems = remember(state) { allPhotos(state) }
     val favorites = remember(state, FavoritesStore.ids) { favoriteItems(state) }
     val openedAlbum = openedAlbumId?.let { id -> state.albums.firstOrNull { it.id == id } }
+    val openedPerson = openedPersonId?.let { id -> state.people.firstOrNull { it.id == id } }
 
     // ---- 顶栏焦点 ----
     val tabRequesters = remember { LibraryTab.entries.map { FocusRequester() } }
     val actionRequesters = remember { List(TOP_ACTION_COUNT) { FocusRequester() } }
+    val accountRequester = remember { FocusRequester() }
     val topFocus = remember { PendingFocus() }   // 顶栏精确落点
     val contentFocus = remember { PendingFocus() } // 主内容精确落点
     var lastTab by remember { mutableIntStateOf(0) }
@@ -110,7 +127,12 @@ fun LibraryScreen(
         }
     }
 
-    // BACK：相册详情 → 返回列表（列表页的 BACK 由 Lead 外壳处理）
+    // 顶栏落点：主内容按 UP 时精确回到当前 Tab。
+    // 不交给 Compose 空间查找 —— 人物卡片 260 宽、顶栏 Tab 位置随 label 长度浮动，
+    // 空间查找可能落到账号胶囊或图标按钮，遥控器会"飘"。
+    ConsumeBlockRequest(topFocus, BLOCK_TOP, blockFallback = { tabRequesters.getOrNull(lastTab) })
+
+    // BACK：人物详情 → 人物列表；相册详情 → 相册网格（列表页的 BACK 由 Lead 外壳处理）
     BackHandler(enabled = openedAlbum != null) { openedAlbumId = null }
 
     LibraryBackdrop(modifier.fillMaxSize())
@@ -121,9 +143,15 @@ fun LibraryScreen(
             selectedTab = selectedTab,
             connectionName = state.connectionName,
             isOnline = state.isOnline,
+            accountName = state.accountName,
+            accountCount = state.accountCount,
+            onAccountClick = { onNavigate(AppRoute.Settings) },
+            onAccountDown = { contentFocus.requestBlock(BLOCK_CONTENT) },
+            accountFocusRequester = accountRequester,
             onTabClick = { tab ->
                 selectedTab = tab
                 openedAlbumId = null
+                openedPersonId = null
             },
             onTabFocus = { lastTab = it },
             onActionFocus = { lastAction = it },
@@ -135,7 +163,9 @@ fun LibraryScreen(
             onTabDown = { contentFocus.requestBlock(BLOCK_CONTENT) },
         )
 
-        val isEmptyLibrary = state.recent.isEmpty() && state.albums.isEmpty()
+        // 有照片列表才算「有库」；但要给人物留一条活路 —— 相册接口失败而人脸结果已到时，
+        // 整个页面被空状态盖掉，人物 Tab 就永远进不去了。
+        val isEmptyLibrary = state.recent.isEmpty() && state.albums.isEmpty() && state.people.isEmpty()
         when {
             isEmptyLibrary -> LibraryEmptyState(onOpenSettings = { onNavigate(AppRoute.Settings) })
 
@@ -145,6 +175,18 @@ fun LibraryScreen(
                 onBack = { openedAlbumId = null },
                 onOpenPhoto = onOpenPhoto,
                 onOpenVideo = onOpenVideo,
+            )
+
+            openedPerson != null -> PersonDetailPane(
+                person = openedPerson,
+                onBack = {
+                    openedPersonId = null
+                    // 详情页里的卡片已随组合销毁，焦点不会自己回来；显式交还给人物列表
+                    contentFocus.requestBlock(BLOCK_CONTENT)
+                },
+                onOpenPhoto = onOpenPhoto,
+                onOpenVideo = onOpenVideo,
+                onLoadPhotos = onLoadPersonPhotos,
             )
 
             else -> when (selectedTab) {
@@ -169,6 +211,16 @@ fun LibraryScreen(
                 LibraryTab.ALBUMS -> AlbumsTab(                    state = state,
                     onOpenAlbum = { openedAlbumId = it.id },
                     contentFocus = contentFocus,
+                )
+
+                LibraryTab.PEOPLE -> PeopleTab(
+                    people = state.people,
+                    peopleLoaded = state.peopleLoaded,
+                    onOpenPerson = { openedPersonId = it.id },
+                    contentFocus = contentFocus,
+                    restoreIndex = peopleFocusIndex,
+                    onFocusPerson = { peopleFocusIndex = it },
+                    onUpToTopBar = { topFocus.request(tabRequesters.getOrNull(selectedTab.ordinal)) },
                 )
 
                 LibraryTab.RECENT -> RecentTab(
@@ -1009,6 +1061,136 @@ private fun AlbumDetailPane(
     }
 }
 
+// ============================== 人物详情（一个人下的全部照片） ==============================
+
+/**
+ * 人物详情页：视觉与导航完全沿用 [AlbumDetailPane]（同一套返回按钮 + 6 列网格），
+ * 只有数据来源不同 —— 人物照片不属于任何相册，要按 personId 走 NAS 人脸接口现拉。
+ *
+ * 为什么不在进入时就同步拉：人脸接口在 4 核机器上可能要几秒，
+ * 先给一个「正在加载 <人名> 的照片…」的居中进度，比停在空网格上让人以为没有照片要好。
+ */
+@Composable
+private fun PersonDetailPane(
+    person: Person,
+    onBack: () -> Unit,
+    onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
+    onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
+    onLoadPhotos: suspend (String) -> List<MediaItem>?,
+) {
+    // 四态用类型表达，不再拿 null 兼「加载中 / 失败」两义：
+    // 「读失败」和「确实没有照片」对用户是两件事 —— 前者要提示可以重试，后者是正常结果。
+    var photosState by remember(person.id) { mutableStateOf<PersonPhotos>(PersonPhotos.Loading) }
+    val gridState = rememberLazyGridState()
+    val backRequester = remember { FocusRequester() }
+    val requesters = remember { mutableListOf<FocusRequester>() }
+    val innerFocus = remember { PendingFocus() }
+    var focusedIndex by remember { mutableIntStateOf(0) }
+    val columns = MEDIA_GRID_COLUMNS
+    val contextTitle = "人物 · ${person.displayName}"
+    val readyItems = (photosState as? PersonPhotos.Ready)?.items.orEmpty()
+
+    LaunchedEffect(person.id) {
+        photosState = PersonPhotos.Loading
+        // 外层注入的接口返回 null = 这次失败；这里不再 try/catch 兜底成空列表，
+        // 否则一次网络抖动会被显示成「这个人没有照片」，用户以为数据丢了。
+        photosState = when (val loaded = onLoadPhotos(person.id)) {
+            null -> PersonPhotos.Failed
+            else -> if (loaded.isEmpty()) PersonPhotos.Empty else PersonPhotos.Ready(loaded)
+        }
+    }
+    BackHandler { onBack() }
+
+    // 落点：只有拿到照片才落第一张；加载中 / 失败 / 空都落返回按钮
+    // —— 这三种状态下网格并不存在，指过去的 requester 会 requestFocus 失败、焦点留在顶栏。
+    val firstTarget = {
+        if (photosState is PersonPhotos.Ready) requesterAt(requesters, 0) else backRequester
+    }
+    LaunchedEffect(person.id, photosState) {
+        val target = firstTarget()
+        // 照片是异步到的：网格刚进组合时节点可能还没挂上布局树，requestFocus 会直接抛，
+        // 于是等一帧再试一次，避免「加载完成但焦点留在顶栏」的掉焦点问题。
+        if (runCatching { target.requestFocus() }.isFailure) {
+            withFrameMillis { }
+            runCatching { target.requestFocus() }
+        }
+        innerFocus.request(target)
+    }
+    ConsumeBlockRequest(innerFocus, BLOCK_CONTENT, blockFallback = firstTarget)
+
+    Column(Modifier.fillMaxSize()) {
+        AlbumDetailHeader(
+            albumName = person.displayName,
+            count = when (photosState) {
+                PersonPhotos.Loading -> "正在加载…"
+                PersonPhotos.Failed -> "读取失败"
+                PersonPhotos.Empty -> "还没有照片"
+                is PersonPhotos.Ready -> countText(readyItems)
+            },
+            backFocusRequester = backRequester,
+            onBack = onBack,
+            onBackFocusChanged = { },
+            onDown = { if (photosState is PersonPhotos.Ready) innerFocus.request(requesterAt(requesters, 0)) },
+        )
+        when (photosState) {
+            PersonPhotos.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = TvColor.Accent)
+                    Spacer(Modifier.height(TvDimen.SpaceM))
+                    Text(
+                        text = "正在加载${person.displayName}的照片…",
+                        color = TvColor.TextTertiary,
+                        fontSize = TvType.Caption,
+                    )
+                }
+            }
+
+            // 失败：明确说是「读取失败」并给出下一步，而不是伪装成「没有照片」
+            PersonPhotos.Failed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                EmptyState(
+                    title = "读取这个人物失败了",
+                    subtitle = "可能是 NAS 连接中断或 AI 相册服务未响应，按 BACK 返回后可以重试",
+                    icon = Icons.Outlined.Person,
+                )
+            }
+
+            PersonPhotos.Empty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                EmptyState(
+                    title = "这个人物下还没有照片",
+                    subtitle = "可能刚完成识别，或该人物的照片已被移出 NAS 相册",
+                    icon = Icons.Outlined.Person,
+                )
+            }
+
+            is PersonPhotos.Ready -> MediaGrid(
+                items = readyItems,
+                columns = columns,
+                gridState = gridState,
+                requesters = requesters,
+                focusedIndex = focusedIndex,
+                onFocused = { focusedIndex = it },
+                onFirstRowUp = { innerFocus.request(backRequester) },
+                onClick = { _, item ->
+                    openMedia(item, readyItems, contextTitle, onOpenPhoto, onOpenVideo)
+                },
+            )
+        }
+    }
+}
+
+/**
+ * 人物照片的四种状态。
+ *
+ * 为什么单独建类型：用 `List<MediaItem>?` 时 null 同时代表「还在读」和「读失败」，
+ * 空列表又代表「读到了但没有」—— 三种含义挤在两个值里，改文案时必然漏掉一种。
+ */
+private sealed interface PersonPhotos {
+    data object Loading : PersonPhotos
+    data object Failed : PersonPhotos
+    data object Empty : PersonPhotos
+    data class Ready(val items: List<MediaItem>) : PersonPhotos
+}
+
 // ============================== 通用媒体网格 ==============================
 
 /**
@@ -1070,12 +1252,6 @@ private const val MONTH_TILE_H = 150
 
 private fun initialTabOf(index: Int): LibraryTab = LibraryTab.entries.getOrElse(index) { LibraryTab.ALL }
 
-/** 按 index 懒创建 FocusRequester（列表项数量随数据变化，不能预分配固定数组） */
-private fun requesterAt(list: MutableList<FocusRequester>, index: Int): FocusRequester {
-    while (list.size <= index) list += FocusRequester()
-    return list[index.coerceAtLeast(0)]
-}
-
 /** 屏幕高度（dp），用于计算 Hero 高度 */
 @Composable
 private fun screenHeightDp(): Int = LocalConfiguration.current.screenHeightDp
@@ -1123,14 +1299,83 @@ private fun LibraryAlbumsPreview() {
 
 @Preview(widthDp = 1920, heightDp = 1080)
 @Composable
-private fun LibrarySmartPreview() {
+private fun LibraryPeoplePreview() {
     NasPhotoTvTheme {
         LibraryScreen(
             state = LibraryPreviewData.fullState.copy(selectedTabIndex = 3),
             onOpenPhoto = { _, _, _ -> },
             onOpenVideo = { _, _, _ -> },
             onNavigate = {},
+            onLoadPersonPhotos = { id -> LibraryPreviewData.personPhotos[id].orEmpty() },
         )
+    }
+}
+
+@Preview(widthDp = 1920, heightDp = 1080)
+@Composable
+private fun LibrarySmartPreview() {
+    NasPhotoTvTheme {
+        LibraryScreen(
+            // 插入「人物」Tab 后 SELECT 的下标整体后移一位（SMART 现在是第 6 个）
+            state = LibraryPreviewData.fullState.copy(selectedTabIndex = 5),
+            onOpenPhoto = { _, _, _ -> },
+            onOpenVideo = { _, _, _ -> },
+            onNavigate = {},
+        )
+    }
+}
+
+@Preview(widthDp = 1920, heightDp = 1080)
+@Composable
+private fun LibraryPeopleEmptyPreview() {
+    NasPhotoTvTheme {
+        // 人脸结果为空：验证「还没有人物」引导页，不是白屏
+        LibraryScreen(
+            state = LibraryPreviewData.fullState.copy(selectedTabIndex = 3, people = emptyList()),
+            onOpenPhoto = { _, _, _ -> },
+            onOpenVideo = { _, _, _ -> },
+            onNavigate = {},
+        )
+    }
+}
+
+/**
+ * 人物详情·读取失败。
+ *
+ * 直接预览 [PersonDetailPane] 而不是走 LibraryScreen：失败态依赖注入的 loader 返回 null，
+ * 从列表页点进去的路径没法在 Preview 里表达（Preview 不执行点击），
+ * 而这条分支恰恰是最容易被漏掉、也最容易被误写成「没有照片」的一条。
+ */
+@Preview(widthDp = 1920, heightDp = 1080)
+@Composable
+private fun PersonDetailFailedPreview() {
+    NasPhotoTvTheme {
+        Box(Modifier.fillMaxSize().background(TvColor.Bg)) {
+            PersonDetailPane(
+                person = LibraryPreviewData.people.first(),
+                onBack = {},
+                onOpenPhoto = { _, _, _ -> },
+                onOpenVideo = { _, _, _ -> },
+                onLoadPhotos = { null },
+            )
+        }
+    }
+}
+
+/** 人物详情·读取成功但这个人确实没有照片（与失败态区分开，文案不能一样） */
+@Preview(widthDp = 1920, heightDp = 1080)
+@Composable
+private fun PersonDetailEmptyPreview() {
+    NasPhotoTvTheme {
+        Box(Modifier.fillMaxSize().background(TvColor.Bg)) {
+            PersonDetailPane(
+                person = LibraryPreviewData.people.first(),
+                onBack = {},
+                onOpenPhoto = { _, _, _ -> },
+                onOpenVideo = { _, _, _ -> },
+                onLoadPhotos = { emptyList() },
+            )
+        }
     }
 }
 

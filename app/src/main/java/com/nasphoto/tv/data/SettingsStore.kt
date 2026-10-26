@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.nasphoto.tv.data.model.Album
+import com.nasphoto.tv.data.model.NasAccount
 import com.nasphoto.tv.data.model.NasConnection
 import com.nasphoto.tv.data.model.PlaybackSettings
 import com.nasphoto.tv.data.model.ScreensaverSettings
@@ -23,8 +24,11 @@ import com.nasphoto.tv.data.model.ScreensaverSettings
  * store.cycleScreensaverBackground()            // 照片轮播 → 极光动态 → 纯黑极简 → …
  * ```
  *
- * 注意：本对象默认不做磁盘持久化（原型重启回到默认值）。
- * 若需要保留：界面层改动后调用 [persist]，App 启动时调用 [restore] 即可。
+ * 【持久化】改完就能存住，不需要用户"保存"：
+ *   - 外壳 `NasPhotoTvApp` 里有一条 `LaunchedEffect(screensaver, playback, nas) { persist() }`，
+ *     任何一次 `updateXxx` 都会在下一帧写进 SharedPreferences；
+ *   - `MainActivity.onCreate` 调 [restore]，冷启动把上次的值读回来。
+ * 早期原型「改了不存、重启回默认」的注释已经过时，别再按那个改。
  */
 object SettingsStore {
 
@@ -62,6 +66,48 @@ object SettingsStore {
 
     fun updateNas(transform: (NasConnection) -> NasConnection) {
         nas = transform(nas)
+    }
+
+    // ---------- 多账号（同一台 NAS 的多个飞牛账号） ----------
+
+    /**
+     * 切换当前账号。切换后 UI 必须重建仓库并清空缓存 —— [SettingsStore] 不做这件事，
+     * 由外壳（NasPhotoTvApp）监听 activeAccountId 变化来收尾。
+     * 返回 true 表示真的换了账号。
+     */
+    fun switchAccount(accountId: String): Boolean {
+        if (accountId == nas.activeAccountId || nas.account(accountId) == null) return false
+        nas = nas.withActiveAccount(accountId).copy(connected = false, latencyMs = 0)
+        nasLatencyMs = null
+        return true
+    }
+
+    /** 新增一个空账号并切过去（设置页「添加账号」） */
+    fun addAccount(): NasAccount {
+        val account = NasAccount(id = NasAccount.newId(nas.accounts))
+        nas = nas.withAccount(account).withActiveAccount(account.id).copy(connected = false)
+        nasLatencyMs = null
+        return account
+    }
+
+    /** 删除账号；至少保留一个（最后一个不允许删） */
+    fun removeAccount(accountId: String): Boolean {
+        if (nas.accounts.size <= 1) return false
+        if (nas.account(accountId) == null) return false
+        nas = nas.withoutAccount(accountId).copy(connected = false)
+        nasLatencyMs = null
+        return true
+    }
+
+    /** 改某个账号的字段（不改变当前账号） */
+    fun updateAccount(accountId: String, transform: (NasAccount) -> NasAccount) {
+        val account = nas.account(accountId) ?: return
+        nas = nas.withAccount(transform(account))
+    }
+
+    /** 改当前账号的字段 */
+    fun updateActiveAccount(transform: (NasAccount) -> NasAccount) {
+        nas = nas.updateActiveAccount(transform)
     }
 
     /** 记录一次连接测试结果；[latencyMs] 为 null 表示失败 */
@@ -190,41 +236,55 @@ object SettingsStore {
     /** 把当前设置写入磁盘（在界面层改动后调用，或由外壳在切后台时调用） */
     fun persist() {
         val p = prefs() ?: return
-        p.edit()
-            .putString("nas_name", nas.name)
-            .putString("nas_host", nas.host)
-            .putInt("nas_port", nas.port)
-            .putString("nas_user", nas.username)
-            .putString("nas_password", nas.password)
-            .putString("nas_access", nas.accessCode)
-            .putBoolean("ss_enabled", screensaver.enabled)
-            .putInt("ss_idle", screensaver.idleTimeoutSec)
-            .putInt("ss_interval", screensaver.photoIntervalSec)
-            .putString("ss_clock", screensaver.clockStyle.name)
-            .putString("ss_bg", screensaver.background.name)
-            .putString("ss_mode", screensaver.mode.name)
-            .putString("ss_source", screensaver.photoSource.name)
-            .putString("ss_album_id", screensaver.albumId)
-            .putString("ss_album_name", screensaver.albumName)
-            .putBoolean("ss_date", screensaver.showDate)
-            .putBoolean("ss_dim", screensaver.nightDim)
-            .putBoolean("ss_kenburns", screensaver.kenBurns)
-            .putBoolean("pb_next", playback.autoPlayNext)
-            .putBoolean("pb_loop", playback.loopMode)
-            .apply()
+        val e = p.edit()
+        e.putString("nas_name", nas.name)
+        e.putString("nas_host", nas.host)
+        e.putInt("nas_port", nas.port)
+        e.putString("nas_active", nas.activeAccountId)
+        // 账号列表：按序展开成 count + 下标字段（SharedPreferences 不适合存 JSON/对象）
+        e.putInt("nas_account_count", nas.accounts.size)
+        nas.accounts.forEachIndexed { index, account ->
+            e.putString("nas_acc${index}_id", account.id)
+            e.putString("nas_acc${index}_user", account.username)
+            e.putString("nas_acc${index}_pswd", account.password)
+            e.putString("nas_acc${index}_label", account.label)
+            e.putString("nas_acc${index}_access", account.accessCode)
+        }
+        // 兼容旧版本存档用的一份「当前账号」扁平字段
+        e.putString("nas_user", nas.username)
+        e.putString("nas_password", nas.password)
+        e.putString("nas_access", nas.accessCode)
+        e.putBoolean("ss_enabled", screensaver.enabled)
+        e.putInt("ss_idle", screensaver.idleTimeoutSec)
+        e.putInt("ss_interval", screensaver.photoIntervalSec)
+        e.putString("ss_clock", screensaver.clockStyle.name)
+        e.putString("ss_bg", screensaver.background.name)
+        e.putString("ss_mode", screensaver.mode.name)
+        e.putString("ss_source", screensaver.photoSource.name)
+        e.putString("ss_album_id", screensaver.albumId)
+        e.putString("ss_album_name", screensaver.albumName)
+        e.putBoolean("ss_date", screensaver.showDate)
+        e.putBoolean("ss_dim", screensaver.nightDim)
+        e.putBoolean("ss_kenburns", screensaver.kenBurns)
+        e.putBoolean("pb_next", playback.autoPlayNext)
+        e.putBoolean("pb_loop", playback.loopMode)
+        e.apply()
     }
 
     /** 从磁盘恢复；没有存档时保持默认值 */
     fun restore() {
         val p = prefs() ?: return
         if (!p.contains("ss_idle") && !p.contains("nas_host")) return
+        val restoredAccounts = restoreAccounts(p)
+        val storedActive = p.getString("nas_active", "") ?: ""
         nas = defaultNas.copy(
             name = p.getString("nas_name", defaultNas.name) ?: defaultNas.name,
             host = p.getString("nas_host", defaultNas.host) ?: defaultNas.host,
             port = p.getInt("nas_port", defaultNas.port),
-            username = p.getString("nas_user", defaultNas.username) ?: defaultNas.username,
-            password = p.getString("nas_password", defaultNas.password) ?: defaultNas.password,
-            accessCode = p.getString("nas_access", defaultNas.accessCode) ?: defaultNas.accessCode,
+            accounts = restoredAccounts,
+            // 存档里的 active id 可能已被删：退回第一个账号
+            activeAccountId = restoredAccounts.firstOrNull { it.id == storedActive }?.id
+                ?: restoredAccounts.firstOrNull()?.id.orEmpty(),
         )
         screensaver = defaultScreensaver.copy(
             enabled = p.getBoolean("ss_enabled", true),
@@ -252,4 +312,45 @@ object SettingsStore {
     /** 存档里的枚举名可能已失效（改了枚举），安全回退到默认值 */
     private inline fun <reified T : Enum<T>> enumOrDefault(name: String?, fallback: T): T =
         if (name == null) fallback else runCatching { enumValueOf<T>(name) }.getOrDefault(fallback)
+
+    /**
+     * 读账号列表。
+     * 新存档读 `nas_account_count` + 下标字段；老存档（只有 nas_user/nas_password）
+     * 走 [NasConnection.of] 的兼容路径，保证升级后老用户的账号还在、能直接登录。
+     */
+    private fun restoreAccounts(
+        p: android.content.SharedPreferences,
+    ): List<NasAccount> {
+        val count = p.getInt("nas_account_count", 0)
+        if (count > 0) {
+            val list = buildList {
+                for (index in 0 until count) {
+                    val id = p.getString("nas_acc${index}_id", "") ?: ""
+                    if (id.isBlank()) continue
+                    add(
+                        NasAccount(
+                            id = id,
+                            username = p.getString("nas_acc${index}_user", "") ?: "",
+                            password = p.getString("nas_acc${index}_pswd", "") ?: "",
+                            label = p.getString("nas_acc${index}_label", "") ?: "",
+                            accessCode = p.getString("nas_acc${index}_access", "") ?: "",
+                        ),
+                    )
+                }
+            }
+            if (list.isNotEmpty()) return list
+        }
+        // 老存档兼容
+        val legacyUser = p.getString("nas_user", "") ?: ""
+        val legacyPassword = p.getString("nas_password", "") ?: ""
+        if (legacyUser.isBlank() && legacyPassword.isBlank()) return emptyList()
+        return listOf(
+            NasAccount(
+                id = "acc-1",
+                username = legacyUser,
+                password = legacyPassword,
+                accessCode = p.getString("nas_access", "") ?: "",
+            ),
+        )
+    }
 }

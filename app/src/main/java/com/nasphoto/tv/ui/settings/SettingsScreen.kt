@@ -154,6 +154,17 @@ fun SettingsScreen(
         feedback.disarmReset()
     }
 
+    // 「删除当前账号」同样两步确认，超时或移开焦点都解除
+    LaunchedEffect(feedback.removeAccountArmed, focusedKey) {
+        if (!feedback.removeAccountArmed) return@LaunchedEffect
+        if (focusedKey != SettingsKey.ACC_REMOVE) {
+            feedback.disarmRemoveAccount()
+            return@LaunchedEffect
+        }
+        delay(3000)
+        feedback.disarmRemoveAccount()
+    }
+
     // toast 2 秒自动消失
     LaunchedEffect(feedback.toast) {
         if (feedback.toast != null) {
@@ -252,11 +263,19 @@ fun SettingsScreen(
                             val group = focusedKey.group
                             AnimatedContent(
                                 targetState = group,
+                                // 必须显式吃掉右栏剩余高度：AnimatedContent 默认只按内容高度测量，
+                                // 结果 SettingsAccountPanel 的 fillMaxSize 拿不到真实高度，
+                                // weight(1f) 的账号列表只分到一张卡片的高度 —— 第 2 个账号被裁在框外。
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth(),
                                 transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(140)) },
                                 label = "settingsRightPanel",
                             ) { g ->
                                 when (g) {
                                     SettingsGroup.NAS -> SettingsNasPanel(store, feedback)
+
+                                    SettingsGroup.ACCOUNTS -> SettingsAccountPanel(store)
 
                                     SettingsGroup.SCREENSAVER -> SettingsScreensaverPanel(
                                         store = store,
@@ -321,6 +340,7 @@ fun SettingsScreen(
                         SettingsKey.NAS_ACCOUNT -> actions.setAccount(value)
                         SettingsKey.NAS_PASSWORD -> actions.setPassword(value)
                         SettingsKey.NAS_ACCESS_CODE -> actions.setAccessCode(value)
+                        SettingsKey.ACC_LABEL -> actions.setAccountLabel(value)
                         else -> {}
                     }
                     textTarget = null
@@ -478,7 +498,12 @@ private fun performConfirm(
         SettingsKey.NAS_ACCOUNT,
         SettingsKey.NAS_PASSWORD,
         SettingsKey.NAS_ACCESS_CODE,
+        SettingsKey.ACC_LABEL,
         -> onEditText(key)
+
+        // 账号组里 ENTER 就是「马上做那件事」，不做步进
+        SettingsKey.ACC_ADD -> actions.addAccount()
+        SettingsKey.ACC_REMOVE -> actions.requestRemoveActiveAccount()
 
         SettingsKey.SS_PREVIEW -> actions.previewScreensaver()
         SettingsKey.ABOUT_DESIGN -> actions.toggleDesign()
@@ -503,6 +528,12 @@ private fun textEditSpec(key: SettingsKey, store: SettingsStore): TextEditSpec =
     SettingsKey.NAS_ACCOUNT -> TextEditSpec("账号", "飞牛账号", store.nas.username, masked = false)
     SettingsKey.NAS_PASSWORD -> TextEditSpec("密码", "仅保存在这台电视上", store.nas.password, masked = true)
     SettingsKey.NAS_ACCESS_CODE -> TextEditSpec("访问码", "未启用访问码网关时留空", store.nas.accessCode, masked = false)
+    SettingsKey.ACC_LABEL -> TextEditSpec(
+        title = "备注名",
+        subtitle = "只显示在这台电视上，用来区分家人的账号",
+        initial = store.nas.activeAccount?.label.orEmpty(),
+        masked = false,
+    )
     else -> TextEditSpec("输入", "", "", masked = false)
 }
 
@@ -522,6 +553,7 @@ private fun stepAction(key: SettingsKey, actions: SettingsActions): ((Boolean) -
     SettingsKey.SS_DATE -> { _ -> actions.toggleDate() }
     SettingsKey.SS_NIGHT_DIM -> { _ -> actions.toggleNightDim() }
     SettingsKey.SS_KEN_BURNS -> { _ -> actions.toggleKenBurns() }
+    SettingsKey.ACC_CURRENT -> { isLeft -> actions.cycleAccount(reverse = isLeft) }
     SettingsKey.PB_AUTOPLAY -> { _ -> actions.toggleAutoPlayNext() }
     SettingsKey.PB_LOOP -> { _ -> actions.toggleLoop() }
     else -> null

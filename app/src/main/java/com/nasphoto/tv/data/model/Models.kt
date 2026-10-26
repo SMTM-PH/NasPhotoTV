@@ -86,28 +86,175 @@ fun MediaItem.isPanoramaPhoto(): Boolean {
 enum class AlbumType { FOLDER, SMART_PEOPLE, SMART_PLACE, MEMORY, FAVORITES }
 
 /**
- * NAS 设备信息，用于设置页与状态栏显示。
+ * ================= NAS 上的一个飞牛登录账号 =================
+ *
+ * 同一台 NAS 可以有多个账号（家庭里每人一个飞牛账号，各自能看到自己的照片）。
+ * 所以 host/port 挂在 [NasConnection] 上共享，凭据挂在账号上：
+ * 切换账号 == 换一套 username/password/accessCode，host 不变。
+ *
+ * [id] 是本机生成的稳定标识（不用 username 当主键：账号名可能改密码，也可能被删了重加）。
+ */
+data class NasAccount(
+    val id: String,
+    val username: String = "",
+    /** 飞牛登录密码（保存在 SharedPreferences 里） */
+    val password: String = "",
+    /** 本机备注名（账号列表显示）；留空则显示 username */
+    val label: String = "",
+    /** 飞牛「访问码」网关口令，未启用时留空 */
+    val accessCode: String = "",
+) {
+    /** 列表/顶栏展示的名字 */
+    val displayName: String
+        get() = label.ifBlank { username.ifBlank { "未命名账号" } }
+
+    /** 头像占位用的首字（避免为头像再引一套图片资源） */
+    val initial: String
+        get() = displayName.take(1).uppercase()
+
+    /** 凭据是否填全，能拿去登录 */
+    val isConfigured: Boolean
+        get() = username.isNotBlank() && password.isNotBlank()
+
+    companion object {
+        /** 生成一个不会与现有账号冲突的 id */
+        fun newId(existing: Collection<NasAccount> = emptyList()): String {
+            var n = existing.size + 1
+            while (existing.any { it.id == "acc-$n" }) n++
+            return "acc-$n"
+        }
+    }
+}
+
+/**
+ * NAS 设备信息 + 该设备上的账号列表，用于设置页与状态栏显示。
+ *
+ * 兼容说明：`username` / `password` / `accessCode` 以前是构造参数，现在改成
+ * 「当前账号」的派生只读属性 —— 调用方仍然写 `nas.username`，不用关心多账号，
+ * 只有账号管理相关的代码才需要碰 [accounts] / [activeAccountId]。
  */
 data class NasConnection(
     val name: String = "Home-NAS",
     val host: String = "",
     /** 飞牛 Web HTTPS 端口（默认 5667） */
     val port: Int = 5667,
-    val username: String = "",
-    /** 飞牛登录密码（保存在 SharedPreferences 里） */
-    val password: String = "",
-    /** 飞牛「访问码」网关口令，未启用时留空 */
-    val accessCode: String = "",
+    /** 这台 NAS 上保存过的账号（可能是空列表 = 还没配过） */
+    val accounts: List<NasAccount> = emptyList(),
+    /** 当前使用的账号 id；失效时自动退回第一个账号 */
+    val activeAccountId: String = "",
     val connected: Boolean = false,
     val latencyMs: Int = 0,
 ) {
+    /** 当前账号；没有账号时为 null */
+    val activeAccount: NasAccount?
+        get() = accounts.firstOrNull { it.id == activeAccountId } ?: accounts.firstOrNull()
+
+    val username: String
+        get() = activeAccount?.username.orEmpty()
+
+    val password: String
+        get() = activeAccount?.password.orEmpty()
+
+    val accessCode: String
+        get() = activeAccount?.accessCode.orEmpty()
+
+    /** 是否有多个账号可切换（UI 据此决定是否显示切换入口） */
+    val hasMultipleAccounts: Boolean
+        get() = accounts.size > 1
+
     /** 是否已经填好可以登录的必填项 */
     val isConfigured: Boolean
-        get() = host.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+        get() = host.isNotBlank() && activeAccount?.isConfigured == true
 
     /** 设置页展示的连接串 */
     val displayPath: String
         get() = "https://${username.ifBlank { "user" }}@${host.ifBlank { "NAS" }}:$port/p"
+
+    fun account(id: String): NasAccount? = accounts.firstOrNull { it.id == id }
+
+    /** 换掉某个账号（不存在则追加） */
+    fun withAccount(account: NasAccount): NasConnection {
+        val exists = accounts.any { it.id == account.id }
+        return copy(
+            accounts = if (exists) accounts.map { if (it.id == account.id) account else it } else accounts + account,
+            activeAccountId = if (activeAccountId.isBlank()) account.id else activeAccountId,
+        )
+    }
+
+    /** 删掉某个账号；删的是当前账号时自动切到剩下的第一个 */
+    fun withoutAccount(id: String): NasConnection {
+        val rest = accounts.filterNot { it.id == id }
+        if (rest.isEmpty()) return copy(accounts = emptyList(), activeAccountId = "")
+        return copy(
+            accounts = rest,
+            activeAccountId = if (activeAccountId == id) rest.first().id else activeAccountId,
+        )
+    }
+
+    /** 切到某个账号（id 不存在则原样返回） */
+    fun withActiveAccount(id: String): NasConnection =
+        if (accounts.none { it.id == id }) this else copy(activeAccountId = id)
+
+    /** 直接改当前账号的字段；没有账号时先建一个空账号再改 */
+    fun updateActiveAccount(transform: (NasAccount) -> NasAccount): NasConnection {
+        val current = activeAccount ?: NasAccount(id = NasAccount.newId(accounts))
+        val next = transform(current)
+        val exists = accounts.any { it.id == next.id }
+        return copy(
+            accounts = if (exists) accounts.map { if (it.id == next.id) next else it } else accounts + next,
+            activeAccountId = next.id,
+        )
+    }
+
+    companion object {
+        /** 兼容旧存档：只有一个 username/password 的老配置也能装进新结构 */
+        fun of(
+            name: String = "Home-NAS",
+            host: String = "",
+            port: Int = 5667,
+            username: String = "",
+            password: String = "",
+            accessCode: String = "",
+        ): NasConnection {
+            val list = if (username.isBlank() && password.isBlank()) {
+                emptyList()
+            } else {
+                listOf(
+                    NasAccount(
+                        id = "acc-1",
+                        username = username,
+                        password = password,
+                        accessCode = accessCode,
+                    ),
+                )
+            }
+            return NasConnection(
+                name = name,
+                host = host,
+                port = port,
+                accounts = list,
+                activeAccountId = list.firstOrNull()?.id.orEmpty(),
+            )
+        }
+    }
+}
+
+/**
+ * NAS 人脸聚类出来的一个人（飞牛相册「人物」）。
+ *
+ * [id] 是 ai-person 接口返回的聚类 id，拿它去 ai-person 的 photoLibrary 系列接口
+ * 在所有时间线里的照片。AI 相册没开启时列表为空 —— UI 必须显示空状态而不是空白。
+ */
+data class Person(
+    val id: String,
+    val name: String,
+    /** 头像/封面（已转成绝对地址）；没有时为 "" */
+    val coverUrl: String = "",
+    /** 该人物下的照片数量（服务端给的 itemCount，取不到填 0） */
+    val itemCount: Int = 0,
+) {
+    val displayName: String get() = name.ifBlank { "未命名人物" }
+    val initial: String get() = displayName.take(1)
 }
 
 /**

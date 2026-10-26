@@ -9,6 +9,7 @@ import com.nasphoto.tv.data.model.AlbumType
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.data.model.NasConnection
+import com.nasphoto.tv.data.model.Person
 import com.nasphoto.tv.data.model.RAW_EXTENSIONS
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -128,30 +129,55 @@ class FnOsMediaRepository(
     }
 
     /**
-     * 人物照片池：ai-person/list → 每个人最近 3 天 → 逐日取图。
-     * 真实接口的 photoLibrary/list 只接受单日范围，且需要 album_id（填 personId）
-     * 与 camelCase/snake_case 两套时间参数，这里严格按该约束请求。
+     * 人物列表：`ai-person/list`（一次全量）。
+     * 返回字段在端上做过防御：不同版本的飞牛用 `name`/`personName`、`coverUrl`/`cover` 等
+     * 多种命名，这里按优先级依次尝试，全都没有就留空（UI 会画首字头像兜底）。
      */
-    override suspend fun getPeoplePhotos(limit: Int): List<MediaItem> {
+    override suspend fun getPeople(): List<Person> {
         val data = api.getJson(
             path = PERSON_LIST,
             params = listOf("getAll" to "true", "limit" to "-1", "orderBy" to "0"),
         )
         val list = data.optJSONArray("list") ?: return emptyList()
-        val people = buildList {
+        return buildList {
             for (i in 0 until list.length()) {
-                val person = list.optJSONObject(i) ?: continue
-                if (person.optInt("isHide", 0) == 1) continue
-                val id = person.optLong("id", 0L)
-                if (id > 0L) add(id to person.optInt("itemCount", 0))
+                val json = list.optJSONObject(i) ?: continue
+                if (json.optInt("isHide", 0) == 1) continue
+                val id = json.optLong("id", 0L)
+                if (id <= 0L) continue
+                val name = json.optString("name")
+                    .ifBlank { json.optString("personName") }
+                    .ifBlank { json.optString("tagName") }
+                val cover = absolute(
+                    json.optString("coverUrl")
+                        .ifBlank { json.optString("cover") }
+                        .ifBlank { json.optString("avatarUrl") }
+                        .ifBlank { json.optString("posterUrl") },
+                )
+                add(
+                    Person(
+                        id = id.toString(),
+                        name = name,
+                        coverUrl = cover,
+                        itemCount = json.optInt("itemCount", json.optInt("photoCount", 0)),
+                    ),
+                )
             }
-        }
+        }.sortedByDescending { it.itemCount }
+    }
+
+    /**
+     * 人物照片池：取照片最多的前 8 个人，每人最近 3 天 → 逐日取图（屏保用）。
+     * 真实接口的 photoLibrary/list 只接受单日范围，且需要 album_id（填 personId）
+     * 与 camelCase/snake_case 两套时间参数，这里严格按该约束请求。
+     */
+    override suspend fun getPeoplePhotos(limit: Int): List<MediaItem> {
+        val people = getPeople()
         if (people.isEmpty()) return emptyList()
 
         val pools = coroutineScope {
-            people.sortedByDescending { it.second }
-                .take(8)
-                .map { (personId, _) -> async { fetchPersonPhotos(personId) } }
+            people.take(8)
+                .map { person -> async { fetchPersonPhotos(person.id, maxDays = 3, perDay = 60) } }
                 .awaitAll()
         }
         return pools.flatten()
@@ -160,13 +186,39 @@ class FnOsMediaRepository(
             .take(limit)
     }
 
-    private suspend fun fetchPersonPhotos(personId: Long): List<MediaItem> {
+    /**
+     * 某个人的照片：先拿他/她的时间线（按天聚合），再逐日拉取。
+     *
+     * 性能约束（实机踩过）：这里是**串行**请求，每天一次。早先写死「60 天 × 每天 200 张」，
+     * 结果一个只有 16 张照片的人也要发满 60 次请求——电视端要等十几秒，模拟器直接 OOM。
+     * 现在改成：逐日拉取，凑够 [limit] 就停；再留一个 30 天的硬上限兜底，
+     * 保证「照片少的人很快返回、照片多的人拿到足够填满网格的量」。
+     */
+    override suspend fun getPersonPhotos(personId: String, limit: Int): List<MediaItem> {
+        val all = fetchPersonPhotos(personId, maxDays = 30, perDay = 200, stopAt = limit)
+        return all.sortedByDescending { it.dateTaken }.take(limit)
+    }
+
+    /**
+     * 逐日拉取某个人的照片。
+     *
+     * @param maxDays 最多看时间线里的前 N 天（时间线是倒序的，从最近一天开始）
+     * @param perDay  每天最多取多少张
+     */
+    private suspend fun fetchPersonPhotos(
+        personId: String,
+        maxDays: Int,
+        perDay: Int,
+        /** 收满这么多就提前结束（<=0 表示不设限）；人物 Tab 拉多人口径时传大值 */
+        stopAt: Int = 0,
+    ): List<MediaItem> {
         val timeline = runCatching {
-            api.getJson(PERSON_TIMELINE, listOf("id" to personId.toString()))
+            api.getJson(PERSON_TIMELINE, listOf("id" to personId))
         }.getOrNull() ?: return emptyList()
         val days = timeline.optJSONArray("list") ?: return emptyList()
         val out = ArrayList<MediaItem>()
-        for (i in 0 until minOf(days.length(), 3)) {
+        for (i in 0 until minOf(days.length(), maxDays)) {
+            if (stopAt > 0 && out.size >= stopAt) break
             val day = days.optJSONObject(i) ?: continue
             val year = day.optInt("year", 0)
             val month = day.optInt("month", 0)
@@ -177,12 +229,12 @@ class FnOsMediaRepository(
                 api.getJson(
                     path = PERSON_PHOTOS,
                     params = listOf(
-                        "album_id" to personId.toString(),
+                        "album_id" to personId,
                         "endTime" to "$ymd 23:59:59",
                         "end_time" to "$ymd 23:59:59",
-                        "limit" to "60",
+                        "limit" to perDay.toString(),
                         "offset" to "0",
-                        "personId" to personId.toString(),
+                        "personId" to personId,
                         "startTime" to "$ymd 00:00:00",
                         "start_time" to "$ymd 00:00:00",
                     ),

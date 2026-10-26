@@ -34,11 +34,11 @@ APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 21 MB，含 Media
 
 | 模块 | 代码位置 | 已实现 |
 |---|---|---|
-| **媒体库 / 相册浏览** | `ui/library/` | 顶栏（Logo + NAS 状态点 + 5 个 Tab + 搜索/屏保/设置按钮）；「全部照片」Tab 有 Hero 大图 + 最近添加横排 + 相册横排；「年 · 月 · 日」Tab 四级下钻（年 → 月 → 日 → 当天媒体网格）；「相册」Tab 4 列网格；「最近添加」Tab 6 列网格；「收藏 · 人物 · 地点」Tab（收藏网格 + 人物/地点/回忆横排）；相册详情页（返回按钮 + 6 列媒体网格）；各层级空状态 |
+| **媒体库 / 相册浏览** | `ui/library/` | 顶栏（Logo + NAS 状态点 + **当前账号胶囊** + 6 个 Tab + 搜索/屏保/设置按钮）；「全部照片」Tab 有 Hero 大图 + 最近添加横排 + 相册横排；「年 · 月 · 日」Tab 四级下钻（年 → 月 → 日 → 当天媒体网格）；「相册」Tab 4 列网格；**「人物」Tab**（NAS 人脸聚类，≤6 人一排卡片、超过自动换 6 列网格，点头像进该人物的照片网格）；「最近添加」Tab 6 列网格；「收藏 · 回忆」Tab（收藏网格 + 人物/地点/回忆横排）；相册详情页（返回按钮 + 6 列媒体网格）；各层级空状态 |
 | **全屏看图** | `ui/viewer/` | **图片优先铺满整屏**（无常驻侧栏，信息都是瞬态浮层）；左上 LIVE 徽标 + 控制栏可见时的状态句/来源/拍摄/标题/序号；`UP` 展开尺寸/文件/ID；左右切换（循环）+ 方向滑动动画；7 个工具按钮（上一张/下一张/信息/收藏/幻灯片/放大查看/关闭）；缩略图胶片条；幻灯片自动播放（5s/张，方向键暂停）；2× 放大 + 方向键平移；视频项显示封面 + ▶ |
 | **视频播放** | `ui/video/` | **真实 Media3 ExoPlayer 解码**，走带 AccessToken 的 OkHttp 数据源串流 NAS 原片；全屏播放 + 控制层 3 秒自动隐藏；播放/暂停；进度条 + 当前/总时长；快进快退 ±10s；媒体键 `NEXT/PREVIOUS` 切换视频；播完自动连播；**解码失败显示可见错误原因**（4K/10bit 超规格等，详见 §8） |
 | **屏保待机显示** | `ui/screensaver/` | 5 种时钟（CINEMA 巨幕/FLIP/THIN/MINIMAL/DATE_FOCUS）× 3 种背景（照片轮播/极光动态/纯黑极简）；农历干支小字；**前景只有时钟与退出提示，不显示任何图片信息**（标题、拍摄日期、分辨率、地点都不上屏）；Ken Burns 推拉；像素位移 + 夜间呼吸防烧屏；任意键退出 |
-| **设置** | `ui/settings/` | 两栏（左列表 420dp + 右面板）：NAS 连接（协议/地址/端口/账号/共享目录/测试连接/重扫）、屏保与待机（10 项 + 预览）、视频播放（4 项）、关于（版本/引擎/设备/设计说明/恢复默认）；右栏随聚焦项切换为 连接拓扑 / 屏保实时小预览 / 播放摘要 / 关于 |
+| **设置** | `ui/settings/` | 两栏（左列表 420dp + 右面板）：NAS 连接（协议/地址/端口/账号/密码/访问码/测试连接/重扫）、**账号切换**（当前账号 ←→ 秒切 / 备注名 / 添加账号 / 删除账号）、屏保与待机（10 项 + 预览）、视频播放（4 项）、关于（版本/引擎/设备/设计说明/恢复默认）；右栏随聚焦项切换为 连接拓扑 / 账号列表 / 屏保实时小预览 / 播放摘要 / 关于。**任何一项都能反复修改**，改完立刻落盘（`SettingsStore.persist()` + 启动时 `restore()`） |
 
 ---
 
@@ -184,15 +184,17 @@ adb shell input keyevent 88   # MEDIA_NEXT（切下一个视频）
 
 | 区域 | 方向键 | ENTER | BACK |
 |---|---|---|---|
-| 顶栏 Tab（全部照片 / 年 · 月 · 日 / 相册 / 最近添加 / 收藏 · 人物 · 地点） | 左右在 Tab 间移动 | 切换 Tab（并退出相册详情） | 相册详情内 = 回到列表 |
+| 顶栏 Tab（全部照片 / 年 · 月 · 日 / 相册 / 人物 / 最近添加 / 收藏 · 回忆） | 左右在 Tab 间移动 | 切换 Tab（并退出相册详情 / 人物详情） | 相册详情、人物详情内 = 回到列表 |
+| 顶栏账号胶囊（圆形首字 + 账号名 + `N 个账号`） | 左右移动 | 进设置页「账号切换」组 | — |
 | 顶栏按钮（搜索 / 屏保 / 设置） | 左右移动 | 搜索 → 切到「全部照片」；屏保 → `AppRoute.ScreensaverPreview`（立即进入屏保）；设置 → `AppRoute.Settings` | — |
-| Tab 按 `DOWN` | 交出焦点给主内容（Hero 优先） | — | — |
+| Tab 按 `DOWN` | 交出焦点给主内容（Hero 优先 / 人物 Tab 落到记住的那张人脸） | — | — |
 | Hero 大图 | 左右无；`DOWN` → 最近添加行 | 打开对应媒体（视频进播放器 / 图片进看图页），上下文标题「全部照片」 | — |
 | 「最近添加」横排（卡片 300×180） | `LEFT/RIGHT` 行内移动；`UP` → Hero；`DOWN` → 相册行**同列**卡片 | 打开（上下文标题「最近添加」） | — |
 | 「相册」横排（卡片 380×220 + 末尾「查看全部相册」） | `LEFT/RIGHT`；`UP` → 最近添加行同列 | 进入相册详情 / 切到「相册」Tab | — |
+| 人物排 / 人物网格（卡片 260×320 / 6 列） | 左右 + 上下；第一排 `UP` → 当前顶栏 Tab | 进入该人物的照片网格 | 人物详情内 = 回人物列表 |
 | 相册网格（4 列） | 左右 + 上下（Compose 默认同列） | 进入相册详情 | 回列表 |
 | 时间线分桶网格（5 列，年 / 月 / 日 三级） | 左右 + 上下 | 下钻一级：年 → 月 → 日 → 当天媒体网格 | 逐级上返（日 → 月 → 年 → 交回外层） |
-| 媒体网格（6 列，最近添加 / 收藏 / 相册详情 / 某一天） | 左右 + 上下；相册详情第一行 `UP` → 返回按钮 | 图片 → 看图页；视频 → 播放器（上下文标题 = 相册名 / 当天日期） | 相册详情内 = 回列表 |
+| 媒体网格（6 列，最近添加 / 收藏 / 相册详情 / 某一天 / 人物详情） | 左右 + 上下；相册/人物详情第一行 `UP` → 返回按钮 | 图片 → 看图页；视频 → 播放器（上下文标题 = 相册名 / 当天日期 / `人物 · 姓名`） | 相册 / 人物详情内 = 回列表 |
 | 空状态「去设置」按钮 | — | 跳设置页 | — |
 
 ### 4.2 全屏看图 — `ui/viewer/PhotoViewerScreen`
@@ -251,28 +253,31 @@ adb shell input keyevent 88   # MEDIA_NEXT（切下一个视频）
 
 ### 4.5 设置 — `ui/settings/SettingsScreen`
 
-布局：顶栏（青点 + `设置` + NAS 胶囊 + 右上角键位提示）→ 左列表（420dp）/ 右面板 → 底部状态条（聚焦行提示 + `分组 · 第 n / 30 项`）。
-**初始焦点落在「屏保」开关**（最常改的一项）。左栏共 4 组 24 行。
+布局：顶栏（青点 + `设置` + NAS 胶囊 + 右上角键位提示）→ 左列表（420dp）/ 右面板 → 底部状态条（聚焦行提示 + `分组 · 第 n / 36 项`）。
+**初始焦点落在「屏保」开关**（最常改的一项）；若还没配好 NAS，则直接落在「地址」行。左栏共 5 组 31 行（另 5 个组标题，共 36 行）。
 
 | 键 | 行为 |
 |---|---|
-| `UP` / `DOWN` | 在设置行之间移动（自动滚动保证聚焦行可见）；在"可微调"的行上（端口 / 账号）为 ±1 精调 |
-| `LEFT` / `RIGHT` | 行内调值：开关 / 协议 / 端口（±10）/ 账号 / 共享目录 / 屏保各项循环 / 播放各项。开关行与值行会**吃掉**左右键，不会跑到右面板 |
-| `ENTER` | 执行：动作行立即执行（测试连接 / 重扫 / 预览屏保 / 设计说明 / 恢复默认）；其余行等同于"往后调一格"；端口行 = 恢复协议默认端口；设备名/地址行 = 切换候选值 |
-| `BACK` | 「设计说明」展开时先收回；否则关闭设置页回媒体库 |
+| `UP` / `DOWN` | 在设置行之间移动（自动滚动保证聚焦行可见） |
+| `LEFT` / `RIGHT` | 行内调值：开关 / 屏保各项循环 / 播放各项 / **账号 ←→ 直接切换**。开关行与值行会**吃掉**左右键，不会跑到右面板 |
+| `ENTER` | 执行：动作行立即执行（测试连接 / 刷新媒体库 / 添加账号 / 删除账号 / 预览屏保 / 设计说明 / 恢复默认）；文本行（名称/地址/端口/账号/密码/访问码/备注名）打开电视键盘输入层；其余行等同于"往后调一格" |
+| `BACK` | 输入层打开时先关输入层；「设计说明」展开时先收回；否则关闭设置页回媒体库 |
 
-四组内容（`SettingsKey`）：
+五组内容（`SettingsKey`）：
 
 | 组 | 行 |
 |---|---|
-| `NAS 连接` | 设备名称、协议、地址、端口、账号、共享目录、测试连接、重新扫描媒体库 |
-| `屏保与待机` | 屏保开关、静止后进入、照片停留、时钟样式、背景、显示日期、夜间自动调暗、Ken Burns 动效、预览屏保 |
-| `视频播放` | 自动连播下一集、循环播放、默认显示字幕、NAS 端转码 |
+| `NAS 连接` | 名称、地址、端口、账号、密码、访问码、测试连接、刷新媒体库 |
+| `账号切换` | 当前账号（`←/→` 秒切）、备注名、添加账号、删除当前账号（两次确认） |
+| `屏保与待机` | 屏保开关、静止后进入、屏保画面、轮播内容、相册、照片停留、时钟样式、背景、显示日期、夜间自动调暗、Ken Burns 动效、预览屏保 |
+| `视频播放` | 自动连播下一集、循环播放 |
 | `关于` | 版本（1.0.0-prototype）、引擎（Compose）、设备（Android TV）、设计说明（ENTER 展开 5 条设计原则）、恢复默认设置（ENTER 两次确认，3 秒超时） |
 
-右面板随聚焦分组切换：`NAS` → 连接拓扑（电视 ↔ 路由器 ↔ NAS 三个胶囊 + 流动光点连线 + 延迟/抖动/带宽/路径/账号 + 连接串）；`屏保` → 16:9 实时小预览（背景 + 五种时钟小样 + 日期叠加 + 夜间调暗暖色 + Ken Burns 慢缩放；屏保不显示任何图片信息），聚焦「时钟样式 / 背景」行时下方出现可选胶囊条；`播放` → 封面卡 + 四条参数摘要 + 行为说明；`关于` → Logo + 版本 + 统计 + 设计原则。
+右面板随聚焦分组切换：`NAS` → 连接拓扑（电视 ↔ 路由器 ↔ NAS 三个胶囊 + 流动光点连线 + 延迟/抖动/带宽/路径/账号 + 连接串）；`账号` → 账号列表（每人一行：首字头像 + 显示名 + 用户名/访问码 + `使用中`/`待填凭据`/`可切换`/`备用` 状态胶囊 + 底部「切换会清缓存」说明）；`屏保` → 16:9 实时小预览（背景 + 五种时钟小样 + 日期叠加 + 夜间调暗暖色 + Ken Burns 慢缩放；屏保不显示任何图片信息），聚焦「时钟样式 / 背景」行时下方出现可选胶囊条；`播放` → 封面卡 + 参数摘要 + 行为说明；`关于` → Logo + 版本 + 统计 + 设计原则。
 
-> 「测试连接」是**演示友好**的实现：本次会话第一次探测会失败（让"连接失败"状态也能被看到），之后都成功；「重新扫描」是 1.5 秒假进度。两者都是纯 UI 状态，不写回 `SettingsStore` 的数据（`nasTesting/nasTestOk/nasTestLatency` 在 `SettingsFeedback` 里）。
+> 「测试连接」是**真实** WSS 登录 + 签名请求，成功显示延迟、失败显示原因；改地址/端口/凭据后上一次结果自动失效。`SettingsFeedback` 里的 `nasTesting/nasTestOk/nasTestLatency` 是 UI 状态，不写回 `SettingsStore`。
+
+> **设置随时可改、改完即存**：外壳有 `LaunchedEffect(screensaverSettings, playbackSettings, nas) { SettingsStore.persist() }`，`MainActivity.onCreate` 里有 `SettingsStore.restore()`。任何一项（含账号列表、星标分区）改完立即落盘，`BACK` 出设置页再进、甚至杀进程重进都保持。
 
 ---
 
@@ -309,8 +314,9 @@ adb shell input keyevent 88   # MEDIA_NEXT（切下一个视频）
          │  ├─ theme/Theme.kt                    NasPhotoTvTheme、TvShapes、M3 ColorScheme/Typography 映射
          │  ├─ common/MediaImage.kt              MediaImage(url, …)：统一媒体加载 + 渐变占位
          │  ├─ common/FocusCard.kt               FocusCard：放大 + 白描边 + 青光晕（看图/播放器在用）
-         │  ├─ library/LibraryScreen.kt          媒体库五个 Tab（含年·月·日三级下钻）+ 相册详情 + 页面级空状态
-         │  ├─ library/LibraryComponents.kt      顶栏 / 区块标题 / Hero / 媒体卡片 / 相册卡片 / 时间线分桶卡片 / 空状态 / 返回头
+         │  ├─ library/LibraryScreen.kt          媒体库六个 Tab（含年·月·日三级下钻）+ 相册详情 + 人物详情 + 页面级空状态
+         │  ├─ library/LibraryComponents.kt      顶栏（含账号胶囊）/ 区块标题 / Hero / 媒体卡片 / 相册卡片 / 时间线分桶卡片 / 空状态 / 返回头
+         │  ├─ library/PeopleTab.kt             人物 Tab：人物卡片（首字头像兜底）、一排 6 张→6 列网格、加载/空态
          │  ├─ library/LibraryFocus.kt           TvFocusBox、PendingFocus、scrollRowTo/scrollGridTo、GridContentPadding
          │  ├─ library/LibraryData.kt            LibraryTab 枚举、HeroInfo、ChronoBucket（年/月/日分桶）、空安全派生与格式化
          │  ├─ viewer/PhotoViewerScreen.kt       全屏看图（状态机 + 按键 + 全屏舞台 + 幻灯片）
@@ -328,16 +334,17 @@ adb shell input keyevent 88   # MEDIA_NEXT（切下一个视频）
          │     ├─ SettingsRow.kt                 一行设置项 + 组标题 + 值文本/开关态判定
          │     ├─ SettingsFocusRow.kt            可聚焦行（高 62dp、放大 1.02、白 3dp 描边、左右调值）
          │     ├─ SettingsChips.kt               值胶囊 / 静态胶囊 / TvSwitch / 进度条 / ‹ › 字形
-         │     └─ SettingsNasPanel / SettingsScreensaverPanel / SettingsPlaybackPanel / SettingsAboutPanel.kt  右栏四个面板
+         │     └─ SettingsNasPanel / SettingsAccountPanel / SettingsScreensaverPanel /
+         │        SettingsPlaybackPanel / SettingsAboutPanel.kt  右栏五个面板
          │
          └─ data/                                ── 数据层 ──
             ├─ model/Models.kt                   ★ MediaItem / Album / AlbumType / MediaType / NasConnection /
-            │                                       ScreensaverSettings / PlaybackSettings / WeatherInfo
+            │                                       NasAccount / Person / ScreensaverSettings / PlaybackSettings
             ├─ MediaRepository.kt                ★ 仓库接口（唯一需要替换的抽象边界）
             ├─ FnOsMediaRepository.kt            真实飞牛相册实现（时间线/相册/人物/视频串流）
             ├─ SettingsStore.kt                  ★ 全局设置（Compose State）+ cycle* 便捷方法 + SharedPreferences persist/restore
             ├─ MediaCache.kt                    最近一次拉取快照（设置页屏保预览/播放摘要读它）
-            ├─ FavoritesStore.kt                收藏（内存态，见 §8）
+            ├─ FavoritesStore.kt                收藏（SharedPreferences，按账号分区，见 §8）
             ├─ AppContextHolder.kt              全局 applicationContext
             └─ fn/
                ├─ FnOsApi.kt                    WSS 握手 + 加密登录 + 签名请求
@@ -383,15 +390,17 @@ adb shell input keyevent 88   # MEDIA_NEXT（切下一个视频）
 | 签名 HTTP | `data/fn/FnOsSigner.kt` `FnOsCrypto.kt` `FnOsReqId.kt` | 每个业务请求带签名与递增 reqid |
 | TOFU 证书信任 | `data/fn/FnOsTofu.kt` | 首次见到的证书指纹落盘，变化时提示并可重试 |
 | AccessToken 注入 | `data/fn/FnOsTransport.kt` | OkHttp 拦截器统一注入；Coil 图片与 ExoPlayer 视频共用同一客户端 |
-| 相册数据 | `data/FnOsMediaRepository.kt` | 时间线 `gallery/getList`、相册 `album/list` + `album/photos`、共享相册、AI 人物、视频串流 `/p/api/v1/stream/v/<id>` |
+| 相册数据 | `data/FnOsMediaRepository.kt` | 时间线 `gallery/getList`、相册 `album/list` + `album/photos`、共享相册、视频串流 `/p/api/v1/stream/v/<id>` |
+| 人物数据 | `data/FnOsMediaRepository.kt` | `ai-person/list`（过滤 `isHide==1`、字段名多版本兜底）→ `getPeople()`；人物照片走 `ai-person` 的 photoLibrary 系列接口按天拉取（`getPersonPhotos(id)` / 屏保用的 `getPeoplePhotos()`）；NAS 未开 AI 相册时返回空 |
 | 真实解码 | `ui/video/VideoPlayerScreen.kt` | Media3 ExoPlayer + 带 token 的 OkHttp 数据源；解码失败显示可见原因 |
+| 多账号登录 | `data/SettingsStore.kt` `data/model/Models.kt` | `NasConnection.accounts: List<NasAccount>` + `activeAccountId`；`switchAccount/addAccount/removeAccount`；切号时重建仓库 + 清缓存 + 清 token + 按账号重载星标（详见 §4.5 与 §7 P0） |
 
 ### 6.2 尚未实现（详见 §8）
 
 - 4K / 10bit / 高帧率素材的自动降级或 NAS 端转码请求；
 - 字幕文件解析（`.srt/.ass`）；
 - 搜索输入界面；
-- 收藏持久化写回数据层。
+- 多台 NAS / 跨设备共享照片（同一台 NAS 上的多账号已支持）。
 
 ## 7. 量产改造清单
 
@@ -404,7 +413,8 @@ adb shell input keyevent 88   # MEDIA_NEXT（切下一个视频）
 | **空闲检测** | 外壳用 `System.currentTimeMillis()` + `View.OnKeyListener` 记录最后按键，每秒轮询 | ① 改用 `MainActivity.dispatchKeyEvent` 已有的时间戳 + `onUserInteraction()` + `View.OnGenericMotionListener`（遥控器鼠标/手柄）；② 加入 `PowerManager.isInteractive` 判断，屏幕熄灭时不算空闲（或直接进屏保）；③ 用协程 `select` 替代 1 秒轮询；④ 遮罩：播放视频/幻灯片时不进屏保 | Activity + 外壳 |
 | **真实数据** | ✅ 已接入飞牛相册（WSS 登录 + 签名 HTTP） | 完成 | data |
 | **真实解码** | ✅ 已接入 Media3 ExoPlayer | 补 4K/10bit 素材的降级与转码 | video |
-| **设置持久化** | `SettingsStore.persist()/restore()` 已写好，但**全工程没有任何调用点**（外壳启动时不 `restore()`、改动后不 `persist()`），所以重启回默认值 | 在 `MainActivity.onCreate` / 外壳首帧调 `SettingsStore.restore()`，在 `updateXxx` 之后或切后台时调 `persist()` | 外壳 |
+| **设置持久化** | ✅ 已打通：`MainActivity.onCreate` 调 `SettingsStore.restore()` + `FavoritesStore.restore()`，外壳每个设置变更都 `LaunchedEffect(screensaverSettings, playbackSettings, nas) { SettingsStore.persist() }` 立刻落盘；设置页任何一项随时可改、改完即存、重启仍在 | 量产再补「切后台时落盘」作为双保险（当前是变更即写，已足够） | 外壳 |
+| **多账号隔离** | ✅ 同一台飞牛 NAS 上可保存多个账号并在设置里 ←→ 秒切；切号时重建仓库（`activeAccountId` 进 `remember` key）、清 `MediaCache`、清 Coil 内存/磁盘缓存、清 `FnOsTransport.token`、按账号重载星标分区 | 量产可补「每个账号独立缩略图缓存命名空间」（当前是直接清空，切换后首屏要重新解码） | 外壳 + data |
 | **崩溃与空态** | 已处理大部分空列表 | 给 `NasException` 类错误配 UI 提示 + 重试按钮；NAS 断线时屏保要退回「极光动态」而不是黑屏 | 各页 |
 
 ### P1 · 体验（决定"值不值得留在客厅"）
@@ -415,7 +425,7 @@ adb shell input keyevent 88   # MEDIA_NEXT（切下一个视频）
 | **防烧屏** | 现有：像素位移 ±8dp / 2 分钟、夜间呼吸 alpha 0.90~1.00（15s 单程）、文字白色 90%、无纯白大面积、背景压暗 30~45%、极光星点不闪。可加强：① 长时间（>2h）后降低整体亮度 10~15%；② 每 30 分钟做一次 3~5 分钟的"文字整体淡出→只留背景"；③ OLED 电视遵循厂商 API（如 `Display.getHdrCapabilities`/厂商私有亮度接口）；④ 时钟/天气按 StandBy 式在 1/2/3 个布局间**换位**，而不是只在原地抖 8dp。 |
 | **低功耗** | 屏保常驻必须做到：① 屏保期间不跑每秒一帧的无限动画（现有 `rememberInfiniteTransition` 会跟 Choreographer 走，被系统暂停时自动冻结，已经是好的基础）；② 时钟只在秒变化的 Text 重组（`ClockParts` 已分层）；③ 背景照片每 10s 才换，Ken Burns 26s 单程；④ `WAKE_LOCK` 目前没用上，用 `FLAG_KEEP_SCREEN_ON` 足够；⑤ 关掉不必要的 `requestAnimationFrame`，屏幕变暗后降帧。 |
 | **开机自启 / 默认启动器** | 客厅设备通常需要"开机即相框"：① TV 厂商预装可以把 App 设为 `HOME`（需要 `<category android:name="android.intent.category.HOME"/>`）；② 普通 Android TV 用 `BOOT_COMPLETED` 广播 + 前台服务拉起（需 `RECEIVE_BOOT_COMPLETED` 权限，Google TV 对后台启动有额外限制）；③ 用 `android.intent.action.MAIN` + `singleTask` 已有，只需加自启；④ 注意 Google Play 对 `HOME`/自启动的政策要求。 |
-| **多 NAS 账户 / 共享照片** | `NasConnection` 单条 → 列表 + 当前项；每台 NAS 独立缩略图缓存命名空间；「家庭共享」：家人把自己的 NAS/相册加入同一台电视（需要账号体系与权限模型）。 |
+| **跨 NAS 共享照片（家庭共享）** | 已实现「同一台 NAS 的多个飞牛账号在设置里切换」（`NasConnection.accounts` + `activeAccountId`）：每人的账号看自己的相册，切号即清缓存、重登、重载星标。**尚未实现**的是「多台不同 NAS / 家人把自己的 NAS 加入这台电视」——那需要设备发现 + 授权码 + 权限模型，属于跨设备共享，和账号切换不是一回事。 |
 | **隐私（家庭照片上云）** | 这是本品最核心的信任点：① 所有数据**端到端留在局域网**，不做任何云端索引/上传；② 联网仅用于天气（可关，`showWeather`）与自动更新；③ 天气接口要用明文隐私说明（城市级定位或手填城市，避免精确定位）；④ 卸载/换机提供"清除本地缓存与凭据"入口；⑤ 若做远程访问（外网看家里照片），必须显式开启 + 二次确认。 |
 | **性能（4K 电视）** | 4K 面板 + 内存小的盒子是最大风险：① **永远不要原图直读全屏**：列表用 320px 缩略图、看图用 1280~1920px、屏保用 1280px（现有 `MediaItem`/`MediaImage` 已带 `targetWidth` 分级，保持这个约束）；② `BitmapFactory`/Coil 都做 `inSampleSize`，并限制位图缓存上限；③ 预取：屏保下一张提前 1 个间隔解码；胶片条按可见范围预取；④ 帧率：屏保动画目标 30fps（10-foot UI 不需要 60）；⑤ 冷启动 < 2s：先渲染缓存快照。 |
 
@@ -440,9 +450,9 @@ adb shell input keyevent 88   # MEDIA_NEXT（切下一个视频）
 | 1 | **4K / 10bit / 高帧率视频可能无法播放** | 素材直接来自相机/无人机原片。实测 DJI 4K 60fps HEVC 10bit 在模拟器与部分电视盒子上被判 `NO_EXCEEDS_CAPABILITIES`。已加 `onPlayerError` 提示与「下一曲」跳过，但**没有自动转码或降级选流**。 |
 | 2 | **没有字幕文件** | 字幕开关只显示一条写死的中文样片，不解析 `.srt/.ass`。 |
 | 3 | **没有 HEIC 解码（API 26/27）** | 低版本 Android 无系统 HEIC 解码器；RAW 走 NAS 生成的高清 JPG 预览规避。 |
-| 4 | **收藏不持久化** | 看图页星标是内存态 `starredOverrides`，退出即丢，未写回数据层。 |
+| 4 | **收藏只在单机、按账号分区** | 星标写在 `SharedPreferences`（`FavoritesStore`，key 前缀 `ids_<accountId>`），跨启动保留、按账号隔离；但**不跨设备同步**，也没有 NAS 侧的收藏增删接口（fnOS 未提供，等接口确认后在 `toggle()` 里补双写即可）。 |
 | 5 | **没有搜索输入 UI** | 顶栏「搜索」只会切到「全部照片」Tab；`MediaRepository.search()` 已实现但无电视端输入界面。 |
-| 6 | **人物/地点依赖 NAS 侧聚类** | 「收藏 · 人物 · 地点」读的是 `ai-person` 接口，NAS 未开启 AI 相册时为空。 |
+| 6 | **「人物」依赖 NAS 侧 AI 聚类** | 「人物」Tab 读 `ai-person/list`，NAS 未开启「AI 相册 / 人脸识别」时列表为空 —— 此时显示空态并提示去 NAS 开启，不会白屏。人物的封面、姓名、张数都做了字段兜底（字段名各版本不一致），缺失时画首字头像。地点/回忆仍是 `收藏 · 回忆` Tab 里的横排占位。 |
 | 7 | **农历是近似值** | `lunarLabel` 以锚点推算，远日期有偏差。 |
 | 8 | **天气是本地假数据** | `MockWeatherProvider` 按小时轮换预置天气，不请求网络。 |
 | 9 | **不支持长按/双击/手势** | 看图页无双指缩放/旋转/滑动翻页（遥控器 2× 放大 + 方向键平移代替）。 |

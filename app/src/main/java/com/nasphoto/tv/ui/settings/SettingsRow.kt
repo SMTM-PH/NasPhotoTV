@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -203,6 +204,16 @@ fun rowValueText(key: SettingsKey, store: SettingsStore, feedback: SettingsFeedb
         SettingsKey.NAS_ACCOUNT -> store.nas.username.ifBlank { "未设置" }
         SettingsKey.NAS_PASSWORD -> if (store.nas.password.isBlank()) "未设置" else "已设置"
         SettingsKey.NAS_ACCESS_CODE -> if (store.nas.accessCode.isBlank()) "未启用" else "已设置"
+        // 账号组：值胶囊显示"当前是谁 / 共几个"，左右键循环切换
+        SettingsKey.ACC_CURRENT -> {
+            val active = store.nas.activeAccount
+            when {
+                active == null -> "未添加"
+                store.nas.accounts.size > 1 -> "${active.displayName}（${store.nas.accounts.size} 个）"
+                else -> active.displayName
+            }
+        }
+        SettingsKey.ACC_LABEL -> store.nas.activeAccount?.label?.ifBlank { "未设置" } ?: "未设置"
         SettingsKey.SS_IDLE -> SettingsStore.formatIdleTimeout(s.idleTimeoutSec)
         SettingsKey.SS_MODE -> s.mode.label
         SettingsKey.SS_SOURCE -> s.photoSource.label
@@ -227,6 +238,8 @@ fun rowValueText(key: SettingsKey, store: SettingsStore, feedback: SettingsFeedb
         SettingsKey.SS_PREVIEW,
         SettingsKey.ABOUT_DESIGN,
         SettingsKey.ABOUT_RESET,
+        SettingsKey.ACC_ADD,
+        SettingsKey.ACC_REMOVE,
         -> ""
     }
 }
@@ -255,6 +268,8 @@ private val ACTION_KEYS = setOf(
     SettingsKey.SS_PREVIEW,
     SettingsKey.ABOUT_DESIGN,
     SettingsKey.ABOUT_RESET,
+    SettingsKey.ACC_ADD,
+    SettingsKey.ACC_REMOVE,
 )
 
 @Composable
@@ -284,6 +299,29 @@ private fun ActionTail(key: SettingsKey, feedback: SettingsFeedback, focused: Bo
             Spacer(Modifier.width(TvDimen.SpaceXs))
             Text("全屏", fontSize = TvType.Tiny, color = TvColor.TextTertiary)
             Spacer(Modifier.width(TvDimen.SpaceXs))
+            Chevron(tint)
+        }
+
+        SettingsKey.ACC_ADD -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.PersonAdd, null, Modifier.size(18.dp), tint = TvColor.TextTertiary)
+            Spacer(Modifier.width(TvDimen.SpaceXs))
+            Text("新增", fontSize = TvType.Tiny, color = TvColor.TextTertiary)
+            Spacer(Modifier.width(TvDimen.SpaceXs))
+            Chevron(tint)
+        }
+
+        SettingsKey.ACC_REMOVE -> if (feedback.removeAccountArmed) {
+            Text(
+                text = "再按一次确认",
+                fontSize = TvType.Tiny,
+                fontWeight = FontWeight.SemiBold,
+                color = TvColor.Danger,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(TvDimen.RadiusS))
+                    .background(TvColor.Danger.copy(alpha = 0.14f))
+                    .padding(horizontal = TvDimen.SpaceS, vertical = 4.dp),
+            )
+        } else {
             Chevron(tint)
         }
 
