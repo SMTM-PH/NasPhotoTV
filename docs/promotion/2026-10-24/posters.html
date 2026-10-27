@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NAS Photo TV · 推广图文卡片</title>
+  <style>
+    :root {
+      --paper: #edf1e9;
+      --ink: #142b23;
+      --night: #0d1715;
+      --green: #3ddc97;
+      --muted: #95a49d;
+      --line: #b7c8ba;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body { background: #d1d7d0; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; -webkit-font-smoothing: antialiased; }
+    .poster { width: 1080px; height: 1440px; position: relative; overflow: hidden; padding: 72px; margin: 0; color: var(--ink); background: var(--paper); }
+    .poster + .poster { margin-top: 24px; }
+    .poster.dark { background: var(--night); color: var(--paper); }
+    .brand { display: flex; align-items: center; gap: 18px; font-family: "Segoe UI", Arial, sans-serif; font-size: 34px; font-weight: 650; letter-spacing: .5px; }
+    .brand-mark { width: 39px; height: 29px; border: 3px solid currentColor; border-radius: 3px; position: relative; }
+    .brand-mark:after { content: ""; position: absolute; width: 16px; height: 3px; background: currentColor; bottom: -8px; left: 8px; }
+    .brand.green .brand-mark { color: var(--green); }
+    .edition { position: absolute; top: 77px; right: 72px; font-size: 23px; letter-spacing: 2px; }
+    .eyebrow { font-size: 27px; letter-spacing: 2px; margin: 0; }
+    h1, h2, p { margin: 0; }
+    .hero-title { font-size: 106px; line-height: 1.24; font-weight: 750; letter-spacing: -5px; }
+    .section-title { font-size: 90px; line-height: 1.27; letter-spacing: -4px; font-weight: 730; }
+    .accent { color: var(--green); }
+    .screen { background: #08090d; padding: 12px; border-radius: 26px; box-shadow: 0 16px 0 rgba(12, 28, 22, .13), 0 30px 40px rgba(12, 28, 22, .1); }
+    .screen img { width: 100%; height: auto; display: block; border-radius: 14px; }
+    .caption { font-size: 24px; line-height: 1.5; color: #5d7167; }
+    .dark .caption { color: #a5b6ad; }
+    .footer { position: absolute; left: 72px; right: 72px; bottom: 66px; display: flex; justify-content: space-between; align-items: center; padding-top: 25px; border-top: 1px solid var(--line); font-size: 24px; letter-spacing: 1px; }
+    .dark .footer { border-color: #3b5146; color: #b2c2b8; }
+    .app-name { font-family: "Segoe UI", Arial, sans-serif; letter-spacing: 1px; }
+    #card-1 .eyebrow { margin-top: 81px; }
+    #card-1 .hero-title { margin-top: 29px; }
+    #card-1 .hero-title span { position: relative; display: inline-block; }
+    #card-1 .hero-title span:after { content: ""; position: absolute; left: 0; right: 0; bottom: 4px; height: 12px; background: var(--green); z-index: 0; }
+    #card-1 .hero-title strong { position: relative; font-weight: inherit; z-index: 1; }
+    #card-1 .subtitle { margin-top: 32px; font-size: 33px; line-height: 1.6; }
+    #card-1 .screen { margin-top: 47px; }
+    #card-1 .caption { margin-top: 27px; }
+    #card-2 .eyebrow { margin-top: 83px; color: #a8c3b5; }
+    #card-2 .section-title { margin-top: 27px; }
+    #card-2 .screen { margin-top: 35px; border: 1px solid #3e5649; padding: 9px; border-radius: 23px; box-shadow: none; }
+    #card-2 .caption { margin-top: 20px; }
+    .remote-strip { margin-top: 30px; display: flex; align-items: center; gap: 36px; }
+    .dpad { flex: 0 0 132px; height: 132px; position: relative; border-radius: 50%; border: 2px solid #658172; background: #23362d; }
+    .dpad .key { position: absolute; width: 18px; height: 18px; }
+    .dpad .up { top: 15px; left: 55px; border-top: 2px solid #c3d9cb; border-left: 2px solid #c3d9cb; transform: rotate(45deg); }
+    .dpad .down { bottom: 15px; left: 55px; border-bottom: 2px solid #c3d9cb; border-right: 2px solid #c3d9cb; transform: rotate(45deg); }
+    .dpad .left { left: 15px; top: 55px; border-bottom: 2px solid #c3d9cb; border-left: 2px solid #c3d9cb; transform: rotate(45deg); }
+    .dpad .right { right: 15px; top: 55px; border-top: 2px solid #c3d9cb; border-right: 2px solid #c3d9cb; transform: rotate(45deg); }
+    .dpad .ok { position: absolute; inset: 43px; display: grid; place-items: center; border: 1px solid #7a9887; border-radius: 50%; font: 18px "Segoe UI", sans-serif; }
+    .remote-copy h2 { font-size: 40px; font-weight: 650; margin-bottom: 13px; }
+    .remote-copy p { font-size: 27px; line-height: 1.7; color: #b7c9bd; }
+    #card-3 .eyebrow { margin-top: 62px; }
+    #card-3 .section-title { margin-top: 20px; }
+    #card-3 .screen { margin-top: 28px; }
+    #card-3 .caption { margin-top: 25px; }
+    .modes { margin-top: 25px; display: grid; grid-template-columns: 1fr 1fr; gap: 48px; }
+    .mode { padding-top: 20px; border-top: 4px solid #adc9b6; }
+    .mode h2 { font-size: 42px; font-weight: 650; }
+    .mode p { font-size: 28px; line-height: 1.65; margin-top: 13px; color: #516b5b; }
+    #card-4 .eyebrow { margin-top: 80px; }
+    #card-4 .section-title { margin-top: 30px; font-size: 91px; }
+    .requirements { margin-top: 62px; border-top: 1px solid #637c6b; }
+    .requirement { display: grid; grid-template-columns: 66px 1fr; gap: 25px; padding: 18px 0; border-bottom: 1px solid #3c5447; }
+    .check { width: 46px; height: 46px; margin-top: 3px; border-radius: 50%; border: 1px solid #567b64; color: var(--green); display: grid; place-items: center; font: 28px "Segoe UI", sans-serif; }
+    .requirement h2 { font-size: 38px; font-weight: 650; }
+    .requirement p { font-size: 28px; line-height: 1.6; color: #b7c8bc; margin-top: 8px; }
+    .repo { margin-top: 30px; }
+    .repo-label { font-size: 22px; letter-spacing: 3px; color: #9fb7a8; }
+    .repo-path { font: 38px/1.5 "Segoe UI", Arial, sans-serif; margin-top: 10px; letter-spacing: -.5px; }
+    .version { font: 25px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif; color: #b7c8bc; margin-top: 14px; }
+    @media print { body { background: white; } .poster { break-after: page; } .poster + .poster { margin-top: 0; } }
+  </style>
+</head>
+<body>
+  <article class="poster" id="card-1" aria-label="NAS Photo TV 封面">
+    <div class="brand"><i class="brand-mark" aria-hidden="true"></i><span>NAS Photo TV</span></div>
+    <div class="edition">开发体验版</div>
+    <p class="eyebrow">飞牛相册 × Android TV</p>
+    <h1 class="hero-title">NAS 里的照片<br><span><strong>搬上客厅大屏</strong></span></h1>
+    <p class="subtitle">一起翻翻旅行、日常，和那些舍不得删的瞬间。</p>
+    <div class="screen"><img src="images/02-library.png" alt="仓库历史媒体库示例界面"></div>
+    <p class="caption">仓库历史示例界面 · 非本轮真机截图</p>
+    <div class="footer"><span>个人项目 · 非飞牛官方客户端</span><span class="app-name">1.0.0-prototype</span></div>
+  </article>
+
+  <article class="poster dark" id="card-2" aria-label="遥控器浏览功能">
+    <div class="brand green"><i class="brand-mark" aria-hidden="true"></i><span>NAS Photo TV</span></div>
+    <div class="edition">大屏看相册</div>
+    <p class="eyebrow">相册 / 时间线 / 幻灯片</p>
+    <h1 class="section-title">拿起遥控器<br><span class="accent">翻一翻旧照片</span></h1>
+    <div class="screen"><img src="images/02-library.png" alt="仓库历史媒体库示例界面，含相机、书架、飞机和秋千照片"></div>
+    <p class="caption">仓库历史示例界面 · 非本轮真机截图</p>
+    <div class="remote-strip">
+      <div class="dpad" aria-hidden="true"><i class="key up"></i><i class="key down"></i><i class="key left"></i><i class="key right"></i><span class="ok">OK</span></div>
+      <div class="remote-copy"><h2>方向键切换，确认键打开</h2><p>按年月日回看，也能开启幻灯片。<br>照片可以全屏看、放大看。</p></div>
+    </div>
+    <div class="footer"><span>照片来自你的飞牛相册</span><span>Android TV / 电视盒子</span></div>
+  </article>
+
+  <article class="poster" id="card-3" aria-label="时钟与纯照片相框模式">
+    <div class="brand"><i class="brand-mark" aria-hidden="true"></i><span>NAS Photo TV</span></div>
+    <div class="edition">客厅电子相框</div>
+    <p class="eyebrow">应用内屏保</p>
+    <h1 class="section-title">电视，也可以<br>是一台相框</h1>
+    <div class="screen"><img src="images/03-screensaver.png" alt="仓库历史时钟布局示例，渐变背景上的大号数字时钟"></div>
+    <p class="caption">时钟布局示例 · 仓库历史示例界面 · 非本轮真机截图</p>
+    <div class="modes">
+      <div class="mode"><h2>时钟待机</h2><p>五种时钟样式<br>时间与照片，一起留在屏幕上</p></div>
+      <div class="mode"><h2>纯照片模式</h2><p>留给照片整个画面<br>选择相册，慢慢轮播</p></div>
+    </div>
+    <div class="footer"><span>当前为应用内屏保</span><span>尚未集成系统级待机屏保</span></div>
+  </article>
+
+  <article class="poster dark" id="card-4" aria-label="体验环境与限制">
+    <div class="brand green"><i class="brand-mark" aria-hidden="true"></i><span>NAS Photo TV</span></div>
+    <div class="edition">开始体验</div>
+    <p class="eyebrow">设备与使用说明</p>
+    <h1 class="section-title">体验前<br><span class="accent">先看这张</span></h1>
+    <div class="requirements">
+      <div class="requirement"><span class="check" aria-hidden="true">✓</span><div><h2>Android 8.0 及以上</h2><p>面向 Android TV / Google TV / 电视盒子</p></div></div>
+      <div class="requirement"><span class="check" aria-hidden="true">✓</span><div><h2>连接同一局域网</h2><p>准备好飞牛相册与 NAS 登录账号</p></div></div>
+      <div class="requirement"><span class="check" aria-hidden="true">!</span><div><h2>视频取决于设备解码能力</h2><p>不保证 4K / 10bit 素材兼容</p></div></div>
+      <div class="requirement"><span class="check" aria-hidden="true">!</span><div><h2>当前为开发体验版</h2><p>系统级待机屏保尚未集成</p></div></div>
+    </div>
+    <div class="repo"><p class="repo-label">GITHUB 源码</p><p class="repo-path">SMTM-PH/NasPhotoTV</p><p class="version">1.0.0-prototype · 个人项目 · 非飞牛官方客户端</p></div>
+    <div class="footer"><span>欢迎反馈设备与兼容性问题</span><span>NAS Photo TV</span></div>
+  </article>
+  <script>
+    // Local export mode: render one fixed-size card without changing its layout.
+    const card = new URLSearchParams(window.location.search).get('card');
+    if (/^[1-4]$/.test(card || '')) {
+      document.querySelectorAll('.poster').forEach((poster) => {
+        poster.style.display = poster.id === `card-${card}` ? 'block' : 'none';
+        poster.style.marginTop = '0';
+      });
+      document.body.style.width = '1080px';
+      document.body.style.height = '1440px';
+      document.body.style.overflow = 'hidden';
+    }
+  </script>
+</body>
+</html>
