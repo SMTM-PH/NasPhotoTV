@@ -39,6 +39,7 @@ import com.nasphoto.tv.ui.connection.ConnectionMode
 import com.nasphoto.tv.ui.connection.ConnectionScreen
 import com.nasphoto.tv.ui.library.LibraryScreen
 import com.nasphoto.tv.ui.common.NasImageLoader
+import com.nasphoto.tv.ui.common.ScreenIdleGuard
 import com.nasphoto.tv.ui.screensaver.ScreensaverScreen
 import com.nasphoto.tv.ui.settings.SettingsScreen
 import com.nasphoto.tv.ui.theme.NasPhotoTvTheme
@@ -280,6 +281,9 @@ fun NasPhotoTvApp() {
                 val idleSec = screensaverSettings.idleTimeoutSec
                 if (!screensaverSettings.enabled || idleSec <= 0) continue
                 if (screensaverVisible) continue
+                // 软件输入法打字、语音输入不产生按键事件，会被误判空闲；
+                // 输入层持有豁免期内跳过（见 ScreenIdleGuard）
+                if (ScreenIdleGuard.isHeld()) continue
                 val idle = (System.currentTimeMillis() - lastInteractionMs) / 1000
                 val eligible = route != AppRoute.ScreensaverPreview &&
                     player == null &&
