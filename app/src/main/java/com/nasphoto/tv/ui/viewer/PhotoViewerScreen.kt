@@ -91,6 +91,14 @@ import java.time.LocalDate
 /** 控制栏无操作自动隐藏时长 */
 private const val ChromeAutoHideMs = 3000L
 
+/**
+ * 左上角相片信息面板的自动隐藏时长。
+ * 它比底部控制栏更早收起：用户打开照片是来看图的，这块信息（来源/拍摄/标题/序号）
+ * 面积不小、又压在画面左上，停留 3 秒明显挡图。1.5 秒足够扫一眼，需要细看按 UP 展开会常驻。
+ * 底部工具条仍保持 [ChromeAutoHideMs]，否则遥控器还没按到「下一张」就消失了。
+ */
+private const val HudAutoHideMs = 1500L
+
 /** 幻灯片每张停留时长 */
 private const val SlideshowIntervalMs = 5000L
 
@@ -201,6 +209,21 @@ fun PhotoViewerScreen(
         runCatching { tabFocus.requestFocus() }
     }
 
+    // ---- 左上角信息面板：比控制栏更早淡出，避免长时间遮挡画面 ----
+    var hudVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(state.chromeVisible, state.index, state.infoExpanded) {
+        if (!state.chromeVisible) {
+            hudVisible = false
+        } else {
+            hudVisible = true
+            // 展开详细信息（按 UP）时是用户主动要看，不自动收
+            if (!state.infoExpanded) {
+                delay(HudAutoHideMs)
+                hudVisible = false
+            }
+        }
+    }
+
     // ---- 控制栏 3 秒自动隐藏 ----
     LaunchedEffect(state.chromeVisible, state.index, state.infoExpanded, state.slideshowPlaying, state.zoomed, inToolbar) {
         if (!state.chromeVisible) return@LaunchedEffect
@@ -299,6 +322,7 @@ fun PhotoViewerScreen(
             ViewerHud(
                 state = state,
                 contextTitle = contextTitle,
+                visible = hudVisible,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(start = TvDimen.ScreenPadding, top = TvDimen.SpaceL),

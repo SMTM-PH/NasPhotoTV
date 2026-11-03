@@ -253,6 +253,12 @@ private val HudBackground = Brush.verticalGradient(
 fun ViewerHud(
     state: PhotoViewerState,
     contextTitle: String,
+    /**
+     * 信息面板是否可见。与 [PhotoViewerState.chromeVisible] 分开：
+     * 面板面积大、压在画面左上，会自动隐藏得更早（见 PhotoViewerScreen.HudAutoHideMs），
+     * 而底部工具条仍按 chromeVisible 的 3 秒节奏。徽标行不受影响、始终显示。
+     */
+    visible: Boolean = state.chromeVisible,
     modifier: Modifier = Modifier,
 ) {
     val item = state.current ?: return
@@ -263,7 +269,7 @@ fun ViewerHud(
         HudBadges(item)
 
         AnimatedVisibility(
-            visible = state.chromeVisible,
+            visible = visible,
             enter = fadeIn(tween(200)),
             exit = fadeOut(tween(160)),
         ) {

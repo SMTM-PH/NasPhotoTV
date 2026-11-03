@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -118,7 +119,17 @@ fun ConsumeBlockRequest(pending: PendingFocus, blockId: Int, blockFallback: () -
             block != null && block.first == blockId -> block.second ?: blockFallback()
             else -> null
         }
-        target?.let { runCatching { it.requestFocus() } }
+        // 目标卡片所在的行/网格可能刚进组合、还没挂上布局树：此时 requestFocus 会直接抛，
+        // 焦点就落到顶栏（用户得重新按下方向键找回相册/人物）。等一帧重试几次再放弃。
+        target?.let { req ->
+            var ok = runCatching { req.requestFocus() }.isSuccess
+            var tries = 0
+            while (!ok && tries < 3) {
+                withFrameMillis { }
+                ok = runCatching { req.requestFocus() }.isSuccess
+                tries++
+            }
+        }
         pending.consume(which)
     }
 }

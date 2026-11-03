@@ -101,6 +101,8 @@ fun LibraryScreen(
     var openedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
     // 从人物详情 BACK 回来时要落回原来那张脸，否则一排人里跳回第一个很别扭
     var peopleFocusIndex by rememberSaveable { mutableStateOf(0) }
+    // 从相册详情 BACK 回来时要落回刚才那个相册卡片；否则焦点掉到顶栏，得重新往下找
+    var albumsFocusIndex by rememberSaveable { mutableIntStateOf(0) }
 
     // 派生数据（全部空安全）
     val hero = remember(state) { buildHero(state) }
@@ -133,7 +135,12 @@ fun LibraryScreen(
     ConsumeBlockRequest(topFocus, BLOCK_TOP, blockFallback = { tabRequesters.getOrNull(lastTab) })
 
     // BACK：人物详情 → 人物列表；相册详情 → 相册网格（列表页的 BACK 由 Lead 外壳处理）
-    BackHandler(enabled = openedAlbum != null) { openedAlbumId = null }
+    BackHandler(enabled = openedAlbum != null) {
+        openedAlbumId = null
+        // 遥控器 BACK 走这里（不是详情页里的返回按钮）。相册网格已随详情页销毁，
+        // 必须显式把焦点交还内容区，否则会落到顶栏 Tab —— 用户得重新往下找相册。
+        contentFocus.requestBlock(BLOCK_CONTENT)
+    }
 
     LibraryBackdrop(modifier.fillMaxSize())
 
@@ -172,7 +179,12 @@ fun LibraryScreen(
             openedAlbum != null -> AlbumDetailPane(
                 state = state,
                 album = openedAlbum,
-                onBack = { openedAlbumId = null },
+                onBack = {
+                    openedAlbumId = null
+                    // 相册网格已随详情页销毁（remember 状态没了），不显式交还焦点就会
+                    // 掉到顶栏 Tab 上 —— 用户得重新按下方向键找回相册。与人物详情同款处理。
+                    contentFocus.requestBlock(BLOCK_CONTENT)
+                },
                 onOpenPhoto = onOpenPhoto,
                 onOpenVideo = onOpenVideo,
             )
@@ -208,9 +220,12 @@ fun LibraryScreen(
                     contentFocus = contentFocus,
                 )
 
-                LibraryTab.ALBUMS -> AlbumsTab(                    state = state,
+                LibraryTab.ALBUMS -> AlbumsTab(
+                    state = state,
                     onOpenAlbum = { openedAlbumId = it.id },
                     contentFocus = contentFocus,
+                    restoreIndex = albumsFocusIndex,
+                    onFocusAlbum = { albumsFocusIndex = it },
                 )
 
                 LibraryTab.PEOPLE -> PeopleTab(
@@ -259,17 +274,21 @@ private fun HomeTab(
 ) {
     val recentItems = remember(state) { recentRow(state) }
     val albums = remember(state) { folderAlbums(state) }
-    val recentState = rememberLazyListState()
-    val albumState = rememberLazyListState()
+    // 记住两行各自看到第几张 + 最后焦点在哪一行，看图返回后落回原处（不只是回 Hero）
+    var recentIndex by rememberSaveable { mutableIntStateOf(0) }
+    var albumIndex by rememberSaveable { mutableIntStateOf(0) }
+    var openAllFocused by rememberSaveable { mutableStateOf(false) }
+    var lastRow by rememberSaveable { mutableIntStateOf(0) } // 0=Hero 1=最近添加 2=相册
+    val recentSafe = recentIndex.coerceIn(0, recentItems.lastIndex.coerceAtLeast(0))
+    val albumSafe = albumIndex.coerceIn(0, albums.lastIndex.coerceAtLeast(0))
+    val recentState = rememberLazyListState(initialFirstVisibleItemIndex = (recentSafe - 1).coerceAtLeast(0))
+    val albumState = rememberLazyListState(initialFirstVisibleItemIndex = (albumSafe - 1).coerceAtLeast(0))
 
     // 每行按索引懒创建 FocusRequester（数量随数据变化）
     val heroRequester = remember { FocusRequester() }
     val recentRequesters = remember { mutableListOf<FocusRequester>() }
     val albumRequesters = remember { mutableListOf<FocusRequester>() }
 
-    var recentIndex by remember { mutableIntStateOf(0) }
-    var albumIndex by remember { mutableIntStateOf(0) }
-    var openAllFocused by remember { mutableStateOf(false) }
 
     // 让聚焦项可见（契约 5）：focus 回调只记录 index，滚动在 LaunchedEffect 里做
     LaunchedEffect(recentIndex) { scrollRowTo(recentState, recentIndex) }
@@ -277,8 +296,19 @@ private fun HomeTab(
         scrollRowTo(albumState, if (openAllFocused) albums.size else albumIndex)
     }
 
-    // 主内容落点：Hero 优先，其次最近添加第一张
-    ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = { if (hero != null) heroRequester else requesterAt(recentRequesters, 0) })
+    // 主内容落点：按「上次焦点在哪一行」还原；首次进入仍以 Hero 优先
+    ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = {
+        when (lastRow) {
+            1 -> recentItems.getOrNull(recentSafe)?.let { requesterAt(recentRequesters, recentSafe) }
+            2 -> if (openAllFocused) {
+                requesterAt(albumRequesters, albums.size)
+            } else {
+                albums.getOrNull(albumSafe)?.let { requesterAt(albumRequesters, albumSafe) }
+            }
+
+            else -> if (hero != null) heroRequester else requesterAt(recentRequesters, 0)
+        }
+    })
 
     val heroHeight = (screenHeightDp() * 0.42f).dp
 
@@ -295,7 +325,7 @@ private fun HomeTab(
                         hero = hero,
                         focusRequester = heroRequester,
                         onOpen = { openMedia(hero.item, hero.items, "全部照片", onOpenPhoto, onOpenVideo) },
-                        onFocusChanged = { },
+                        onFocusChanged = { focused -> if (focused) lastRow = 0 },
                         onDown = {
                             if (recentItems.isNotEmpty()) {
                                 contentFocus.request(requesterAt(recentRequesters, recentIndex.coerceAtMost(recentItems.size - 1)))
@@ -334,7 +364,10 @@ private fun HomeTab(
                             focusRequester = requesterAt(recentRequesters, index),
                             onClick = { openMedia(item, recentItems, "最近添加", onOpenPhoto, onOpenVideo) },
                             onFocusChanged = { focused ->
-                                if (focused) recentIndex = index
+                                if (focused) {
+                                    recentIndex = index
+                                    lastRow = 1
+                                }
                             },
                             onUp = { contentFocus.request(heroRequester.takeIf { hero != null } ?: requesterAt(recentRequesters, 0)) },
                             onDown = { if (albums.isNotEmpty()) contentFocus.request(requesterAt(albumRequesters, index.coerceAtMost(albums.size - 1))) },
@@ -381,6 +414,7 @@ private fun HomeTab(
                                 if (focused) {
                                     albumIndex = index
                                     openAllFocused = false
+                                    lastRow = 2
                                 }
                             },
                             onUp = goUp,
@@ -396,6 +430,7 @@ private fun HomeTab(
                                 if (focused) {
                                     albumIndex = albums.size
                                     openAllFocused = true
+                                    lastRow = 2
                                 }
                             },
                             onUp = goUp,
@@ -723,14 +758,25 @@ private fun AlbumsTab(
     state: LibraryState,
     onOpenAlbum: (Album) -> Unit,
     contentFocus: PendingFocus,
+    /** 从相册详情 BACK 回来时要落回的相册索引（外层 rememberSaveable 记住的落点） */
+    restoreIndex: Int = 0,
+    /** 聚焦变化上报给外层保存，详情页返回后才有「回到原来那个相册」可言 */
+    onFocusAlbum: (Int) -> Unit = {},
 ) {
     val albums = remember(state) { folderAlbums(state) }
-    val gridState = rememberLazyGridState()
-    val requesters = remember { mutableListOf<FocusRequester>() }
-    var focusedIndex by remember { mutableIntStateOf(0) }
     val columns = ALBUM_GRID_COLUMNS
+    // 恢复位置可能已滚出可视区，而 LazyGrid 只组合可见项：让网格直接初始化在恢复位置
+    // 所在行，目标卡片才在组合树里，requestFocus 才有意义（与 PeopleTab 同款处理）。
+    val safeRestore = restoreIndex.coerceIn(0, albums.lastIndex.coerceAtLeast(0))
+    val gridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = (safeRestore / columns) * columns,
+    )
+    val requesters = remember { mutableListOf<FocusRequester>() }
+    var focusedIndex by remember { mutableIntStateOf(safeRestore) }
 
-    ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = { albums.firstOrNull()?.let { requesterAt(requesters, 0) } })
+    ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = {
+        albums.getOrNull(focusedIndex)?.let { requesterAt(requesters, focusedIndex) }
+    })
     LaunchedEffect(focusedIndex) { scrollGridTo(gridState, focusedIndex, columns) }
 
     Column(Modifier.fillMaxSize()) {
@@ -764,7 +810,10 @@ private fun AlbumsTab(
                         focusRequester = requesterAt(requesters, index),
                         onClick = { onOpenAlbum(album) },
                         onFocusChanged = { focused ->
-                            if (focused) focusedIndex = index
+                            if (focused) {
+                                focusedIndex = index
+                                onFocusAlbum(index)
+                            }
                         },
                         // 第一行 Up → 顶栏；其余交给 Compose 默认（上一行同列）
                         onUp = null,
@@ -786,12 +835,19 @@ private fun RecentTab(
     contentFocus: PendingFocus,
 ) {
     val recent = remember(state) { state.recent }
-    val gridState = rememberLazyGridState()
-    val requesters = remember { mutableListOf<FocusRequester>() }
-    var focusedIndex by remember { mutableIntStateOf(0) }
     val columns = MEDIA_GRID_COLUMNS
+    // 全屏看图返回后 LibraryScreen 重新组合，落点若是第 0 张就等于把用户丢回列表开头。
+    // rememberSaveable 由外层 SaveableStateProvider("library") 保管，看图往返不丢。
+    var focusedIndex by rememberSaveable { mutableIntStateOf(0) }
+    val safeRestore = focusedIndex.coerceIn(0, recent.lastIndex.coerceAtLeast(0))
+    val gridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = (safeRestore / columns) * columns,
+    )
+    val requesters = remember { mutableListOf<FocusRequester>() }
 
-    ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = { recent.firstOrNull()?.let { requesterAt(requesters, 0) } })
+    ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = {
+        recent.getOrNull(safeRestore)?.let { requesterAt(requesters, safeRestore) }
+    })
     LaunchedEffect(focusedIndex) { scrollGridTo(gridState, focusedIndex, columns) }
 
     Column(Modifier.fillMaxSize()) {
@@ -1014,20 +1070,37 @@ private fun AlbumDetailPane(
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
 ) {
     val items = remember(state, album.id) { albumItems(state, album) }
-    val gridState = rememberLazyGridState()
+    val columns = MEDIA_GRID_COLUMNS
+    // 记住「看的是哪一张」：从全屏看图返回时，LibraryScreen 整体重新组合，
+    // 若落点永远是第 0 张，用户就被丢回相册开头 —— 这与顶栏掉焦点一样恼人。
+    // rememberSaveable 由外层 SaveableStateProvider("library") 保管，看图往返不丢。
+    var focusedIndex by rememberSaveable(album.id) { mutableIntStateOf(0) }
+    // 网格初始化在记忆位置所在行，目标图才被组合（Lazy 只组合可见项），requestFocus 才有效
+    val gridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = (focusedIndex / columns) * columns,
+    )
     val backRequester = remember { FocusRequester() }
     val requesters = remember { mutableListOf<FocusRequester>() }
     val innerFocus = remember { PendingFocus() }
-    var focusedIndex by remember { mutableIntStateOf(0) }
-    val columns = MEDIA_GRID_COLUMNS
 
-    // 进入详情：有内容 → 第一张；空相册 → 返回按钮
+    // 进入详情：有内容 → 记忆位置（默认第一张）；空相册 → 返回按钮
     LaunchedEffect(album.id) {
-        val first = if (items.isNotEmpty()) requesterAt(requesters, 0) else backRequester
-        runCatching { first.requestFocus() }
-        innerFocus.request(first)
+        val target = if (items.isNotEmpty()) {
+            requesterAt(requesters, focusedIndex.coerceIn(0, items.lastIndex))
+        } else {
+            backRequester
+        }
+        // 网格刚进组合时节点可能还没挂上布局树，requestFocus 会静默失败、焦点留在顶栏，
+        // 等一帧再试一次（与 PersonDetailPane 同款兜底）。
+        if (runCatching { target.requestFocus() }.isFailure) {
+            withFrameMillis { }
+            runCatching { target.requestFocus() }
+        }
+        innerFocus.request(target)
     }
-    ConsumeBlockRequest(innerFocus, BLOCK_CONTENT, blockFallback = { if (items.isNotEmpty()) requesterAt(requesters, 0) else backRequester })
+    ConsumeBlockRequest(innerFocus, BLOCK_CONTENT, blockFallback = {
+        if (items.isNotEmpty()) requesterAt(requesters, focusedIndex.coerceIn(0, items.lastIndex)) else backRequester
+    })
 
     Column(Modifier.fillMaxSize()) {
         AlbumDetailHeader(
@@ -1081,12 +1154,15 @@ private fun PersonDetailPane(
     // 四态用类型表达，不再拿 null 兼「加载中 / 失败」两义：
     // 「读失败」和「确实没有照片」对用户是两件事 —— 前者要提示可以重试，后者是正常结果。
     var photosState by remember(person.id) { mutableStateOf<PersonPhotos>(PersonPhotos.Loading) }
-    val gridState = rememberLazyGridState()
+    val columns = MEDIA_GRID_COLUMNS
+    // 同 AlbumDetailPane：记住看到的是哪一张，全屏看图返回后落回它而不是第一张
+    var focusedIndex by rememberSaveable(person.id) { mutableIntStateOf(0) }
+    val gridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = (focusedIndex / columns) * columns,
+    )
     val backRequester = remember { FocusRequester() }
     val requesters = remember { mutableListOf<FocusRequester>() }
     val innerFocus = remember { PendingFocus() }
-    var focusedIndex by remember { mutableIntStateOf(0) }
-    val columns = MEDIA_GRID_COLUMNS
     val contextTitle = "人物 · ${person.displayName}"
     val readyItems = (photosState as? PersonPhotos.Ready)?.items.orEmpty()
 
@@ -1104,7 +1180,12 @@ private fun PersonDetailPane(
     // 落点：只有拿到照片才落第一张；加载中 / 失败 / 空都落返回按钮
     // —— 这三种状态下网格并不存在，指过去的 requester 会 requestFocus 失败、焦点留在顶栏。
     val firstTarget = {
-        if (photosState is PersonPhotos.Ready) requesterAt(requesters, 0) else backRequester
+        if (photosState is PersonPhotos.Ready) {
+            val last = readyItems.lastIndex.coerceAtLeast(0)
+            requesterAt(requesters, focusedIndex.coerceIn(0, last))
+        } else {
+            backRequester
+        }
     }
     LaunchedEffect(person.id, photosState) {
         val target = firstTarget()
