@@ -85,21 +85,50 @@ class FnOsMediaRepository(
         return (parseAlbums(own) + parseAlbums(shared)).distinctBy { it.id }
     }
 
+    /**
+     * 某个相册下的全部媒体（按拍摄时间倒序）。
+     *
+     * ⚠️ 真实相册可能远超单页上限：`album/photos` 单次最多返回一页，
+     * 早先只取 `offset=0&limit=500`，导致 2000+ 张的大相册永远只显示前 500 项
+     * （用户反馈「相册中只能显示前 500 张左右」）。这里按 offset 逐页拉全：
+     *  - 优先用服务端返回的 `total` 判断终点；
+     *  - `total` 缺失时以「空页」为终点（满页就继续，避免服务端单页上限 < PAGE_SIZE 时误停）；
+     *  - 按 id 去重，防止分页边界重复导致死循环；
+     *  - 保留 [MAX_ALBUM_ITEMS] 兜底，防止接口异常时无限拉取。
+     */
     override suspend fun getMedia(albumId: String): List<MediaItem> {
         albumCache[albumId]?.let { return it }
-        val data = api.getJson(
-            path = ALBUM_PHOTOS,
-            params = listOf(
-                "album_id" to albumId,
-                "sort_by" to "date_time",
-                "sort_direction" to "desc",
-                "offset" to "0",
-                "limit" to "500",
-            ),
-        )
-        return parseMediaList(data)
-            .map { it.copy(albumId = albumId) }
-            .also { albumCache[albumId] = it }
+        val collected = LinkedHashMap<String, MediaItem>()
+        var offset = 0
+        var total = -1
+        while (true) {
+            val data = api.getJson(
+                path = ALBUM_PHOTOS,
+                params = listOf(
+                    "album_id" to albumId,
+                    "sort_by" to "date_time",
+                    "sort_direction" to "desc",
+                    "offset" to offset.toString(),
+                    "limit" to ALBUM_PAGE_SIZE.toString(),
+                ),
+            )
+            // 只信任「> 0」的 total：部分版本对 album/photos 不返回 total 或默认 0，
+            // 若把 0 当成终点会在第一页就误停。
+            if (total <= 0 && data.has("total")) {
+                data.optInt("total", -1).takeIf { it > 0 }?.let { total = it }
+            }
+            val page = parseMediaList(data).map { it.copy(albumId = albumId) }
+            val before = collected.size
+            for (item in page) collected.putIfAbsent(item.id, item)
+            offset += page.size
+            when {
+                page.isEmpty() -> break                    // 已到末尾
+                total > 0 && collected.size >= total -> break // 已取满服务端报告的总数
+                collected.size == before -> break           // 整页都是重复项：边界异常，继续也无新增
+                offset >= MAX_ALBUM_ITEMS -> break          // 兜底上限
+            }
+        }
+        return collected.values.toList().also { albumCache[albumId] = it }
     }
 
     override suspend fun search(query: String): List<MediaItem> {
@@ -348,6 +377,12 @@ class FnOsMediaRepository(
     }
 
     private companion object {
+        /** 相册分页的单页大小：实测服务端单页最多 500，沿用该值即可少走往返。 */
+        const val ALBUM_PAGE_SIZE = 500
+
+        /** 单个相册的分页兜底上限，防止服务端异常（如 total 缺失且永不返回空页）时无限拉取。 */
+        const val MAX_ALBUM_ITEMS = 20_000
+
         const val GALLERY_LIST = "/p/api/v1/gallery/getList"
         const val ALBUM_LIST = "/p/api/v1/album/list"
         const val ALBUM_PHOTOS = "/p/api/v1/album/photos"
