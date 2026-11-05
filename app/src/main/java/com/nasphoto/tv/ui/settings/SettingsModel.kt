@@ -46,18 +46,19 @@ enum class SettingsKey(
     ACC_ADD(SettingsGroup.ACCOUNTS, "添加账号", "同一台 NAS 再加一个飞牛账号，填完账号密码即可"),
     ACC_REMOVE(SettingsGroup.ACCOUNTS, "删除当前账号", "至少保留一个账号；删除后回到第一个账号"),
 
+    SS_DISPLAY_ALBUMS(SettingsGroup.SCREENSAVER, "客厅展示相册", "用于首页回忆和屏保；按确认逐相册选择"),
     SS_ENABLED(SettingsGroup.SCREENSAVER, "屏保", "关闭后空闲也不再进入待机显示"),
     SS_IDLE(SettingsGroup.SCREENSAVER, "静止后进入", "多久没有操作就进入屏保"),
     SS_MODE(SettingsGroup.SCREENSAVER, "屏保画面", "时钟待机 / 纯照片；屏保里 ← → 换样式"),
-    SS_SOURCE(SettingsGroup.SCREENSAVER, "轮播内容", "人物 / 最近 / 随机 / 相册；人物需 NAS 已开启 AI 索引"),
-    SS_ALBUM(SettingsGroup.SCREENSAVER, "相册", "「相册」来源时只轮播这个相册"),
+    SS_SOURCE(SettingsGroup.SCREENSAVER, "轮播内容", "仅在客厅展示相册内筛选人物 / 最近 / 随机 / 相册"),
+    SS_ALBUM(SettingsGroup.SCREENSAVER, "轮播相册", "只可选择已授权的客厅展示相册"),
     SS_INTERVAL(SettingsGroup.SCREENSAVER, "照片停留", "每张照片播放多久"),
     SS_CLOCK(SettingsGroup.SCREENSAVER, "时钟样式", "五种表盘，切换实时预览（纯照片模式下不显示）"),
     SS_BACKGROUND(SettingsGroup.SCREENSAVER, "背景", "时钟待机的背景：照片轮播 / 极光动态 / 纯黑极简"),
     SS_DATE(SettingsGroup.SCREENSAVER, "显示日期", "显示星期与日期"),
     SS_NIGHT_DIM(SettingsGroup.SCREENSAVER, "夜间自动调暗", "降低亮度，保护面板"),
     SS_KEN_BURNS(SettingsGroup.SCREENSAVER, "Ken Burns 动效", "照片缓慢推拉，防烧屏"),
-    SS_PREVIEW(SettingsGroup.SCREENSAVER, "预览屏保", "全屏预览当前屏保"),
+    SS_PREVIEW(SettingsGroup.SCREENSAVER, "预览屏保", "仅全屏预览，不开启自动屏保"),
 
     PB_AUTOPLAY(SettingsGroup.PLAYBACK, "自动连播下一集", "播完自动播放列表里的下一个"),
     PB_LOOP(SettingsGroup.PLAYBACK, "循环播放", "单个视频播完从头再放"),
@@ -201,11 +202,12 @@ class SettingsActions(
     fun toggleScreensaver() = store.updateScreensaver { it.copy(enabled = !it.enabled) }
     fun cycleIdleTimeout() = store.cycleIdleTimeout()
     fun cycleMode() = store.cycleScreensaverMode()
-    fun cycleSource() = store.cycleScreensaverSource(MediaCache.albums)
-    fun cycleAlbum() = store.cycleScreensaverAlbum(MediaCache.albums)
+    private fun displayAlbums() = currentDisplayAlbums(store).filter { it.id in store.displayAlbumIds }
+    fun cycleSource() = store.cycleScreensaverSource(displayAlbums())
+    fun cycleAlbum() = store.cycleScreensaverAlbum(displayAlbums())
     fun setMode(mode: ScreensaverSettings.Mode) = store.updateScreensaver { it.copy(mode = mode) }
     fun setSource(source: ScreensaverSettings.PhotoSource) =
-        store.setScreensaverSource(source, MediaCache.albums)
+        store.setScreensaverSource(source, displayAlbums())
     fun cyclePhotoInterval() = store.cyclePhotoInterval()
     fun cycleClockStyle() = store.cycleClockStyle()
     fun cycleBackground() = store.cycleScreensaverBackground()
@@ -214,8 +216,6 @@ class SettingsActions(
     fun toggleKenBurns() = store.updateScreensaver { it.copy(kenBurns = !it.kenBurns) }
 
     fun previewScreensaver() {
-        // 屏保关着还点预览：顺手打开（用户意图明显是"我要看"）
-        if (!store.screensaver.enabled) toggleScreensaver()
         onPreviewScreensaver()
     }
 

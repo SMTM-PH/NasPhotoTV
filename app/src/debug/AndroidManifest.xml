@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Offline design review only. This entry is absent from release builds. -->
+        <activity
+            android:name=".DesignPreviewActivity"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|uiMode"
+            android:exported="true"
+            android:process=":designPreview"
+            android:screenOrientation="landscape" />
+    </application>
+</manifest>

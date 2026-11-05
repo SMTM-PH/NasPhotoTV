@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import com.nasphoto.tv.ui.theme.TvColor
@@ -54,19 +56,19 @@ fun ValueChip(
     accent: Color = TvColor.Accent,
     minWidth: Int = 132,
 ) {
-    val bg = if (focused) accent.copy(alpha = 0.20f) else TvColor.SurfaceHigh.copy(alpha = 0.55f)
-    val fg = if (focused) accent else TvColor.TextSecondary
+    val bg = if (focused) accent else TvColor.SurfaceSoft
+    val fg = if (focused) TvColor.InkOnAccent else TvColor.TextSecondary
     Row(
         modifier = modifier
             .height(42.dp)
-            .widthIn(min = minWidth.dp)
-            .clip(CircleShape)
+            .widthIn(min = minWidth.dp, max = 280.dp)
+            .clip(RoundedCornerShape(TvDimen.RadiusS))
             .background(bg),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
         ArrowGlyph(visible = focused, pointingLeft = true, color = fg)
-        AnimatedValue(text = text, color = fg)
+        AnimatedValue(text = text, color = fg, modifier = Modifier.weight(1f, fill = false))
         ArrowGlyph(visible = focused, pointingLeft = false, color = fg)
     }
 }
@@ -82,8 +84,8 @@ fun StaticChip(
     Box(
         modifier = modifier
             .height(42.dp)
-            .clip(CircleShape)
-            .background(if (accent) TvColor.Accent.copy(alpha = 0.14f) else TvColor.SurfaceHigh.copy(alpha = 0.55f))
+            .clip(RoundedCornerShape(TvDimen.RadiusS))
+            .background(if (accent) TvColor.Accent.copy(alpha = 0.14f) else TvColor.SurfaceSoft)
             .padding(horizontal = TvDimen.SpaceM),
         contentAlignment = Alignment.Center,
     ) {
@@ -93,6 +95,7 @@ fun StaticChip(
             fontWeight = FontWeight.Medium,
             color = if (accent) TvColor.Accent else color,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -124,6 +127,7 @@ fun AnimatedValue(
             color = color,
             textAlign = TextAlign.Center,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

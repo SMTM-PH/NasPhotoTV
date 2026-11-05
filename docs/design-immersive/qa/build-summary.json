@@ -1,0 +1,31 @@
+{
+  "date": "2026-11-04",
+  "base_commit": "b1f8df2ca7d2f9731fa0e3bbf64da4d9b6a9a1f3",
+  "branch": "codex/tv-gallery-ui",
+  "source_state": "local uncommitted",
+  "build": {
+    "command": "gradlew.bat --offline --no-daemon --no-parallel :app:assembleDebug",
+    "result": "BUILD SUCCESSFUL",
+    "elapsed_seconds": 20,
+    "jdk": "Microsoft JDK 17.0.15"
+  },
+  "apk": {
+    "path": "app/build/outputs/apk/debug/app-debug.apk",
+    "bytes": 23706277,
+    "sha256": "3a92c298c6c2f7efb4212bee6e326ee142ab54de2f73a6a203c3fb9e8813c710"
+  },
+  "lint": {
+    "errors": 16,
+    "warnings": 37,
+    "error_files": [
+      "app/src/main/java/com/nasphoto/tv/MainActivity.kt",
+      "app/src/main/java/com/nasphoto/tv/data/fn/FnOsTransport.kt",
+      "app/src/main/java/com/nasphoto/tv/ui/common/LivePhotoVideo.kt",
+      "app/src/main/java/com/nasphoto/tv/ui/screensaver/ScreensaverClock.kt",
+      "app/src/main/java/com/nasphoto/tv/ui/video/VideoPlayerScreen.kt",
+      "app/src/main/res/values/themes.xml"
+    ],
+    "all_error_files_unchanged_from_base": true,
+    "new_or_modified_error_files": []
+  }
+}

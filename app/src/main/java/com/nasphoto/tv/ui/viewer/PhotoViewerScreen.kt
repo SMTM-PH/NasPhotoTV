@@ -157,6 +157,7 @@ fun PhotoViewerScreen(
     onClose: () -> Unit,
     onOpenVideo: (MediaItem, List<MediaItem>) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
+    startSlideshow: Boolean = false,
 ) {
     // ---- 空列表直接退出（不能崩） ----
     LaunchedEffect(items.isEmpty()) {
@@ -167,7 +168,7 @@ fun PhotoViewerScreen(
         return
     }
 
-    val state = rememberPhotoViewerState(items = items, initialIndex = initialIndex)
+    val state = rememberPhotoViewerState(items = items, initialIndex = initialIndex, startSlideshow = startSlideshow)
     val filmState = rememberLazyListState()
     val imageFocus = remember { FocusRequester() }
     val tabFocus = remember { FocusRequester() }
@@ -203,35 +204,30 @@ fun PhotoViewerScreen(
     // 控制栏刚弹出的那几帧里 AnimatedVisibility 还没组合出按钮节点，等两帧再抢焦点，
     // 否则 requestFocus 必然抛异常（这正是「按下键进不去工具行」的原因）。
     var toolbarEnter by remember { mutableIntStateOf(0) }
+    var filmEnter by remember { mutableIntStateOf(0) }
+    var controlsInteraction by remember { mutableIntStateOf(0) }
+    var photoHint by remember { mutableIntStateOf(0) }
     LaunchedEffect(toolbarEnter) {
         if (toolbarEnter == 0) return@LaunchedEffect
         repeat(2) { withFrameMillis {} }
         runCatching { tabFocus.requestFocus() }
     }
 
-    // ---- 左上角信息面板：比控制栏更早淡出，避免长时间遮挡画面 ----
-    var hudVisible by remember { mutableStateOf(true) }
-    LaunchedEffect(state.chromeVisible, state.index, state.infoExpanded) {
-        if (!state.chromeVisible) {
+    // 初次进入保持纯净；主动翻图只短暂显示标题与日期，不弹出整组工具。
+    var hudVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(state.chromeVisible, state.index, state.infoExpanded, photoHint, state.slideshowPlaying) {
+        hudVisible = state.infoExpanded || state.chromeVisible || (photoHint > 0 && !state.slideshowPlaying)
+        if (hudVisible && !state.infoExpanded) {
+            delay(HudAutoHideMs)
             hudVisible = false
-        } else {
-            hudVisible = true
-            // 展开详细信息（按 UP）时是用户主动要看，不自动收
-            if (!state.infoExpanded) {
-                delay(HudAutoHideMs)
-                hudVisible = false
-            }
         }
     }
 
-    // ---- 控制栏 3 秒自动隐藏 ----
-    LaunchedEffect(state.chromeVisible, state.index, state.infoExpanded, state.slideshowPlaying, state.zoomed, inToolbar) {
+    // 三秒无操作后收起工具。工具或胶片条持有焦点时始终保留可见焦点。
+    LaunchedEffect(state.chromeVisible, state.infoExpanded, inToolbar, controlsInteraction) {
         if (!state.chromeVisible) return@LaunchedEffect
         delay(ChromeAutoHideMs)
-        // 焦点在按钮行上时不算「无操作」，不隐藏（否则用户看不到自己的焦点在哪）
-        if (!inToolbar && !state.infoExpanded && !state.slideshowPlaying) {
-            state.hideChromeIfIdle()
-        }
+        if (!inToolbar && !state.infoExpanded) state.hideChromeIfIdle()
     }
 
     // ---- 幻灯片自动播放：每 5 秒下一张，到末尾循环 ----
@@ -243,15 +239,18 @@ fun PhotoViewerScreen(
         }
     }
 
-    // ---- 全局按键（预览阶段：任何按键先显示控制栏，再执行原动作） ----
+    // ---- 全局按键：返回、播放和空闲计时；方向键不再自动弹出工具 ----
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(TvColor.Bg)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                // 1) 任意按键都重新显示控制栏 —— 但不吞事件
-                if (!state.chromeVisible) state.showChrome()
+                controlsInteraction += 1
+                if (event.key == Key.DirectionLeft || event.key == Key.DirectionRight ||
+                    event.key == Key.DirectionUp || event.key == Key.DirectionDown) {
+                    state.pauseSlideshow()
+                }
 
                 when (event.key) {
                     Key.Back, Key.Escape -> {
@@ -259,10 +258,12 @@ fun PhotoViewerScreen(
                         true
                     }
 
-                    Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
-                        state.toggleSlideshow()
+                    Key.MediaPlayPause -> { state.toggleSlideshow(); true }
+                    Key.MediaPlay -> {
+                        if (!state.slideshowPlaying) state.toggleSlideshow()
                         true
                     }
+                    Key.MediaPause -> { state.pauseSlideshow(); true }
 
                     else -> false
                 }
@@ -306,8 +307,8 @@ fun PhotoViewerScreen(
                     onOpenVideo = { currentOnOpenVideo(item, items) },
                     onToggleChrome = { state.toggleChrome() },
                     onPauseSlideshow = { state.pauseSlideshow() },
-                    onNext = { state.go(1) },
-                    onPrev = { state.go(-1) },
+                    onNext = { state.go(1); photoHint += 1 },
+                    onPrev = { state.go(-1); photoHint += 1 },
                     onEnterToolbar = {
                         state.showChrome()
                         toolbarEnter += 1
@@ -329,7 +330,7 @@ fun PhotoViewerScreen(
             )
 
             // ================= 右上：幻灯片状态 =================
-            SlideshowIndicator(
+            if (state.chromeVisible) SlideshowIndicator(
                 state = state,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -358,42 +359,41 @@ fun PhotoViewerScreen(
                 ) {
                     ViewerToolBar(
                         state = state,
-                        onPrev = { state.go(-1) },
-                        onNext = { state.go(1) },
-                        onToggleInfo = { state.toggleInfo() },
+                        onToggleInfo = { state.pauseSlideshow(); state.toggleInfo() },
                         onToggleStar = { state.toggleStar() },
-                        onToggleSlideshow = { state.toggleSlideshow() },
-                        onToggleZoom = { state.toggleZoom() },
+                        onToggleSlideshow = {
+                            state.toggleSlideshow()
+                            if (state.slideshowPlaying) runCatching { imageFocus.requestFocus() }
+                        },
+                        onToggleZoom = {
+                            state.pauseSlideshow()
+                            state.toggleZoom()
+                            runCatching { imageFocus.requestFocus() }
+                        },
                         onClose = { currentOnClose() },
+                        onOpenVideo = { state.current?.let { currentOnOpenVideo(it, items) } },
+                        onReturnToImage = { runCatching { imageFocus.requestFocus() } },
+                        onEnterFilmStrip = { filmEnter += 1 },
                         tabFocus = tabFocus,
                     )
                 }
-                Spacer(Modifier.height(TvDimen.SpaceM))
+                Spacer(Modifier.height(TvDimen.SpaceXs))
                 FilmStrip(
                     state = state,
                     listState = filmState,
-                    onSelect = { state.goTo(it) },
+                    onSelect = { state.goTo(it); photoHint += 1 },
+                    enterToken = filmEnter,
+                    onReturnToToolbar = { toolbarEnter += 1 },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(104.dp)
+                        .height(80.dp)
                         .onFocusChanged { filmHasFocus = it.hasFocus },
                 )
                 Spacer(Modifier.height(TvDimen.SpaceM))
             }
         }
 
-        // ================= 左缘返回（参考图 3 的圆形箭头） =================
-        // 遥控器 BACK 仍走全局按键；这个圆形按钮服务于鼠标 / 触摸与"看得见"的退出口。
-        // 跟着控制栏一起显隐，全屏看图时不留常驻元素。
-        AnimatedVisibilityCompat(
-            visible = state.chromeVisible,
-            modifier = Modifier.align(Alignment.CenterStart),
-        ) {
-            BackChevron(
-                onClose = { currentOnClose() },
-                modifier = Modifier.padding(start = 18.dp),
-            )
-        }
+
     }
 }
 
@@ -513,7 +513,12 @@ private fun StageContent(
                 }
 
                 Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
-                    onToggleChrome()
+                    if (zoomed && !panoramic) {
+                        state.toggleZoom()
+                        onEnterToolbar()
+                    } else {
+                        onToggleChrome()
+                    }
                     true
                 }
 
@@ -778,7 +783,7 @@ private fun ZoomHint(panX: Float, panY: Float, modifier: Modifier = Modifier) {
     ) {
         Text(text = "2× 放大", color = TvColor.Accent, fontSize = TvType.Tiny, fontWeight = FontWeight.SemiBold)
         Text(
-            text = "方向键平移 · 偏移 %.1f / %.1f".format(panX, panY),
+            text = "方向键平移 · 确认退出放大",
             color = TvColor.TextSecondary,
             fontSize = TvType.Tiny,
             maxLines = 1,

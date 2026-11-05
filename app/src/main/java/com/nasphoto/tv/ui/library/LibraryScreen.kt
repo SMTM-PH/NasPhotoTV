@@ -51,6 +51,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import com.nasphoto.tv.data.SettingsStore
 import com.nasphoto.tv.data.FavoritesStore
 import com.nasphoto.tv.data.model.Album
 import com.nasphoto.tv.data.model.AlbumType
@@ -93,10 +94,13 @@ fun LibraryScreen(
      */
     onLoadPersonPhotos: suspend (personId: String) -> List<MediaItem>? = { emptyList() },
     modifier: Modifier = Modifier,
+    onPlaySlideshow: (List<MediaItem>, Int, String) -> Unit = onOpenPhoto,
 ) {
     var selectedTab by rememberSaveable(state.selectedTabIndex) {
         mutableStateOf(initialTabOf(state.selectedTabIndex))
     }
+    var featuredMediaId by rememberSaveable { mutableStateOf<String?>(null) }
+    var homeFocusZone by rememberSaveable { mutableStateOf(HomeFocusZone.STRIP) }
     var openedAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
     var openedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
     // 从人物详情 BACK 回来时要落回原来那张脸，否则一排人里跳回第一个很别扭
@@ -105,27 +109,33 @@ fun LibraryScreen(
     var albumsFocusIndex by rememberSaveable { mutableIntStateOf(0) }
 
     // 派生数据（全部空安全）
-    val hero = remember(state) { buildHero(state) }
     val allItems = remember(state) { allPhotos(state) }
+    val approvedIds = SettingsStore.displayAlbumIds.takeIf {
+        state.ownerAccountId == SettingsStore.nas.activeAccountId
+    }.orEmpty()
+    val collections = remember(state, approvedIds) { homeCollections(state, approvedIds) }
+    val featuredIndex = collections.indexOfFirst { it.id == featuredMediaId }.coerceAtLeast(0)
+    val featuredItem = collections.getOrNull(featuredIndex)?.cover
     val favorites = remember(state, FavoritesStore.ids) { favoriteItems(state) }
     val openedAlbum = openedAlbumId?.let { id -> state.albums.firstOrNull { it.id == id } }
     val openedPerson = openedPersonId?.let { id -> state.people.firstOrNull { it.id == id } }
 
     // ---- 顶栏焦点 ----
-    val tabRequesters = remember { LibraryTab.entries.map { FocusRequester() } }
+    val tabRequesters = remember { TOP_LEVEL_TABS.map { FocusRequester() } }
     val actionRequesters = remember { List(TOP_ACTION_COUNT) { FocusRequester() } }
     val accountRequester = remember { FocusRequester() }
+    val categoryRequesters = remember { List(3) { FocusRequester() } }
     val topFocus = remember { PendingFocus() }   // 顶栏精确落点
     val contentFocus = remember { PendingFocus() } // 主内容精确落点
-    var lastTab by remember { mutableIntStateOf(0) }
+    var lastTab by remember { mutableIntStateOf(topLevelTab(selectedTab).ordinal) }
     var lastAction by remember { mutableIntStateOf(DEFAULT_ACTION) }
     var hasInitialFocus by remember { mutableStateOf(false) }
 
-    // 首次进入：焦点落到 Hero（无 Hero 时落到顶栏当前 Tab）
+    // 首次进入首页落到当前缩略图；返回时恢复先前的操作区域。
     if (!hasInitialFocus) {
         LaunchedEffect(Unit) {
             hasInitialFocus = true
-            if (hero != null) contentFocus.requestBlock(BLOCK_CONTENT) else topFocus.request(tabRequesters.getOrNull(lastTab))
+            if (featuredItem != null) contentFocus.requestBlock(BLOCK_CONTENT) else topFocus.request(tabRequesters.getOrNull(topLevelTab(selectedTab).ordinal))
         }
     }
 
@@ -142,12 +152,21 @@ fun LibraryScreen(
         contentFocus.requestBlock(BLOCK_CONTENT)
     }
 
-    LibraryBackdrop(modifier.fillMaxSize())
+    BackHandler(enabled = openedAlbum == null && openedPerson == null && selectedTab != LibraryTab.ALL) {
+        selectedTab = if (selectedTab == LibraryTab.PEOPLE || selectedTab == LibraryTab.SMART)
+            LibraryTab.ALBUMS else LibraryTab.ALL
+        lastTab = topLevelTab(selectedTab).ordinal
+        contentFocus.requestBlock(BLOCK_CONTENT)
+    }
+
+    val immersiveHome = selectedTab == LibraryTab.ALL && openedAlbum == null && openedPerson == null && featuredItem != null
+    if (immersiveHome) CinemaBackdrop(featuredItem!!, modifier.fillMaxSize())
+    else LibraryBackdrop(modifier.fillMaxSize())
 
     Column(Modifier.fillMaxSize()) {
         LibraryTopBar(
-            tabs = LibraryTab.entries,
-            selectedTab = selectedTab,
+            tabs = TOP_LEVEL_TABS,
+            selectedTab = topLevelTab(selectedTab),
             connectionName = state.connectionName,
             isOnline = state.isOnline,
             accountName = state.accountName,
@@ -164,12 +183,31 @@ fun LibraryScreen(
             onActionFocus = { lastAction = it },
             tabFocusRequesters = tabRequesters,
             actionFocusRequesters = actionRequesters,
-            onSearch = { selectedTab = LibraryTab.ALL },
+            onHome = {
+                selectedTab = LibraryTab.ALL
+                openedAlbumId = null
+                openedPersonId = null
+            },
             onScreensaver = { onNavigate(AppRoute.ScreensaverPreview) },
             onSettings = { onNavigate(AppRoute.Settings) },
-            onTabDown = { contentFocus.requestBlock(BLOCK_CONTENT) },
+            onTabDown = {
+                if (topLevelTab(selectedTab) == LibraryTab.ALBUMS && openedAlbum == null && openedPerson == null) {
+                    val index = listOf(LibraryTab.ALBUMS, LibraryTab.PEOPLE, LibraryTab.SMART).indexOf(selectedTab).coerceAtLeast(0)
+                    categoryRequesters[index].requestFocus()
+                } else contentFocus.requestBlock(BLOCK_CONTENT)
+            },
         )
 
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Column(Modifier.fillMaxSize()) {
+        if (selectedTab in listOf(LibraryTab.ALBUMS, LibraryTab.PEOPLE, LibraryTab.SMART) && openedAlbum == null && openedPerson == null) {
+            AlbumCategoryBar(selectedTab, categoryRequesters,
+                onUp = { tabRequesters[LibraryTab.ALBUMS.ordinal].requestFocus() }, onSelect = {
+                selectedTab = it
+                contentFocus.requestBlock(BLOCK_CONTENT)
+            }, onDown = { contentFocus.requestBlock(BLOCK_CONTENT) })
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
         // 有照片列表才算「有库」；但要给人物留一条活路 —— 相册接口失败而人脸结果已到时，
         // 整个页面被空状态盖掉，人物 Tab 就永远进不去了。
         val isEmptyLibrary = state.recent.isEmpty() && state.albums.isEmpty() && state.people.isEmpty()
@@ -202,15 +240,17 @@ fun LibraryScreen(
             )
 
             else -> when (selectedTab) {
-                LibraryTab.ALL -> HomeTab(
-                    state = state,
-                    hero = hero,
-                    allItems = allItems,
-                    onOpenPhoto = onOpenPhoto,
-                    onOpenVideo = onOpenVideo,
-                    onOpenAlbum = { openedAlbumId = it.id },
+                LibraryTab.ALL -> ImmersiveHome(
+                    collections = collections,
+                    selectedIndex = featuredIndex,
+                    onSelect = { featuredMediaId = it.id },
+                    lastZone = homeFocusZone,
+                    onZoneChange = { homeFocusZone = it },
+                    onPlaySlideshow = onPlaySlideshow,
+                    onConfigureDisplay = { onNavigate(AppRoute.Settings) },
                     onOpenAlbumsTab = { selectedTab = LibraryTab.ALBUMS },
                     contentFocus = contentFocus,
+                    onUpToTopBar = { topFocus.request(tabRequesters.getOrNull(topLevelTab(selectedTab).ordinal)) },
                 )
 
                 LibraryTab.CHRONO -> ChronologyTab(
@@ -226,6 +266,7 @@ fun LibraryScreen(
                     contentFocus = contentFocus,
                     restoreIndex = albumsFocusIndex,
                     onFocusAlbum = { albumsFocusIndex = it },
+                    onFirstRowUp = { categoryRequesters[0].requestFocus() },
                 )
 
                 LibraryTab.PEOPLE -> PeopleTab(
@@ -235,7 +276,7 @@ fun LibraryScreen(
                     contentFocus = contentFocus,
                     restoreIndex = peopleFocusIndex,
                     onFocusPerson = { peopleFocusIndex = it },
-                    onUpToTopBar = { topFocus.request(tabRequesters.getOrNull(selectedTab.ordinal)) },
+                    onUpToTopBar = { categoryRequesters[1].requestFocus() },
                 )
 
                 LibraryTab.RECENT -> RecentTab(
@@ -253,206 +294,16 @@ fun LibraryScreen(
                     onOpenPhoto = onOpenPhoto,
                     onOpenVideo = onOpenVideo,
                     contentFocus = contentFocus,
+                    onFirstRowUp = { categoryRequesters[2].requestFocus() },
                 )
             }
         }
-    }
-}
-
-// ============================== Tab 1：全部照片 ==============================
-
-@Composable
-private fun HomeTab(
-    state: LibraryState,
-    hero: HeroInfo?,
-    allItems: List<MediaItem>,
-    onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
-    onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
-    onOpenAlbum: (Album) -> Unit,
-    onOpenAlbumsTab: () -> Unit,
-    contentFocus: PendingFocus,
-) {
-    val recentItems = remember(state) { recentRow(state) }
-    val albums = remember(state) { folderAlbums(state) }
-    // 记住两行各自看到第几张 + 最后焦点在哪一行，看图返回后落回原处（不只是回 Hero）
-    var recentIndex by rememberSaveable { mutableIntStateOf(0) }
-    var albumIndex by rememberSaveable { mutableIntStateOf(0) }
-    var openAllFocused by rememberSaveable { mutableStateOf(false) }
-    var lastRow by rememberSaveable { mutableIntStateOf(0) } // 0=Hero 1=最近添加 2=相册
-    val recentSafe = recentIndex.coerceIn(0, recentItems.lastIndex.coerceAtLeast(0))
-    val albumSafe = albumIndex.coerceIn(0, albums.lastIndex.coerceAtLeast(0))
-    val recentState = rememberLazyListState(initialFirstVisibleItemIndex = (recentSafe - 1).coerceAtLeast(0))
-    val albumState = rememberLazyListState(initialFirstVisibleItemIndex = (albumSafe - 1).coerceAtLeast(0))
-
-    // 每行按索引懒创建 FocusRequester（数量随数据变化）
-    val heroRequester = remember { FocusRequester() }
-    val recentRequesters = remember { mutableListOf<FocusRequester>() }
-    val albumRequesters = remember { mutableListOf<FocusRequester>() }
-
-
-    // 让聚焦项可见（契约 5）：focus 回调只记录 index，滚动在 LaunchedEffect 里做
-    LaunchedEffect(recentIndex) { scrollRowTo(recentState, recentIndex) }
-    LaunchedEffect(albumIndex, openAllFocused) {
-        scrollRowTo(albumState, if (openAllFocused) albums.size else albumIndex)
-    }
-
-    // 主内容落点：按「上次焦点在哪一行」还原；首次进入仍以 Hero 优先
-    ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = {
-        when (lastRow) {
-            1 -> recentItems.getOrNull(recentSafe)?.let { requesterAt(recentRequesters, recentSafe) }
-            2 -> if (openAllFocused) {
-                requesterAt(albumRequesters, albums.size)
-            } else {
-                albums.getOrNull(albumSafe)?.let { requesterAt(albumRequesters, albumSafe) }
-            }
-
-            else -> if (hero != null) heroRequester else requesterAt(recentRequesters, 0)
         }
-    })
-
-    val heroHeight = (screenHeightDp() * 0.42f).dp
-
-    LazyColumn(
-        state = rememberLazyListState(),
-        contentPadding = PaddingValues(bottom = TvDimen.SpaceXl),
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        // ---------- Hero（上部 42%）----------
-        item(key = "hero") {
-            if (hero != null) {
-                Box(Modifier.fillMaxWidth().padding(horizontal = TvDimen.ScreenPadding)) {
-                    LibraryHero(
-                        hero = hero,
-                        focusRequester = heroRequester,
-                        onOpen = { openMedia(hero.item, hero.items, "全部照片", onOpenPhoto, onOpenVideo) },
-                        onFocusChanged = { focused -> if (focused) lastRow = 0 },
-                        onDown = {
-                            if (recentItems.isNotEmpty()) {
-                                contentFocus.request(requesterAt(recentRequesters, recentIndex.coerceAtMost(recentItems.size - 1)))
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(heroHeight),
-                    )
-                }
-            } else {
-                HeroFallback(allItems.size)
-            }
         }
-
-        // ---------- 最近添加（LazyRow）----------
-        item(key = "recentHeader") {
-            SectionHeader(
-                title = "最近添加",
-                trailing = if (recentItems.isEmpty()) "" else "${recentItems.size} 项",
-                modifier = Modifier.padding(start = TvDimen.ScreenPadding, end = TvDimen.ScreenPadding, top = TvDimen.SpaceS),
-            )
         }
-        item(key = "recentRow") {
-            if (recentItems.isEmpty()) {
-                RowEmptyState("还没有新照片 · 检查 NAS 连接")
-            } else {
-                LazyRow(
-                    state = recentState,
-                    contentPadding = RowPadding,
-                    horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM),
-                ) {
-                    itemsIndexed(recentItems, key = { _, it -> it.id }) { index, item ->
-                        MediaCard(
-                            item = item,
-                            width = 300,
-                            height = 180,
-                            focusRequester = requesterAt(recentRequesters, index),
-                            onClick = { openMedia(item, recentItems, "最近添加", onOpenPhoto, onOpenVideo) },
-                            onFocusChanged = { focused ->
-                                if (focused) {
-                                    recentIndex = index
-                                    lastRow = 1
-                                }
-                            },
-                            onUp = { contentFocus.request(heroRequester.takeIf { hero != null } ?: requesterAt(recentRequesters, 0)) },
-                            onDown = { if (albums.isNotEmpty()) contentFocus.request(requesterAt(albumRequesters, index.coerceAtMost(albums.size - 1))) },
-                        )
-                    }
-                }
-            }
-        }
-
-        // ---------- 相册（LazyRow）----------
-        item(key = "albumHeader") {
-            SectionHeader(
-                title = "相册",
-                trailing = if (albums.isEmpty()) "" else "共 ${albums.size} 个",
-                modifier = Modifier.padding(start = TvDimen.ScreenPadding, end = TvDimen.ScreenPadding, top = TvDimen.SpaceL),
-            )
-        }
-        item(key = "albumRow") {
-            if (albums.isEmpty()) {
-                RowEmptyState("相册还没加载出来 · 去设置里刷新 NAS")
-            } else {
-                // 相册行 UP = 回「最近添加」同列；无最近项则回 Hero
-                val goUp = {
-                    if (recentItems.isNotEmpty()) {
-                        contentFocus.request(requesterAt(recentRequesters, albumIndex.coerceAtMost(recentItems.size - 1)))
-                    } else {
-                        contentFocus.request(heroRequester)
-                    }
-                }
-                LazyRow(
-                    state = albumState,
-                    contentPadding = RowPadding,
-                    horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM),
-                ) {
-                    itemsIndexed(albums, key = { _, it -> it.id }) { index, album ->
-                        AlbumCard(
-                            album = album,
-                            coverUrl = albumCoverUrl(state, album),
-                            width = 380,
-                            height = 220,
-                            focusRequester = requesterAt(albumRequesters, index),
-                            onClick = { onOpenAlbum(album) },
-                            onFocusChanged = { focused ->
-                                if (focused) {
-                                    albumIndex = index
-                                    openAllFocused = false
-                                    lastRow = 2
-                                }
-                            },
-                            onUp = goUp,
-                        )
-                    }
-                    item(key = "openAlbums") {
-                        OpenFolderCard(
-                            width = 380,
-                            height = 220,
-                            focusRequester = requesterAt(albumRequesters, albums.size),
-                            onClick = onOpenAlbumsTab,
-                            onFocusChanged = { focused ->
-                                if (focused) {
-                                    albumIndex = albums.size
-                                    openAllFocused = true
-                                    lastRow = 2
-                                }
-                            },
-                            onUp = goUp,
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(TvDimen.SpaceS))
-        }
-    }
-}
-
-/** 首页没有 Hero 时的标题区（不占满屏，保证下方行可见） */
-@Composable
-private fun HeroFallback(itemCount: Int) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceL)) {
-        Text("全部照片", color = TvColor.TextPrimary, fontSize = TvType.Display, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(TvDimen.SpaceXs))
-        Text(
-            text = if (itemCount > 0) "共 $itemCount 项媒体" else "正在等待 NAS 媒体库数据…",
-            color = TvColor.TextTertiary,
-            fontSize = TvType.Caption,
+        GalleryNavigationHint(
+            label = if (openedAlbum != null) openedAlbum.name else if (openedPerson != null) openedPerson.name else selectedTab.label,
+            hint = if (immersiveHome) "左右 选择回忆    ·    确认 播放    ·    向上 浏览操作" else "方向键 移动    ·    确认 打开    ·    返回 上一级",
         )
     }
 }
@@ -555,7 +406,7 @@ private fun ChronoGrid(
     val gridState = rememberLazyGridState()
     val requesters = remember { mutableListOf<FocusRequester>() }
     var focusedIndex by remember { mutableIntStateOf(0) }
-    val columns = CHRONO_GRID_COLUMNS
+    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 3 else CHRONO_GRID_COLUMNS
     val firstCell = { buckets.firstOrNull()?.let { requesterAt(requesters, 0) } }
 
     ConsumeBlockRequest(innerFocus, BLOCK_CONTENT, blockFallback = firstCell)
@@ -762,9 +613,10 @@ private fun AlbumsTab(
     restoreIndex: Int = 0,
     /** 聚焦变化上报给外层保存，详情页返回后才有「回到原来那个相册」可言 */
     onFocusAlbum: (Int) -> Unit = {},
+    onFirstRowUp: () -> Unit,
 ) {
     val albums = remember(state) { folderAlbums(state) }
-    val columns = ALBUM_GRID_COLUMNS
+    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 3 else ALBUM_GRID_COLUMNS
     // 恢复位置可能已滚出可视区，而 LazyGrid 只组合可见项：让网格直接初始化在恢复位置
     // 所在行，目标卡片才在组合树里，requestFocus 才有意义（与 PeopleTab 同款处理）。
     val safeRestore = restoreIndex.coerceIn(0, albums.lastIndex.coerceAtLeast(0))
@@ -815,8 +667,7 @@ private fun AlbumsTab(
                                 onFocusAlbum(index)
                             }
                         },
-                        // 第一行 Up → 顶栏；其余交给 Compose 默认（上一行同列）
-                        onUp = null,
+                        onUp = if (index < columns) onFirstRowUp else null,
                         onDown = null,
                     )
                 }
@@ -835,7 +686,7 @@ private fun RecentTab(
     contentFocus: PendingFocus,
 ) {
     val recent = remember(state) { state.recent }
-    val columns = MEDIA_GRID_COLUMNS
+    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 4 else MEDIA_GRID_COLUMNS
     // 全屏看图返回后 LibraryScreen 重新组合，落点若是第 0 张就等于把用户丢回列表开头。
     // rememberSaveable 由外层 SaveableStateProvider("library") 保管，看图往返不丢。
     var focusedIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -887,102 +738,23 @@ private fun SmartTab(
     onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
     contentFocus: PendingFocus,
+    onFirstRowUp: () -> Unit,
 ) {
-    val people = remember(state) { smartAlbums(state, AlbumType.SMART_PEOPLE) }
-    val places = remember(state) { smartAlbums(state, AlbumType.SMART_PLACE) }
-    // 回忆不依赖 NAS 的 AI 结果：直接从已加载的时间线派生（往年今日 / 往年这个月）
-    val memories = remember(allItems) { buildMemories(allItems) }
-    val hasAny = favorites.isNotEmpty() || people.isNotEmpty() || places.isNotEmpty() || memories.isNotEmpty()
-
-    val favRequesters = remember { mutableListOf<FocusRequester>() }
-    val peopleRequesters = remember { mutableListOf<FocusRequester>() }
-    val placesRequesters = remember { mutableListOf<FocusRequester>() }
-    val memRequesters = remember { mutableListOf<FocusRequester>() }
-    val favState = rememberLazyGridState()
-    var focusedIndex by remember { mutableIntStateOf(0) }
-    val columns = MEDIA_GRID_COLUMNS
-
-    // 收藏区高度固定 2 行，滚动只发生在整页 LazyColumn 上；这里 grid 自身禁用滚动
-    ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = { favorites.firstOrNull()?.let { requesterAt(favRequesters, 0) } })
-    LaunchedEffect(focusedIndex) { scrollGridTo(favState, focusedIndex, columns) }
-
-    if (!hasAny) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            EmptyState(
-                title = "还没有可回顾的内容",
-                subtitle = "在图片浏览器里点亮星标，NAS 完成人脸 / 地点识别后这里会更丰富",
-                icon = Icons.Outlined.Person,
-            )
-        }
-        return
+    var index by rememberSaveable { mutableIntStateOf(0) }
+    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 4 else MEDIA_GRID_COLUMNS
+    val safeIndex = index.coerceIn(0, favorites.lastIndex.coerceAtLeast(0))
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = (safeIndex / columns) * columns)
+    val requesters = remember { mutableListOf<FocusRequester>() }
+    ConsumeBlockRequest(contentFocus, BLOCK_CONTENT) {
+        favorites.getOrNull(safeIndex)?.let { requesterAt(requesters, safeIndex) }
     }
-
-    LazyColumn(
-        state = rememberLazyListState(),
-        contentPadding = PaddingValues(bottom = TvDimen.SpaceXl),
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        item(key = "favHeader") {
-            SectionHeader(
-                title = "收藏",
-                trailing = countText(favorites),
-                modifier = Modifier.padding(start = TvDimen.ScreenPadding, end = TvDimen.ScreenPadding, top = TvDimen.SpaceM, bottom = TvDimen.SpaceM),
-            )
-        }
-        item(key = "favGrid") {
-            if (favorites.isEmpty()) {
-                RowEmptyState("还没有星标照片 · 在图片浏览器里点亮星标")
-            } else {
-                LazyVerticalGrid(
-                    state = favState,
-                    columns = GridCells.Fixed(columns),
-                    contentPadding = GridContentPadding,
-                    horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
-                    verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
-                    modifier = Modifier.fillMaxWidth().height(((MEDIA_CELL_H + 12) * 2).dp),
-                    userScrollEnabled = false,
-                ) {
-                    itemsIndexed(favorites, key = { _, it -> it.id }) { index, item ->
-                        MediaCard(
-                            item = item,
-                            width = MEDIA_CELL_W,
-                            height = MEDIA_CELL_H,
-                            focusRequester = requesterAt(favRequesters, index),
-                            onClick = { openMedia(item, favorites, "收藏", onOpenPhoto, onOpenVideo) },
-                            onFocusChanged = { focused ->
-                                if (focused) focusedIndex = index
-                            },
-                        )
-                    }
-                }
-            }
-        }
-
-        if (people.isNotEmpty()) {
-            item(key = "peopleHeader") { SmartRowHeader("人物", Icons.Outlined.Person, people.size) }
-            item(key = "peopleRow") {
-                SmartAlbumRow(state, people, peopleRequesters, onOpenAlbum)
-            }
-        }
-        if (places.isNotEmpty()) {
-            item(key = "placesHeader") { SmartRowHeader("地点", Icons.Outlined.Place, places.size) }
-            item(key = "placesRow") {
-                SmartAlbumRow(state, places, placesRequesters, onOpenAlbum)
-            }
-        }
-        if (memories.isNotEmpty()) {
-            item(key = "memHeader") { SmartRowHeader("回忆", Icons.Outlined.Star, memories.size) }
-            item(key = "memRow") {
-                MemoryRow(
-                    memories = memories,
-                    requesters = memRequesters,
-                    onOpen = { memory ->
-                        val start = memory.items.firstOrNull { it.type == MediaType.PHOTO } ?: memory.items.first()
-                        openMedia(start, memory.items, memory.title, onOpenPhoto, onOpenVideo)
-                    },
-                )
-            }
-        }
+    Column(Modifier.fillMaxSize()) {
+        SectionHeader("收藏", countText(favorites), Modifier.padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceM))
+        if (favorites.isEmpty()) EmptyState("还没有收藏", "看图时选择收藏，方便下次找到", Modifier.fillMaxSize(), Icons.Outlined.Star)
+        else MediaGrid(favorites, columns, gridState, requesters, safeIndex,
+            onFocused = { index = it },
+            onFirstRowUp = onFirstRowUp,
+            onClick = { i, item -> openMedia(item, favorites, "收藏", onOpenPhoto, onOpenVideo) })
     }
 }
 
@@ -1070,7 +842,7 @@ private fun AlbumDetailPane(
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
 ) {
     val items = remember(state, album.id) { albumItems(state, album) }
-    val columns = MEDIA_GRID_COLUMNS
+    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 4 else MEDIA_GRID_COLUMNS
     // 记住「看的是哪一张」：从全屏看图返回时，LibraryScreen 整体重新组合，
     // 若落点永远是第 0 张，用户就被丢回相册开头 —— 这与顶栏掉焦点一样恼人。
     // rememberSaveable 由外层 SaveableStateProvider("library") 保管，看图往返不丢。
@@ -1154,7 +926,7 @@ private fun PersonDetailPane(
     // 四态用类型表达，不再拿 null 兼「加载中 / 失败」两义：
     // 「读失败」和「确实没有照片」对用户是两件事 —— 前者要提示可以重试，后者是正常结果。
     var photosState by remember(person.id) { mutableStateOf<PersonPhotos>(PersonPhotos.Loading) }
-    val columns = MEDIA_GRID_COLUMNS
+    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 4 else MEDIA_GRID_COLUMNS
     // 同 AlbumDetailPane：记住看到的是哪一张，全屏看图返回后落回它而不是第一张
     var focusedIndex by rememberSaveable(person.id) { mutableIntStateOf(0) }
     val gridState = rememberLazyGridState(
@@ -1470,5 +1242,27 @@ private fun LibraryEmptyPreview() {
             onOpenVideo = { _, _, _ -> },
             onNavigate = {},
         )
+    }
+}
+
+private val TOP_LEVEL_TABS = listOf(LibraryTab.ALL, LibraryTab.CHRONO, LibraryTab.ALBUMS)
+private fun topLevelTab(tab: LibraryTab): LibraryTab = when (tab) {
+    LibraryTab.PEOPLE, LibraryTab.SMART -> LibraryTab.ALBUMS
+    LibraryTab.RECENT -> LibraryTab.CHRONO
+    else -> tab
+}
+
+@Composable
+private fun AlbumCategoryBar(selected: LibraryTab, requesters: List<FocusRequester>, onUp: () -> Unit, onSelect: (LibraryTab) -> Unit, onDown: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceXs),
+        horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM)) {
+        listOf(LibraryTab.ALBUMS, LibraryTab.PEOPLE, LibraryTab.SMART).forEachIndexed { index, tab ->
+            TvFocusBox(focusRequester = requesters[index], onUp = onUp,
+                onConfirm = { onSelect(tab) }, onDown = onDown,
+                modifier = Modifier.padding(horizontal = TvDimen.SpaceS, vertical = TvDimen.SpaceXs)) {
+                Text(tab.label, color = if (tab == selected) TvColor.Accent else TvColor.TextSecondary,
+                    fontSize = TvType.Body, fontWeight = FontWeight.Medium)
+            }
+        }
     }
 }

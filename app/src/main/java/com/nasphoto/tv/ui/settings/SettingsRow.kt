@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -75,85 +76,102 @@ fun SettingsRow(
     val toggle = toggleState(key, store)
     val action = isActionRow(key)
 
-    SettingsFocusRow(
-        modifier = modifier,
-        focusRequester = focusRequester,
-        onConfirm = onConfirm,
-        onFocused = { isFocused -> if (isFocused) onFocus() },
-        onAdjust = { isLeft ->
-            when {
-                // 开关：左右直接切换；值行：执行该方向的步进；没有步进的动作行：吃掉但不做事
-                toggle != null -> {
-                    onConfirm()
-                    true
-                }
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val compact = maxWidth < 420.dp
+        SettingsFocusRow(
+            focusRequester = focusRequester,
+            rowHeight = if (compact) TvDimen.SpaceXxl + TvDimen.SpaceM else SettingsRowHeight,
+            onConfirm = onConfirm,
+            onFocused = { isFocused -> if (isFocused) onFocus() },
+            onAdjust = { isLeft ->
+                when {
+                    // 开关：左右直接切换；值行：执行该方向的步进；没有步进的动作行：吃掉但不做事
+                    toggle != null -> {
+                        onConfirm()
+                        true
+                    }
 
-                else -> {
-                    val step = if (isLeft) onStepLeft else onStepRight
-                    step?.invoke()
-                    step != null
-                }
-            }
-        },
-    ) { rowFocused ->
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = TvDimen.SpaceM),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (rowFocused) TvColor.Accent else TvColor.TextTertiary.copy(alpha = 0.30f),
-                    ),
-            )
-            Spacer(Modifier.width(TvDimen.SpaceS))
-
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = key.title,
-                    fontSize = TvType.Body,
-                    fontWeight = if (rowFocused) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (rowFocused) TvColor.TextPrimary else TvColor.TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (rowFocused) {
-                    // 副标题只在聚焦行出现：非聚焦行保持安静
-                    AnimatedVisibility(
-                        visible = true,
-                        enter = fadeIn(tween(140)) + expandVertically(tween(140)),
-                        exit = fadeOut(tween(100)) + shrinkVertically(tween(100)),
-                    ) {
-                        Text(
-                            text = key.hint,
-                            fontSize = TvType.Tiny,
-                            color = TvColor.TextTertiary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    else -> {
+                        val step = if (isLeft) onStepLeft else onStepRight
+                        step?.invoke()
+                        step != null
                     }
                 }
+            },
+        ) { rowFocused ->
+            val trailing: @Composable () -> Unit = {
+                when {
+                    toggle != null -> TvSwitch(checked = toggle, focused = rowFocused)
+                    action -> ActionTail(key, feedback, rowFocused)
+                    else -> ValueChip(
+                        text = value,
+                        focused = rowFocused,
+                        accent = if (key == SettingsKey.NAS_TEST && feedback.nasTestOk == false) TvColor.Danger else TvColor.Accent,
+                        minWidth = if (compact) 132 else if (key == SettingsKey.NAS_HOST) 200 else 132,
+                    )
+                }
             }
-
-            Spacer(Modifier.width(TvDimen.SpaceS))
-
-            when {
-                toggle != null -> TvSwitch(checked = toggle, focused = rowFocused)
-                action -> ActionTail(key, feedback, rowFocused)
-                else -> ValueChip(
-                    text = value,
-                    focused = rowFocused,
-                    accent = if (key == SettingsKey.NAS_TEST && feedback.nasTestOk == false) {
-                        TvColor.Danger
-                    } else {
-                        TvColor.Accent
-                    },
-                    minWidth = if (key == SettingsKey.NAS_HOST) 200 else 132,
+            if (compact && !action) {
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = TvDimen.SpaceM, vertical = TvDimen.SpaceXs),
+                ) {
+                    Text(
+                        text = key.title,
+                        fontSize = TvType.Body,
+                        fontWeight = if (rowFocused) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (rowFocused) TvColor.TextPrimary else TvColor.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(TvDimen.SpaceXs))
+                    trailing()
+                }
+            } else Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = TvDimen.SpaceM),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (rowFocused) TvColor.Accent else TvColor.TextTertiary.copy(alpha = 0.30f),
+                        ),
                 )
+                Spacer(Modifier.width(TvDimen.SpaceS))
+
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = key.title,
+                        fontSize = TvType.Body,
+                        fontWeight = if (rowFocused) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (rowFocused) TvColor.TextPrimary else TvColor.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (rowFocused) {
+                        // 副标题只在聚焦行出现：非聚焦行保持安静
+                        AnimatedVisibility(
+                            visible = true,
+                            enter = fadeIn(tween(140)) + expandVertically(tween(140)),
+                            exit = fadeOut(tween(100)) + shrinkVertically(tween(100)),
+                        ) {
+                            Text(
+                                text = key.hint,
+                                fontSize = TvType.Tiny,
+                                color = TvColor.TextMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.width(TvDimen.SpaceS))
+
+                trailing()
             }
         }
     }
@@ -214,12 +232,13 @@ fun rowValueText(key: SettingsKey, store: SettingsStore, feedback: SettingsFeedb
             }
         }
         SettingsKey.ACC_LABEL -> store.nas.activeAccount?.label?.ifBlank { "未设置" } ?: "未设置"
+        SettingsKey.SS_DISPLAY_ALBUMS -> "已选 ${displayAlbumSelectionCount(store)} 个"
         SettingsKey.SS_IDLE -> SettingsStore.formatIdleTimeout(s.idleTimeoutSec)
         SettingsKey.SS_MODE -> s.mode.label
         SettingsKey.SS_SOURCE -> s.photoSource.label
-        SettingsKey.SS_ALBUM -> s.albumName.ifBlank {
-            if (MediaCache.albums.isEmpty()) "暂无相册" else "未选择"
-        }
+        SettingsKey.SS_ALBUM -> currentDisplayAlbums(store)
+            .firstOrNull { it.id == s.albumId && it.id in store.displayAlbumIds }?.name
+            ?: "未选择展示相册"
         SettingsKey.SS_INTERVAL -> SettingsStore.formatInterval(s.photoIntervalSec)
         SettingsKey.SS_CLOCK -> s.clockStyle.label
         SettingsKey.SS_BACKGROUND -> s.background.label
@@ -263,6 +282,7 @@ fun toggleState(key: SettingsKey, store: SettingsStore): Boolean? {
 fun isActionRow(key: SettingsKey): Boolean = key in ACTION_KEYS
 
 private val ACTION_KEYS = setOf(
+    SettingsKey.SS_DISPLAY_ALBUMS,
     SettingsKey.NAS_TEST,
     SettingsKey.NAS_REFRESH,
     SettingsKey.SS_PREVIEW,
@@ -276,6 +296,11 @@ private val ACTION_KEYS = setOf(
 private fun ActionTail(key: SettingsKey, feedback: SettingsFeedback, focused: Boolean) {
     val tint = if (focused) TvColor.TextPrimary else TvColor.TextSecondary
     when (key) {
+        SettingsKey.SS_DISPLAY_ALBUMS -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("已选 ${displayAlbumSelectionCount(SettingsStore)} 个", fontSize = TvType.Caption, color = tint)
+            Spacer(Modifier.width(TvDimen.SpaceXs))
+            Chevron(tint)
+        }
         SettingsKey.NAS_TEST -> when {
             feedback.nasTesting -> CircularProgressIndicator(
                 modifier = Modifier.size(20.dp),

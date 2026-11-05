@@ -37,7 +37,7 @@ import com.nasphoto.tv.data.fn.FnOsTransport
  *  - 自签证书的 TOFU 信任；
  *  - AccessToken 由拦截器动态注入（重登后无需重建 ImageLoader）。
  *
- * 加载中 / 失败 / 非 http 地址（Compose Preview 的假数据）统一显示渐变占位，
+ * 支持 http(s) NAS 图片和本地 android.resource 示例；加载中 / 失败 / 其他地址显示渐变占位，
  * 保证 10-foot UI 不会出现白块或崩溃。
  */
 
@@ -119,7 +119,8 @@ fun MediaImage(
         modifier
     }
 
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    if (!url.startsWith("http://") && !url.startsWith("https://") &&
+        !url.startsWith("android.resource://")) {
         Placeholder(colorForUrl(url), boxModifier)
         return
     }

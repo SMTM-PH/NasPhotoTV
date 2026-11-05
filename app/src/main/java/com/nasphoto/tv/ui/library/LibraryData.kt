@@ -26,12 +26,12 @@ import java.util.Locale
  * 1920dp 画布要放 6 个 Tab，label 每短一个字，中间那排就多一分余量。
  */
 enum class LibraryTab(val label: String) {
-    ALL("全部照片"),
-    CHRONO("年 · 月 · 日"),
+    ALL("回忆"),
+    CHRONO("图库"),
     ALBUMS("相册"),
     PEOPLE("人物"),
     RECENT("最近添加"),
-    SMART("收藏 · 回忆"),
+    SMART("收藏"),
 }
 
 /** 一次横向行的数据模型：标题 + 媒体列表（用于「最近添加」等） */

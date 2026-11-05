@@ -33,6 +33,8 @@ data class LibraryState(
     val accountCount: Int = 1,
     val people: List<Person> = emptyList(),
     val peopleLoaded: Boolean = true,
+    /** Account that owns this snapshot; presentation scope must never cross accounts. */
+    val ownerAccountId: String = "",
 )
 
 /**
@@ -42,6 +44,7 @@ data class ViewerRequest(
     val items: List<com.nasphoto.tv.data.model.MediaItem>,
     val initialIndex: Int,
     val contextTitle: String,
+    val startSlideshow: Boolean = false,
 )
 
 /**

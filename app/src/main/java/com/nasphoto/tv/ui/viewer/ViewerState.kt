@@ -21,11 +21,15 @@ import com.nasphoto.tv.data.model.MediaType
  */
 @Stable
 class PhotoViewerState(
-    val items: List<MediaItem>,
+    items: List<MediaItem>,
     initialIndex: Int,
     /** 最近一次切换的方向：1=下一张，-1=上一张，0=直接跳转。用于决定滑动动画方向。 */
     initialDirection: Int = 0,
+    startSlideshow: Boolean = false,
 ) {
+    var items: List<MediaItem> by mutableStateOf(items)
+        private set
+
     /** 当前索引（已 clamp 在 0..size-1） */
     var index by mutableStateOf(initialIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0)))
         private set
@@ -34,13 +38,13 @@ class PhotoViewerState(
         private set
 
     /** 控制栏（底部信息条 + 按钮行）是否显示 */
-    var chromeVisible by mutableStateOf(true)
+    var chromeVisible by mutableStateOf(false)
 
     /** 信息面板展开（标题/日期/分辨率/大小/扩展名） */
     var infoExpanded by mutableStateOf(false)
 
     /** 幻灯片自动播放 */
-    var slideshowPlaying by mutableStateOf(false)
+    var slideshowPlaying by mutableStateOf(startSlideshow && items.any { it.type == MediaType.PHOTO })
         private set
 
     /** 放大查看：全屏适应 <-> 2× 放大 */
@@ -60,6 +64,16 @@ class PhotoViewerState(
     val hasPrev: Boolean get() = index > 0
     val hasNext: Boolean get() = index < items.lastIndex
     val counterText: String get() = "${index + 1} / ${items.size}"
+
+    /** 刷新与恢复时重新绑定媒体；按 ID 保留当前照片，删除后安全退回相邻位置。 */
+    fun updateItems(updated: List<MediaItem>) {
+        if (items == updated) return
+        val selectedId = current?.id
+        items = updated
+        index = updated.indexOfFirst { it.id == selectedId }.takeIf { it >= 0 }
+            ?: index.coerceIn(0, updated.lastIndex.coerceAtLeast(0))
+        if (updated.none { it.type == MediaType.PHOTO }) slideshowPlaying = false
+    }
 
     /**
      * 收藏 = NAS 的 isCollect ∪ 本机星标。
@@ -126,7 +140,7 @@ class PhotoViewerState(
     // ---------------- 幻灯片 ----------------
 
     fun toggleSlideshow() {
-        slideshowPlaying = !slideshowPlaying
+        slideshowPlaying = !slideshowPlaying && items.any { it.type == MediaType.PHOTO }
         chromeVisible = true
     }
 
@@ -137,7 +151,14 @@ class PhotoViewerState(
     }
 
     /** 幻灯片 tick：自动下一张 */
-    fun advanceSlideshow() = go(1)
+    fun advanceSlideshow() {
+        if (items.isEmpty()) return
+        // 混合媒体中的视频仍可手动打开；自动照片播放不停在视频封面上。
+        val step = (1..items.size).firstOrNull {
+            items[(index + it) % items.size].type == MediaType.PHOTO
+        } ?: return
+        go(step)
+    }
 
     // ---------------- 放大平移 ----------------
 
@@ -167,16 +188,16 @@ class PhotoViewerState(
     }
 
     companion object {
-        fun saver(): Saver<PhotoViewerState, Any> = Saver(
-            save = { listOf(it.index, it.zoomed, it.infoExpanded, it.slideshowPlaying) },
+        fun saver(items: List<MediaItem>): Saver<PhotoViewerState, Any> = Saver(
+            save = { listOf(it.index, it.zoomed, it.infoExpanded, it.slideshowPlaying, it.chromeVisible) },
             restore = { saved ->
                 @Suppress("UNCHECKED_CAST")
                 val v = saved as List<Any>
-                PhotoViewerState(emptyList(), 0).apply {
-                    index = (v[0] as? Int) ?: 0
+                PhotoViewerState(items, (v[0] as? Int) ?: 0).apply {
                     zoomed = (v[1] as? Boolean) ?: false
                     infoExpanded = (v[2] as? Boolean) ?: false
                     slideshowPlaying = (v[3] as? Boolean) ?: false
+                    chromeVisible = (v.getOrNull(4) as? Boolean) ?: false
                 }
             },
         )
@@ -191,16 +212,14 @@ class PhotoViewerState(
 fun rememberPhotoViewerState(
     items: List<MediaItem>,
     initialIndex: Int,
+    startSlideshow: Boolean = false,
 ): PhotoViewerState = rememberSaveable(
-    saver = PhotoViewerState.saver(),
+    saver = PhotoViewerState.saver(items),
     key = "viewerState",
 ) {
-    PhotoViewerState(items = items, initialIndex = initialIndex)
+    PhotoViewerState(items = items, initialIndex = initialIndex, startSlideshow = startSlideshow)
 }.also { state ->
-    // items 变化时（例如 Lead 换了数据源）保持索引合法
-    if (items.isNotEmpty() && state.index > items.lastIndex) {
-        state.goTo(items.lastIndex)
-    }
+    state.updateItems(items)
 }
 
 /** 文件大小格式化：1.2 MB / 856 KB ... */

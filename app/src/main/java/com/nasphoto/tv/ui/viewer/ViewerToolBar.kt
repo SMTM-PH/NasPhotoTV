@@ -2,19 +2,21 @@ package com.nasphoto.tv.ui.viewer
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBackIosNew
-import androidx.compose.material.icons.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Info
@@ -25,11 +27,19 @@ import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nasphoto.tv.ui.common.FocusCard
@@ -40,75 +50,69 @@ import com.nasphoto.tv.ui.theme.TvType
 /**
  * ================= 底部工具按钮行 =================
  *
- * 「◀ 上一张」「▶ 下一张」「ℹ 信息」「★ 收藏」「⏵ 幻灯片」「⛶ 放大」「✕ 关闭」
- * 全部通过 FocusCard 实现：聚焦时放大 + 白描边 + 青光晕（契约要求「不能只靠颜色变化」）。
+ * 左右翻图由画面方向键处理。这里只保留五个操作；横向滚动兜底超大字体，
+ * 控件始终留有焦点缩放余量，UP 回照片、DOWN 进入当前缩略图。
  */
 @Composable
 fun ViewerToolBar(
     state: PhotoViewerState,
-    onPrev: () -> Unit,
-    onNext: () -> Unit,
     onToggleInfo: () -> Unit,
     onToggleStar: () -> Unit,
     onToggleSlideshow: () -> Unit,
     onToggleZoom: () -> Unit,
     onClose: () -> Unit,
+    onOpenVideo: () -> Unit,
+    onReturnToImage: () -> Unit,
+    onEnterFilmStrip: () -> Unit,
     /** 「下键 / TAB / MENU 进工具行」的落点：挂在第一个按钮上 */
-    tabFocus: androidx.compose.ui.focus.FocusRequester? = null,
+    tabFocus: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     val item = state.current
     Row(
-        modifier = modifier,
+        modifier = modifier.fillMaxWidth()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.DirectionUp -> { onReturnToImage(); true }
+                    Key.DirectionDown -> { onEnterFilmStrip(); true }
+                    else -> false
+                }
+            }
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = TvDimen.SpaceXs, vertical = TvDimen.SpaceXs),
         horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ToolChip(
-            icon = Icons.Filled.ArrowBackIosNew,
-            label = "上一张",
-            hint = "◀",
-            onClick = onPrev,
+            icon = if (state.isStarred(item)) Icons.Filled.Star else Icons.Filled.StarBorder,
+            label = if (state.isStarred(item)) "已收藏" else "收藏",
+            active = state.isStarred(item),
+            activeColor = TvColor.Warn,
+            onClick = onToggleStar,
             tabFocus = tabFocus,
         )
         ToolChip(
-            icon = Icons.Filled.ArrowForwardIos,
-            label = "下一张",
-            hint = "▶",
-            onClick = onNext,
+            icon = if (state.slideshowPlaying && item?.isVideo() != true) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+            label = if (item?.isVideo() == true) "播放视频" else if (state.slideshowPlaying) "暂停" else "播放照片",
+            active = state.slideshowPlaying,
+            onClick = if (item?.isVideo() == true) onOpenVideo else onToggleSlideshow,
         )
         ToolChip(
             icon = Icons.Filled.Info,
             label = "信息",
-            hint = "ⓘ",
             active = state.infoExpanded,
             onClick = onToggleInfo,
         )
         ToolChip(
-            icon = if (state.isStarred(item)) Icons.Filled.Star else Icons.Filled.StarBorder,
-            label = if (state.isStarred(item)) "已收藏" else "收藏",
-            hint = "★",
-            active = state.isStarred(item),
-            activeColor = TvColor.Warn,
-            onClick = onToggleStar,
-        )
-        ToolChip(
-            icon = if (state.slideshowPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-            label = if (state.slideshowPlaying) "暂停" else "幻灯片",
-            hint = "⏵",
-            active = state.slideshowPlaying,
-            onClick = onToggleSlideshow,
-        )
-        ToolChip(
             icon = Icons.Filled.Fullscreen,
-            label = if (state.zoomed) "适应屏幕" else "放大查看",
-            hint = "⛶",
+            label = if (state.zoomed) "适应屏幕" else "放大",
             active = state.zoomed,
             onClick = onToggleZoom,
         )
         ToolChip(
             icon = Icons.Filled.Close,
             label = "关闭",
-            hint = "ESC",
             danger = true,
             onClick = onClose,
         )
@@ -118,33 +122,34 @@ fun ViewerToolBar(
 /**
  * 单个工具按钮。
  *
- * 用裸 `Box + focusable + onFocusChanged` 驱动焦点态（不用 FocusCard），
- * 这样才能在 [tabFocus] 里挂 FocusRequester 供「Tab / MENU 键跳进按钮行」使用。
+ * 直接把 requester 交给 FocusCard，保证程序化焦点与描边属于同一节点。
  */
 @Composable
 fun ToolChip(
     icon: ImageVector,
     label: String,
-    hint: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     active: Boolean = false,
     activeColor: Color = TvColor.Accent,
     danger: Boolean = false,
-    tabFocus: androidx.compose.ui.focus.FocusRequester? = null,
+    tabFocus: FocusRequester? = null,
 ) {
     val accent = if (danger) TvColor.Danger else activeColor
+    val latestOnClick by rememberUpdatedState(onClick)
     FocusCard(
         onClick = onClick,
         modifier = modifier
-            .height(56.dp)
-            .then(tabFocus?.let { Modifier.focusRequester(it) } ?: Modifier),
-        cornerRadius = 28.dp,
-        focusedScale = TvDimen.FocusScaleLarge,
+            .height(44.dp)
+            // 只补指针手势，不添加第二个 clickable/focusable 节点。
+            .pointerInput(Unit) { detectTapGestures(onTap = { latestOnClick() }) },
+        focusRequester = tabFocus,
+        cornerRadius = TvDimen.RadiusS,
+        focusedScale = TvDimen.FocusScale,
     ) { focused ->
         Row(
             modifier = Modifier
-                .height(56.dp)
+                .height(44.dp)
                 .background(
                     when {
                         focused -> TvColor.Accent
@@ -152,7 +157,7 @@ fun ToolChip(
                         else -> TvColor.SurfaceHigh.copy(alpha = 0.86f)
                     },
                 )
-                .padding(horizontal = TvDimen.SpaceM),
+                .padding(horizontal = TvDimen.SpaceS),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -171,10 +176,9 @@ fun ToolChip(
                 color = if (focused) TvColor.Bg else TvColor.TextPrimary,
                 fontSize = TvType.Caption,
                 fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                softWrap = false,
             )
-            Spacer(Modifier.width(TvDimen.SpaceXs))
-            // 键位提示：电视遥控器上对应哪个键
-            KeyHint(text = hint, focused = focused)
         }
     }
 }

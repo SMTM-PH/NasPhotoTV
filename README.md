@@ -5,11 +5,13 @@
 Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`，单 Activity、纯 Compose、无 TV 专用库；
 屏保待机显示对标 iPhone 的 StandBy —— 大号时钟 + 照片氛围 + 天气 + 防烧屏。
 
-- 版本：`1.0.0-prototype`（versionCode 1）
+- 版本：`1.1.2`（versionCode 4）
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
 
 ---
+
+> 当前界面改版（2026-11-05，未发布）：[相册体验整改与离线预览](docs/design-refinement-20261105/README.md)，包含三项主导航、回忆集合、简化看图工具和客厅展示相册授权。[TV UX/UI 技能调研](docs/design-next/skills-research.md)、[沉浸式首页](docs/design-immersive/README.md)、[上一版影廊](docs/design-next/README.md)与下方历史截图保留供对照；下文旧功能表不代表本轮界面。
 
 ## 0. 快速开始（TL;DR）
 
@@ -140,7 +142,7 @@ adb logcat -s AndroidRuntime:E
 
 | 场景 | 做法 |
 |---|---|
-| **推荐：Android TV 镜像** | SDK Manager 安装 `system-images;android-36;android-tv;x86_64`（或 android-35 的 TV 版），新建 AVD 时选 `tv_1080p` 设备模板（1920×1080 / density 320 → 1dp ≈ 1px，与设计稿 1:1） |
+| **推荐：Android TV 镜像** | SDK Manager 安装 `system-images;android-36;android-tv;x86_64`（或 android-35 的 TV 版），新建 AVD 时选 `tv_1080p` 设备模板（1920×1080 / density 320 → 960×540 dp；density 160 → 1920×1080 dp，按实际逻辑画布核对布局） |
 | **只有手机 AVD** | 临时把 `android.software.leanback` 的 `required` 改 `false`（仅本地验证，**不要提交**） |
 | **真机电视** | 无需改动，直接安装 |
 

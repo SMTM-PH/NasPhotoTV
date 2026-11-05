@@ -33,6 +33,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -153,6 +154,7 @@ fun TvFocusBox(
     onConfirm: (() -> Unit)? = null,
     onUp: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
+    focusRingColor: Color = TvColor.FocusRing,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -180,7 +182,7 @@ fun TvFocusBox(
             drawContent()
             if (glow > 0f) {
                 drawRoundRect(
-                    color = TvColor.FocusRing.copy(alpha = glow),
+                    color = focusRingColor.copy(alpha = glow),
                     cornerRadius = CornerRadius(cornerRadiusDp.dp.toPx()),
                     style = Stroke(width = TvDimen.FocusRingWidth.toPx()),
                 )

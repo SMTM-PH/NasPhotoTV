@@ -78,27 +78,30 @@ fun FilmStrip(
     listState: LazyListState,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    enterToken: Int = 0,
+    onReturnToToolbar: () -> Unit = {},
 ) {
     val items = state.items
     if (items.isEmpty()) return
 
-    val activeThumbFocus = remember { FocusRequester() }
-    var pendingFocus by remember { mutableStateOf<Int?>(null) }
+    val requesters = remember { mutableMapOf<String, FocusRequester>() }
+    fun requester(id: String) = requesters.getOrPut(id) { FocusRequester() }
     var wasFocused by remember { mutableStateOf(false) }
 
-    // 当前项变化 → 居中滚动
+    // 自动播放或从画面翻页时只滚动。胶片条自己聚焦时交给 LazyRow 让目标可见。
     LaunchedEffect(state.index, listState.layoutInfo.viewportSize.width) {
-        val target = (state.index - VisibleThumbCount / 2).coerceAtLeast(0)
-        listState.animateScrollToItem(target)
+        if (!wasFocused) listState.scrollToItem((state.index - 2).coerceAtLeast(0))
     }
 
-    // 进入胶片条时焦点先落回当前项，避免因默认焦点落在别的缩略图上而误切主图；
-    // 左右切换后焦点跟随新选中项，让描边、序号和主图始终指向同一张。
-    LaunchedEffect(pendingFocus) {
-        val target = pendingFocus ?: return@LaunchedEffect
-        repeat(2) { withFrameMillis {} }
-        if (state.index == target) runCatching { activeThumbFocus.requestFocus() }
-        pendingFocus = null
+    // DOWN 的单次请求：先组合当前项，再交给它焦点；切图不会重启这段恢复逻辑。
+    LaunchedEffect(enterToken) {
+        if (enterToken == 0) return@LaunchedEffect
+        val current = state.current ?: return@LaunchedEffect
+        listState.scrollToItem((state.index - 1).coerceAtLeast(0))
+        repeat(3) {
+            withFrameMillis { }
+            if (runCatching { requester(current.id).requestFocus() }.isSuccess) return@LaunchedEffect
+        }
     }
 
     LazyRow(
@@ -106,28 +109,19 @@ fun FilmStrip(
         modifier = modifier
             .fillMaxWidth()
             .onFocusChanged { focusState ->
-                if (focusState.hasFocus && !wasFocused) pendingFocus = state.index
                 wasFocused = focusState.hasFocus
             }
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (event.key) {
-                    Key.DirectionLeft, Key.DirectionRight -> {
-                        val delta = if (event.key == Key.DirectionRight) 1 else -1
-                        val next = (state.index + delta).coerceIn(0, items.lastIndex)
-                        if (next != state.index) {
-                            onSelect(next)
-                            pendingFocus = next
-                        }
-                        true
-                    }
-
+                    Key.DirectionUp -> { onReturnToToolbar(); true }
+                    Key.DirectionDown -> true
                     else -> false
                 }
             },
         horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
-        // 左右各留 1/2 屏宽，保证第一张/最后一张也能滚到正中间
-        contentPadding = PaddingValues(horizontal = HalfViewportPadding),
+        contentPadding = PaddingValues(horizontal = TvDimen.ScreenPadding,
+            vertical = TvDimen.SpaceXs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         itemsIndexed(items, key = { _, it -> it.id }) { i, item ->
@@ -137,7 +131,8 @@ fun FilmStrip(
                 active = i == state.index,
                 starred = state.isStarred(item),
                 onClick = { onSelect(i) },
-                focusRequester = if (i == state.index) activeThumbFocus else null,
+                focusRequester = requester(item.id),
+                onFocused = { onSelect(i) },
             )
         }
     }
@@ -152,6 +147,7 @@ private fun ThumbCell(
     starred: Boolean,
     onClick: () -> Unit,
     focusRequester: FocusRequester?,
+    onFocused: () -> Unit,
 ) {
     val borderWidth by animateDpAsState(
         targetValue = if (active) 3.dp else 0.dp,
@@ -167,11 +163,12 @@ private fun ThumbCell(
 
     FocusCard(
         onClick = onClick,
-        modifier = Modifier.size(width = 132.dp, height = 78.dp),
+        modifier = Modifier.size(width = 112.dp, height = 64.dp),
         cornerRadius = TvDimen.RadiusM,
         focusedScale = TvDimen.FocusScale,
         shape = shape,
         focusRequester = focusRequester,
+        onFocusChanged = { if (it) onFocused() },
     ) { focused ->
         Box(Modifier.fillMaxSize()) {
             MediaImage(
@@ -243,126 +240,52 @@ private val HudBackground = Brush.verticalGradient(
     listOf(Color.Black.copy(alpha = 0.58f), Color.Black.copy(alpha = 0.26f)),
 )
 
-/**
- * 看图页左上角浮层：
- *  - LIVE 徽标常驻（它是内容属性，需要在任何构图下都能认出实况）；
- *  - 状态句 / 来源 / 拍摄 / 标题 / 序号随控制栏淡入淡出；
- *  - 「信息」按钮（或方向键上）展开时补上尺寸、文件、ID。
- */
+/** 小型瞬时浮层；详细文件信息仅在用户主动展开时出现。 */
 @Composable
 fun ViewerHud(
     state: PhotoViewerState,
     contextTitle: String,
-    /**
-     * 信息面板是否可见。与 [PhotoViewerState.chromeVisible] 分开：
-     * 面板面积大、压在画面左上，会自动隐藏得更早（见 PhotoViewerScreen.HudAutoHideMs），
-     * 而底部工具条仍按 chromeVisible 的 3 秒节奏。徽标行不受影响、始终显示。
-     */
     visible: Boolean = state.chromeVisible,
     modifier: Modifier = Modifier,
 ) {
     val item = state.current ?: return
-    val starred = state.isStarred(item)
     val fileSize = rememberFileSizeText(item.sizeBytes)
-
-    Column(modifier) {
-        HudBadges(item)
-
-        AnimatedVisibility(
-            visible = visible,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(160)),
+    AnimatedVisibility(
+        visible = visible || state.infoExpanded,
+        enter = fadeIn(tween(160)),
+        exit = fadeOut(tween(140)),
+        modifier = modifier,
+    ) {
+        Column(
+            Modifier.widthIn(max = 420.dp)
+                .background(HudBackground, RoundedCornerShape(TvDimen.RadiusS))
+                .padding(horizontal = TvDimen.SpaceM, vertical = TvDimen.SpaceS),
         ) {
-            // 排版约束（沿用 InfoBar 时代踩过的坑）：文案一律单行 + 省略，
-            // 否则电视端窄容器会把字压成一列竖排。
-            Column(
-                Modifier
-                    .background(HudBackground, RoundedCornerShape(TvDimen.RadiusM))
-                    .padding(horizontal = 24.dp, vertical = 20.dp)
-                    .widthIn(max = 760.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(9.dp)
-                            .clip(CircleShape)
-                            .background(if (starred) TvColor.Warn else TvColor.TextTertiary.copy(alpha = 0.8f)),
-                    )
-                    Spacer(Modifier.width(14.dp))
-                    Text(
-                        text = if (starred) "你喜欢这张照片。" else "正在浏览这组照片。",
-                        color = Color.White.copy(alpha = 0.92f),
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.Light,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+            Text(item.title.ifBlank { "未命名的照片" }, color = TvColor.TextPrimary,
+                fontSize = TvType.CardTitle, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(TvDimen.SpaceXs))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(railDateText(item), color = TvColor.TextSecondary,
+                    fontSize = TvType.Caption, maxLines = 1,
+                    modifier = Modifier.weight(1f), overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.width(TvDimen.SpaceM))
+                Text(state.counterText, color = TvColor.TextSecondary,
+                    fontSize = TvType.Caption, maxLines = 1)
+            }
+            if (state.infoExpanded) {
+                Spacer(Modifier.height(TvDimen.SpaceS))
+                if (contextTitle.isNotBlank()) {
+                    RailMeta("相册", contextTitle)
+                    Spacer(Modifier.height(TvDimen.SpaceXs))
                 }
-
-                Spacer(Modifier.height(18.dp))
-
-                RailMeta("来源", "Home-NAS" + if (contextTitle.isNotBlank()) " · $contextTitle" else "")
-                Spacer(Modifier.height(8.dp))
-                RailMeta("拍摄", railDateText(item))
-
-                if (state.infoExpanded) {
-                    Spacer(Modifier.height(8.dp))
-                    RailMeta("尺寸", item.resolution.ifBlank { "—" })
-                    Spacer(Modifier.height(8.dp))
-                    RailMeta(
-                        "文件",
-                        buildString {
-                            append(fileSize)
-                            if (item.extension.isNotBlank()) append(" · ").append(item.extension.uppercase())
-                            if (item.isVideo()) {
-                                val d = formatDuration(item.durationMs)
-                                if (d.isNotEmpty()) append(" · ").append(d)
-                            }
-                        },
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    RailMeta("ID", item.id)
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                Text(
-                    text = item.title,
-                    color = Color.White.copy(alpha = 0.90f),
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    softWrap = false,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        text = (state.index + 1).toString().padStart(2, '0'),
-                        color = Color.White.copy(alpha = 0.86f),
-                        fontSize = 40.sp,
-                        fontWeight = FontWeight.Thin,
-                        maxLines = 1,
-                        softWrap = false,
-                    )
-                    Text(
-                        text = " / ${state.items.size.toString().padStart(2, '0')}",
-                        color = Color.White.copy(alpha = 0.45f),
-                        fontSize = 16.sp,
-                        maxLines = 1,
-                        softWrap = false,
-                        modifier = Modifier.padding(bottom = 6.dp),
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = "方向键切换 · 上键信息 · 下键工具 · 返回关闭",
-                    color = Color.White.copy(alpha = 0.32f),
-                    fontSize = TvType.Tiny,
-                    maxLines = 1,
-                    softWrap = false,
-                )
+                RailMeta("尺寸", item.resolution.ifBlank { "—" })
+                Spacer(Modifier.height(TvDimen.SpaceXs))
+                RailMeta("文件", listOf(fileSize, item.extension.uppercase(),
+                    if (item.isVideo()) formatDuration(item.durationMs) else "")
+                    .filter { it.isNotBlank() }.joinToString(" · "))
+                Spacer(Modifier.height(TvDimen.SpaceXs))
+                HudBadges(item)
             }
         }
     }
@@ -434,19 +357,13 @@ private fun RailMeta(label: String, value: String) {
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 620.dp),
+            modifier = Modifier.weight(1f),
         )
     }
 }
 
 private fun railDateText(item: MediaItem): String =
     "${item.dateTaken.year}年${item.dateTaken.monthValue}月${item.dateTaken.dayOfMonth}日"
-
-// 常量与工具
-private const val VisibleThumbCount = 9
-
-/** 左右各留 1/2 屏宽，保证第一张/最后一张也能滚到正中间 */
-private val HalfViewportPadding = 560.dp
 
 /** 不改变布局的透明度（避免每帧重组，只有焦点/高亮变化时生效） */
 private fun Modifier.graphicsLayerAlpha(a: Float): Modifier =

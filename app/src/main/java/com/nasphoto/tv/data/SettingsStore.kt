@@ -65,7 +65,49 @@ object SettingsStore {
     }
 
     fun updateNas(transform: (NasConnection) -> NasConnection) {
-        nas = transform(nas)
+        val next = transform(nas)
+        invalidateDisplayScopeForIdentityChange(nas, next)
+        nas = next
+    }
+
+    /**
+     * 当前账号明确允许在客厅自动展示的相册。
+     * 未授权、无有效账号或切换账号都返回空；调用方还须与当前真实相册取交集。
+     * 相册为空/已删除时绝不能回退到最近照片。
+     */
+    val displayAlbumIds: Set<String>
+        get() {
+            val accountId = nas.activeAccountId
+            if (accountId.isBlank() || nas.account(accountId) == null) return emptySet()
+            return if (screensaver.displayOwnerAccountId == accountId) screensaver.displayAlbumIds else emptySet()
+        }
+
+    /** 逐相册明确授权；新账号首次勾选从空白名单开始。 */
+    fun setDisplayAlbumEnabled(albumId: String, enabled: Boolean) {
+        val accountId = nas.activeAccountId
+        if (accountId.isBlank() || nas.account(accountId) == null || albumId.isBlank()) return
+        val selected = displayAlbumIds
+        val next = if (enabled) selected + albumId else selected - albumId
+        updateScreensaver { it.copy(displayOwnerAccountId = accountId, displayAlbumIds = next) }
+    }
+
+    /** 撤销当前账号的全部客厅展示授权，不影响正常图库浏览。 */
+    fun clearDisplayAlbums() {
+        val accountId = nas.activeAccountId
+        if (accountId.isBlank() || nas.account(accountId) == null) return
+        updateScreensaver { it.copy(displayOwnerAccountId = accountId, displayAlbumIds = emptySet()) }
+    }
+
+    /** 同一个本地账号 id 换用户名/服务器，也必须重新明确选择展示范围。 */
+    private fun invalidateDisplayScopeForIdentityChange(previous: NasConnection, next: NasConnection) {
+        val owner = screensaver.displayOwnerAccountId
+        if (owner.isBlank()) return
+        val previousAccount = previous.account(owner)
+        val nextAccount = next.account(owner)
+        val endpointChanged = previous.host.trim().lowercase() != next.host.trim().lowercase() || previous.port != next.port
+        if (endpointChanged || nextAccount == null || previousAccount?.username != nextAccount.username) {
+            updateScreensaver { it.copy(displayOwnerAccountId = "", displayAlbumIds = emptySet()) }
+        }
     }
 
     // ---------- 多账号（同一台 NAS 的多个飞牛账号） ----------
@@ -96,18 +138,26 @@ object SettingsStore {
         if (nas.account(accountId) == null) return false
         nas = nas.withoutAccount(accountId).copy(connected = false)
         nasLatencyMs = null
+        // 账号 id 将来可能重用；被删除账号的授权不得转交给新账号。
+        if (screensaver.displayOwnerAccountId == accountId) {
+            updateScreensaver { it.copy(displayOwnerAccountId = "", displayAlbumIds = emptySet()) }
+        }
         return true
     }
 
     /** 改某个账号的字段（不改变当前账号） */
     fun updateAccount(accountId: String, transform: (NasAccount) -> NasAccount) {
         val account = nas.account(accountId) ?: return
-        nas = nas.withAccount(transform(account))
+        val next = nas.withAccount(transform(account))
+        invalidateDisplayScopeForIdentityChange(nas, next)
+        nas = next
     }
 
     /** 改当前账号的字段 */
     fun updateActiveAccount(transform: (NasAccount) -> NasAccount) {
-        nas = nas.updateActiveAccount(transform)
+        val next = nas.updateActiveAccount(transform)
+        invalidateDisplayScopeForIdentityChange(nas, next)
+        nas = next
     }
 
     /** 记录一次连接测试结果；[latencyMs] 为 null 表示失败 */
@@ -266,6 +316,8 @@ object SettingsStore {
         e.putBoolean("ss_date", screensaver.showDate)
         e.putBoolean("ss_dim", screensaver.nightDim)
         e.putBoolean("ss_kenburns", screensaver.kenBurns)
+        e.putString("display_owner_account", screensaver.displayOwnerAccountId)
+        e.putStringSet("display_album_ids", screensaver.displayAlbumIds.toSet())
         e.putBoolean("pb_next", playback.autoPlayNext)
         e.putBoolean("pb_loop", playback.loopMode)
         e.apply()
@@ -287,7 +339,7 @@ object SettingsStore {
                 ?: restoredAccounts.firstOrNull()?.id.orEmpty(),
         )
         screensaver = defaultScreensaver.copy(
-            enabled = p.getBoolean("ss_enabled", true),
+            enabled = p.getBoolean("ss_enabled", defaultScreensaver.enabled),
             idleTimeoutSec = p.getInt("ss_idle", 60),
             photoIntervalSec = p.getInt("ss_interval", 10),
             clockStyle = enumOrDefault(p.getString("ss_clock", null), ScreensaverSettings.ClockStyle.CINEMA),
@@ -302,6 +354,9 @@ object SettingsStore {
             showDate = p.getBoolean("ss_date", true),
             nightDim = p.getBoolean("ss_dim", true),
             kenBurns = p.getBoolean("ss_kenburns", true),
+            // 老版本未保存展示白名单：升级后先不授权，等用户逐相册选择。
+            displayOwnerAccountId = p.getString("display_owner_account", "").orEmpty(),
+            displayAlbumIds = p.getStringSet("display_album_ids", emptySet())?.toSet().orEmpty(),
         )
         playback = defaultPlayback.copy(
             autoPlayNext = p.getBoolean("pb_next", true),

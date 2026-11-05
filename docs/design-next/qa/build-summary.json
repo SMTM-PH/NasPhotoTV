@@ -1,0 +1,32 @@
+{
+  "date": "2026-11-04",
+  "timezone": "Asia/Shanghai",
+  "source": {
+    "repository": "https://github.com/SMTM-PH/NasPhotoTV",
+    "base_commit": "b1f8df2ca7d2f9731fa0e3bbf64da4d9b6a9a1f3",
+    "branch": "codex/tv-gallery-ui",
+    "ui_changes": "local uncommitted"
+  },
+  "build": {
+    "command": "gradlew.bat --offline --no-daemon --no-parallel :app:assembleDebug",
+    "result": "BUILD SUCCESSFUL",
+    "elapsed_seconds": 54,
+    "java": "Microsoft JDK 17.0.15"
+  },
+  "apk": {
+    "path": "app/build/outputs/apk/debug/app-debug.apk",
+    "bytes": 23361470,
+    "sha256": "c8ee3726c3a185179b7f301096fd667c1c3396824f3830b48c2c449f1bdf7c09"
+  },
+  "release_manifest": {
+    "generated": true,
+    "contains_debug_preview_activity": false
+  },
+  "lint": {
+    "status": "failed",
+    "errors": 16,
+    "warnings": 37,
+    "detail": "lint-summary.md"
+  },
+  "validation_scope": "Offline sample data in generic Android API 35 emulator; physical TV and real NAS not validated."
+}

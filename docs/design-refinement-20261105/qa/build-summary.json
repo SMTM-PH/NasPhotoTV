@@ -1,0 +1,59 @@
+{
+  "date": "2026-11-05",
+  "branch": "codex/tv-gallery-ui",
+  "base_commit": "b1f8df2ca7d2f9731fa0e3bbf64da4d9b6a9a1f3",
+  "working_tree_at_build": "uncommitted; later submitted on codex/tv-gallery-ui",
+  "assembleDebug": {
+    "result": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 65,
+    "command": "gradlew.bat --offline --no-daemon --no-parallel :app:assembleDebug"
+  },
+  "apk": {
+    "path": "app/build/outputs/apk/debug/app-debug.apk",
+    "bytes": 23732709,
+    "sha256": "2f246d32d29c4587feb24ae937069181131132c44e7dbf0e6ad7f8021de3e050"
+  },
+  "lintDebug": {
+    "result": "FAIL_EXISTING_SOURCE_ERRORS",
+    "exit_code": 1,
+    "elapsed_seconds": 53,
+    "counts": {
+      "Error": 16,
+      "Warning": 37,
+      "Information": 10
+    },
+    "error_files_unchanged_from_base": [
+      "app/src/main/java/com/nasphoto/tv/MainActivity.kt",
+      "app/src/main/java/com/nasphoto/tv/data/fn/FnOsTransport.kt",
+      "app/src/main/java/com/nasphoto/tv/ui/common/LivePhotoVideo.kt",
+      "app/src/main/java/com/nasphoto/tv/ui/screensaver/ScreensaverClock.kt",
+      "app/src/main/java/com/nasphoto/tv/ui/video/VideoPlayerScreen.kt",
+      "app/src/main/res/values/themes.xml"
+    ],
+    "report": "app/build/reports/lint-results-debug.html"
+  },
+  "emulator": {
+    "serial": "emulator-5580",
+    "avd": "NasPhotoTV_Design_API35",
+    "api": 35,
+    "image": "Google APIs x86_64; not a TV system image",
+    "gpu": "host",
+    "physical_pixels": [
+      1920,
+      1080
+    ],
+    "primary_density": 320,
+    "primary_dp": [
+      960,
+      540
+    ],
+    "data": "Debug-only offline sample photos; no real NAS"
+  },
+  "unverified": [
+    "Real TV remote and hardware",
+    "Real NAS login/media/permission integration",
+    "Video/Live Photo codec playback",
+    "Portrait fixture visual QA"
+  ]
+}
