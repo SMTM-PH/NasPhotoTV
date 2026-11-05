@@ -13,6 +13,8 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 > 当前界面改版（2026-11-05，未发布）：[相册体验整改与离线预览](docs/design-refinement-20261105/README.md)，包含三项主导航、回忆集合、简化看图工具和客厅展示相册授权。[TV UX/UI 技能调研](docs/design-next/skills-research.md)、[沉浸式首页](docs/design-immersive/README.md)、[上一版影廊](docs/design-next/README.md)与下方历史截图保留供对照；下文旧功能表不代表本轮界面。
 
+新版设计对外介绍与配图：[论坛发布素材（完整稿、短文、固定链接配图）](docs/promotion/design-preview-20261105/README.md)。
+
 ## 0. 快速开始（TL;DR）
 
 ```bash
