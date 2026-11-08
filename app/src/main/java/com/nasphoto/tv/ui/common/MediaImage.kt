@@ -81,6 +81,12 @@ object NasImageLoader {
                     add(GifDecoder.Factory())
                 }
             }
+            // 本机（MTK Android 9 / Hisense）在 RenderThread 上传硬件位图时会因
+            // glEGLImageTargetTexture2DOES 返回 GL_INVALID_VALUE 直接 SIGABRT
+            // （libhwui: OpenGLPipeline::allocateHardwareBitmap）。Coil 默认用
+            // ImageDecoder 生成 Config.HARDWARE 位图，正好踩中这个厂商 bug。
+            // 关掉硬件位图改用软件位图：解码/绘制略耗 CPU，但不会再让整个进程闪退。
+            .allowHardware(false)
             .crossfade(true)
             .build()
             .also { instance = it }

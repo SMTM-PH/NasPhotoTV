@@ -83,7 +83,7 @@ fun MediaItem.isPanoramaPhoto(): Boolean {
     val isSmart: Boolean = false,
 )
 
-enum class AlbumType { FOLDER, SMART_PEOPLE, SMART_PLACE, MEMORY, FAVORITES }
+enum class AlbumType { FOLDER, SMART_PEOPLE, SMART_PLACE, MEMORY, FAVORITES, SMART_CATEGORY }
 
 /**
  * ================= NAS 上的一个飞牛登录账号 =================

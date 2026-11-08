@@ -490,7 +490,7 @@ fun AlbumDetailHeader(
     Row(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceS),
+            .padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceXs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TvFocusBox(
@@ -503,7 +503,7 @@ fun AlbumDetailHeader(
                 .clip(CircleShape)
                 .background(TvColor.Surface)
                 .verticalNav(onDown = onDown)
-                .padding(horizontal = TvDimen.SpaceM, vertical = 10.dp),
+                .padding(horizontal = TvDimen.SpaceM, vertical = 8.dp),
         ) { focused ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
@@ -517,17 +517,23 @@ fun AlbumDetailHeader(
             }
         }
         Spacer(Modifier.width(TvDimen.SpaceL))
-        Column {
-            Text(
-                albumName,
-                color = TvColor.TextPrimary,
-                fontSize = TvType.Display,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(count, color = TvColor.TextTertiary, fontSize = TvType.Caption)
-        }
+        // 标题与数量同一行：详情页顶部越矮，网格能完整展示的行数越多。
+        Text(
+            albumName,
+            color = TvColor.TextPrimary,
+            fontSize = TvType.Section,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Spacer(Modifier.width(TvDimen.SpaceS))
+        Text(
+            count,
+            color = TvColor.TextTertiary,
+            fontSize = TvType.Caption,
+            maxLines = 1,
+        )
     }
 }
 

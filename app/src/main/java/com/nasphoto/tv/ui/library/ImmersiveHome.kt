@@ -88,7 +88,8 @@ internal fun ImmersiveHome(
     onSelect: (HomeCollection) -> Unit,
     lastZone: HomeFocusZone,
     onZoneChange: (HomeFocusZone) -> Unit,
-    onPlaySlideshow: (List<MediaItem>, Int, String) -> Unit,
+    onOpenCollection: (HomeCollection) -> Unit,
+    onPlayCollection: (HomeCollection) -> Unit,
     onConfigureDisplay: () -> Unit,
     onOpenAlbumsTab: () -> Unit,
     contentFocus: PendingFocus,
@@ -166,7 +167,7 @@ internal fun ImmersiveHome(
                         .padding(start = TvDimen.ScreenPadding, end = TvDimen.SpaceM)
                         .padding(top = if (compact) TvDimen.SpaceXs else TvDimen.SpaceXl),
                 ) {
-                    Text("客厅回忆  /  你选择的相册",
+                    Text("客厅相册  /  飞牛 AI 智能分类",
                         color = TvColor.Accent, fontSize = TvType.Caption,
                         fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(TvDimen.SpaceXs))
@@ -179,17 +180,17 @@ internal fun ImmersiveHome(
                         fontSize = TvType.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (!compact) {
                         Spacer(Modifier.height(TvDimen.SpaceS))
-                        Text("一组照片，慢慢回看", color = TvColor.TextSecondary,
+                        Text("AI 识别的事物与场景", color = TvColor.TextSecondary,
                             fontSize = TvType.Body)
                     }
                     Spacer(Modifier.height(if (compact) TvDimen.SpaceM else TvDimen.SpaceL))
                     Row(horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM),
                         verticalAlignment = Alignment.CenterVertically) {
                         CinemaAction(
-                            label = "播放这组照片",
+                            label = "播放这个分类",
                             icon = Icons.Outlined.PlayArrow,
                             primary = true, focusRequester = primaryRequester,
-                            onClick = { onPlaySlideshow(collection.items, 0, collection.title) },
+                            onClick = { onPlayCollection(collection) },
                             onFocus = { onZoneChange(HomeFocusZone.OPEN) }, onUp = onUpToTopBar,
                             onDown = ::focusStrip,
                         )
@@ -200,11 +201,11 @@ internal fun ImmersiveHome(
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = TvDimen.ScreenPadding),
                 verticalAlignment = Alignment.CenterVertically) {
-                Text("回忆集", color = TvColor.TextPrimary,
+                Text("智能分类", color = TvColor.TextPrimary,
                     fontSize = if (compact) TvType.CardTitle else TvType.Section,
                     fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.width(TvDimen.SpaceS))
-                Text("来自客厅展示相册", color = TvColor.TextSecondary, fontSize = TvType.Caption)
+                Text("共 ${collections.size} 个分类", color = TvColor.TextSecondary, fontSize = TvType.Caption)
                 Spacer(Modifier.weight(1f))
                 Text("${safeIndex + 1} / ${collections.size}", color = TvColor.TextPrimary,
                     fontSize = TvType.Caption, fontFamily = FontFamily.Monospace)
@@ -229,7 +230,7 @@ internal fun ImmersiveHome(
                                 onZoneChange(HomeFocusZone.STRIP)
                                 onSelect(media)
                             } },
-                            onConfirm = { onPlaySlideshow(media.items, 0, media.title) },
+                            onConfirm = { onOpenCollection(media) },
                             onUp = { primaryRequester.requestFocus() },
                             modifier = Modifier.width(thumbnailWidth).height(thumbnailHeight)
                                 .semantics { this.selected = selected }
@@ -286,12 +287,12 @@ private fun EmptyImmersiveHome(onOpenAlbums: () -> Unit, contentFocus: PendingFo
     ConsumeBlockRequest(contentFocus, BLOCK_CONTENT) { requester }
     Column(Modifier.fillMaxSize().padding(TvDimen.ScreenPadding),
         verticalArrangement = Arrangement.Center) {
-        Text("选择客厅展示相册", color = TvColor.TextPrimary, fontSize = TvType.Display)
+        Text("还没有可展示的智能分类", color = TvColor.TextPrimary, fontSize = TvType.Display)
         Spacer(Modifier.height(TvDimen.SpaceS))
-        Text("只把你选择的照片带到首页和屏保。图库仍可浏览全部内容。",
+        Text("请在飞牛相册中开启 AI 识别并等待分析完成，识别出的事物与场景会自动出现在这里。",
             color = TvColor.TextSecondary, fontSize = TvType.Body)
         Spacer(Modifier.height(TvDimen.SpaceM))
-        CinemaAction("选择展示相册", Icons.Outlined.Collections, true, requester,
+        CinemaAction("浏览相册", Icons.Outlined.Collections, true, requester,
             onOpenAlbums, {}, onUp, {})
     }
 }

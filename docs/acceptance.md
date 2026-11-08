@@ -18,7 +18,7 @@
 - [ ] `gradlew.bat :app:assembleDebug` 成功，产出 `app/build/outputs/apk/debug/app-debug.apk`
 - [ ] `gradlew.bat :app:compileDebugKotlin` 无警告级错误（只跑编译即可，不需要 assemble）
 - [ ] `adb install -r` 成功（电视需开启 ADB 调试；普通手机镜像需按 README §3.4 处理 leanback）
-- [ ] 电视桌面/应用列表出现 **「NAS 相册 TV」**，图标与 banner 正常（`app_icon.png` / `app_banner.png`）
+- [ ] 电视桌面/应用列表出现 **「NAS 相册 TV」**，图标与 banner 正常（`mipmap-*/ic_launcher.png` / `app_banner.png`）
 - [ ] `adb shell am start -n com.nasphoto.tv/.MainActivity` 能直接启动
 - [ ] 启动后**全屏沉浸**：无状态栏、无导航栏、无标题栏
 - [ ] 屏幕**不会自动休眠**（`FLAG_KEEP_SCREEN_ON`），静置 3 分钟仍亮屏

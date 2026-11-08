@@ -5,9 +5,22 @@
 Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`，单 Activity、纯 Compose、无 TV 专用库；
 屏保待机显示对标 iPhone 的 StandBy —— 大号时钟 + 照片氛围 + 天气 + 防烧屏。
 
-- 版本：`1.1.2`（versionCode 4）
+- 版本：`1.2.0`（versionCode 6）
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
+
+---
+
+## 1.2.0 更新（2026-11-08）
+
+- **首页改用飞牛 AI 智能分类**：直接读取 `ai-smart-rec` 的场景 / 事物分类（天空云彩、山、登山徒步…），用分类封面铺满客厅相册行；点开分类或按「播放这个分类」时才通过 magic-search 拉取媒体，不再启动时预取几十个相册。
+- **相册 / 分类详情按需加载**：进入详情才拉当前相册媒体，并区分「加载中 / 失败 / 空 / 就绪」；大相册不再常驻 Java 堆，给 4K 解码腾出内存。
+- **详情页排版**：顶部标题缩小为单行（30sp + 数量同行），底部导航提示不再压住最后一行；聚焦到最后一行时整张卡片完整可见。
+- **4K 视频卡顿修复**：ExoPlayer 默认前向缓冲 50 秒、不限字节数，75–130 Mbps 的 4K 原片会要求 470 MB 以上，远超电视 192 MB 堆上限，触发持续 GC 与周期性停顿。现在缓冲按 **48 MB / 8–20 秒** 封顶，并开启解码失败自动回退。
+- **稳定性**：关闭 Coil 硬件位图（本机 MTK Android 9 在 `allocateHardwareBitmap` 会因 `glEGLImageTargetTexture2DOES` 报错直接 SIGABRT）；补齐 GET/POST 签名让智能分类可读。
+- **新图标已打进 APK**：`nas-photo-tv-icon-v2` 生成 mdpi–xxxhdpi 启动图标，并重做 320×180 TV 横幅。
+
+> 已知限制：电视为 **100 Mbps 有线网口**。实测 75 Mbps 的 4K 片段可稳定播放（缓冲约 5 秒）；129 Mbps 的 4K 片段码率高于网口上限，实时串流必然间歇性缓冲，需转码或先缓存到本地。
 
 ---
 

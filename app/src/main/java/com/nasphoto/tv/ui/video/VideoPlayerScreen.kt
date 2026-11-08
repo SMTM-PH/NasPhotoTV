@@ -1,5 +1,7 @@
 package com.nasphoto.tv.ui.video
 
+import android.util.Log
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -52,10 +54,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.nasphoto.tv.BuildConfig
 import com.nasphoto.tv.data.fn.FnOsTransport
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.PlaybackSettings
@@ -97,7 +103,28 @@ fun VideoPlayerScreen(
     val focusRequester = remember { FocusRequester() }
 
     val player = remember {
-        ExoPlayer.Builder(context)
+        // 飞牛直出 NAS 原片，4K 素材常见 60–80 Mbps。ExoPlayer 默认前向缓冲 50 秒
+        // 且不限字节数（media3 1.5 的 DEFAULT_MAX_BUFFER_MS = 50_000）——按 75 Mbps
+        // 算需要约 470 MB，远超本机 192 MB 的 Java 堆上限。缓冲区一直“分配不完”，
+        // GC 每 1–2 秒抖动一次，画面就表现为周期性卡顿。
+        // 按字节封顶并缩短时长上限：千兆局域网 1 秒内就能填满 48 MB，
+        // 缓冲分配一次后稳定复用，GC 不再随播放持续抖动。
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                BUFFER_MIN_MS,
+                BUFFER_MAX_MS,
+                BUFFER_FOR_PLAYBACK_MS,
+                BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+            )
+            .setTargetBufferBytes(BUFFER_TARGET_BYTES)
+            .setPrioritizeTimeOverSizeThresholds(false)
+            .build()
+        // 只开解码失败自动回退；不要用 forceEnableMediaCodecAsynchronousQueueing()：
+        // 本机（MTK Android 9）会在异步回调里 SIGABRT（android_media_MediaCodec.cpp:874）。
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+        ExoPlayer.Builder(context, renderersFactory)
+            .setLoadControl(loadControl)
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(FnOsTransport.mediaDataSourceFactory(context)),
             )
@@ -110,6 +137,34 @@ fun VideoPlayerScreen(
 
     DisposableEffect(player) {
         onDispose { player.release() }
+    }
+
+    // Debug 包把解码器与丢帧写进 logcat，方便真机判断「卡顿」来自网络、缓冲还是解码能力。
+    DisposableEffect(player) {
+        val listener = if (BuildConfig.DEBUG) {
+            object : AnalyticsListener {
+                override fun onVideoDecoderInitialized(
+                    eventTime: AnalyticsListener.EventTime,
+                    decoderName: String,
+                    initializedTimestampMs: Long,
+                    initializationDurationMs: Long,
+                ) {
+                    Log.d(TAG, "decoder=$decoderName init=${initializationDurationMs}ms")
+                }
+
+                override fun onDroppedVideoFrames(
+                    eventTime: AnalyticsListener.EventTime,
+                    droppedFrames: Int,
+                    elapsedMs: Long,
+                ) {
+                    Log.d(TAG, "droppedFrames=$droppedFrames elapsed=${elapsedMs}ms")
+                }
+            }
+        } else {
+            null
+        }
+        listener?.let(player::addAnalyticsListener)
+        onDispose { listener?.let(player::removeAnalyticsListener) }
     }
 
     DisposableEffect(player, index) {
@@ -398,6 +453,15 @@ private fun ProgressTrack(positionMs: Long, durationMs: Long) {
         )
     }
 }
+
+private const val TAG = "NasPhotoTV.Video"
+
+/** 48 MB 在 75 Mbps 素材上约 5 秒，在 20 Mbps 素材上约 19 秒。 */
+private const val BUFFER_MIN_MS = 8_000
+private const val BUFFER_MAX_MS = 20_000
+private const val BUFFER_FOR_PLAYBACK_MS = 1_500
+private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 4_000
+private const val BUFFER_TARGET_BYTES = 48 * 1024 * 1024
 
 private fun formatTime(ms: Long): String {
     val total = (ms / 1000).coerceAtLeast(0)

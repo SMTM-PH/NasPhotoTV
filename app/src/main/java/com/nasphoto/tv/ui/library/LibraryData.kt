@@ -313,6 +313,7 @@ fun albumSubtitle(album: Album): String = album.subtitle.ifBlank {
         AlbumType.SMART_PLACE -> "地点聚合"
         AlbumType.MEMORY -> "往年今日"
         AlbumType.FAVORITES -> "星标收藏"
+        AlbumType.SMART_CATEGORY -> "AI 场景事物"
     }
 }
 
@@ -323,6 +324,7 @@ fun smartGroupTitle(type: AlbumType): String = when (type) {
     AlbumType.SMART_PLACE -> "地点"
     AlbumType.MEMORY -> "回忆"
     AlbumType.FOLDER -> "相册"
+    AlbumType.SMART_CATEGORY -> "场景事物"
 }
 
 /** Tab 切换时给 onNavigate 用（目前库里没有对应路由，保留给 Lead 以后扩展） */

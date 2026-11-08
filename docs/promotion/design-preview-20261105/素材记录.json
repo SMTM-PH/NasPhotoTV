@@ -7,7 +7,7 @@
   "code_url": "https://github.com/SMTM-PH/NasPhotoTV/commit/ca088c226f5256ded9dba30428c0f481efe6b712",
   "publication_by": "user",
   "formal_release_created": false,
-  "icon_applied_to_apk": false,
+  "icon_applied_to_apk": true,
   "screenshots": "actual Compose rendering in generic Android emulator, offline debug sample data",
   "build": {
     "result": "PASS",

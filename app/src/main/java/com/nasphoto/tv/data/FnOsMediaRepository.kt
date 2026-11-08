@@ -38,6 +38,7 @@ class FnOsMediaRepository(
 
     private var recentCache: List<MediaItem> = emptyList()
     private val albumCache = mutableMapOf<String, List<MediaItem>>()
+    private val smartAlbums = FnOsSmartAlbums(api::getJson, api::postJson, ::parseMedia, ::absolute)
 
     suspend fun probe(): FnOsProbeResult = api.testConnection()
 
@@ -84,6 +85,10 @@ class FnOsMediaRepository(
 
         return (parseAlbums(own) + parseAlbums(shared)).distinctBy { it.id }
     }
+
+    override suspend fun getSmartAlbums(): List<Album> = smartAlbums.getAlbums()
+
+    override suspend fun getSmartAlbumMedia(albumId: String): List<MediaItem> = smartAlbums.getMedia(albumId)
 
     /**
      * 某个相册下的全部媒体（按拍摄时间倒序）。
