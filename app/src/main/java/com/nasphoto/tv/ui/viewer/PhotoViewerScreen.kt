@@ -339,7 +339,7 @@ fun PhotoViewerScreen(
         }
 
         // ================= 底部浮层（按钮行 + 胶片条） =================
-        // 浮层是瞬时的（3 秒自动隐藏 / 回车切换），全屏图片只在需要操作时被暂时盖住。
+        // 浮层是瞬时的（3 秒自动隐藏 / 确认键切换），全屏图片只在需要操作时被暂时盖住。
         AnimatedVisibilityCompat(
             visible = state.chromeVisible,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -382,6 +382,11 @@ fun PhotoViewerScreen(
                     state = state,
                     listState = filmState,
                     onSelect = { state.goTo(it); photoHint += 1 },
+                    onConfirm = { idx ->
+                        state.goTo(idx)
+                        state.hideAllChrome()
+                        runCatching { imageFocus.requestFocus() }
+                    },
                     enterToken = filmEnter,
                     onReturnToToolbar = { toolbarEnter += 1 },
                     modifier = Modifier
@@ -697,7 +702,7 @@ private fun VideoStage(item: MediaItem) {
             }
             Spacer(Modifier.height(TvDimen.SpaceM))
             Text(
-                text = "按「回车」播放视频",
+                text = "按「确认」键播放视频",
                 color = TvColor.TextPrimary,
                 fontSize = TvType.Body,
                 fontWeight = FontWeight.Medium,

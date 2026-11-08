@@ -123,6 +123,12 @@ class PhotoViewerState(
         chromeVisible = false
     }
 
+    /** 立刻收起全部浮层（确认选中某张图后回到纯全屏看图）。 */
+    fun hideAllChrome() {
+        chromeVisible = false
+        infoExpanded = false
+    }
+
     fun toggleInfo() {
         infoExpanded = !infoExpanded
         chromeVisible = true

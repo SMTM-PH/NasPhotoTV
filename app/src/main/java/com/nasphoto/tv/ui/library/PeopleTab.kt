@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -145,7 +146,7 @@ fun PeopleTab(
                             }
                         },
                         onUp = onUpToTopBar,
-                        modifier = Modifier.width(PERSON_CARD_W.dp).height(PERSON_CARD_H.dp),
+                        modifier = Modifier.width(PERSON_CARD_W.dp),
                     )
                 }
             }
@@ -172,7 +173,7 @@ fun PeopleTab(
                         // 只有第一排显式上顶栏，其余交给 Compose 做"上一排同列"
                         onUp = if (index < columns) onUpToTopBar else null,
                         // 网格里宽度交给格子，固定 260 会在 282 的格子里靠左留一条缝
-                        modifier = Modifier.fillMaxWidth().height(PERSON_CARD_H.dp),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -205,15 +206,19 @@ private fun PersonCard(
             .clip(RoundedCornerShape(TvDimen.RadiusM))
             .background(TvColor.BgElevated),
     ) { focused ->
-        Column(Modifier.fillMaxSize()) {
+        // 头像区做成 1:1 正方形：人脸裁图本身就是方的，正方形区域能完整铺满，
+        // 既不会裁掉额头下巴，也不会像 Fit 那样上下留大片空白。名字与张数固定排在下方。
+        Column(Modifier.fillMaxWidth()) {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .aspectRatio(1f)
                     .background(TvColor.SurfaceHigh),
                 contentAlignment = Alignment.Center,
             ) {
                 if (person.coverUrl.isNotBlank()) {
+                    // 人脸裁图是方形的，卡片上半区比它矮：用 Crop 会把下巴/额头切掉。
+                    // 改成 Fit 完整显示整张脸，两侧留一点底色，比「缺半张脸」更像头像。
                     MediaImage(
                         url = person.coverUrl,
                         contentDescription = person.displayName,
@@ -260,7 +265,6 @@ private fun PersonCard(
 
 /** 卡片尺寸：4:5 竖版，一屏 6 张正好铺满可用宽度 */
 private const val PERSON_CARD_W = 260
-private const val PERSON_CARD_H = 320
 private const val PEOPLE_ROW_MAX = 6
 private const val PEOPLE_GRID_COLUMNS = 6
 

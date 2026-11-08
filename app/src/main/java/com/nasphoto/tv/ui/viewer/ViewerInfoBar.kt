@@ -80,6 +80,12 @@ fun FilmStrip(
     modifier: Modifier = Modifier,
     enterToken: Int = 0,
     onReturnToToolbar: () -> Unit = {},
+    /**
+     * 按确认键选中某张缩略图后的动作。
+     * 与 [onSelect]（焦点移动时的预览切图）分开：确认后要收起浮层、焦点还给全屏画面，
+     * 否则浮层一直挂着、再按确认也只是重复选中，用户会觉得「退不出全屏」。
+     */
+    onConfirm: ((Int) -> Unit)? = null,
 ) {
     val items = state.items
     if (items.isEmpty()) return
@@ -130,7 +136,7 @@ fun FilmStrip(
                 index = i,
                 active = i == state.index,
                 starred = state.isStarred(item),
-                onClick = { onSelect(i) },
+                onClick = { (onConfirm ?: onSelect)(i) },
                 focusRequester = requester(item.id),
                 onFocused = { onSelect(i) },
             )

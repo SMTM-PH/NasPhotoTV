@@ -142,7 +142,11 @@ fun NasPhotoTvApp() {
                 // 「最近添加」横排与「年·月·日」时间线共用这份数据：
                 // 取 24 会让时间线只剩最近一天、用户永远看不到更早的照片，
                 // 这里按服务端可分页上限取足，保证时间线覆盖整个照片库。
-                val recent = repository.getRecent(1000)
+                // 图库（年/月/日）要按年份分组，只取最近 1000 条时这 5281 张素材
+                // 会全挤在 2026 年，2021 之前的年份根本看不到。一次取全库：
+                // 实测 5281 条约 1.3 秒、5.3 MB JSON，作为首屏唯一的主请求仍可接受，
+                // 相册详情已改为按需加载，堆内不再有第二份全量副本。
+                val recent = repository.getRecent(FULL_LIBRARY_LIMIT)
                 val albums = repository.getAlbums()
                 // 相册媒体改为进入详情时按需加载（见 LibraryScreen.onLoadAlbumMedia）。
                 // 启动时只补拉「客厅展示」授权的那几个相册，供屏保使用；
@@ -518,6 +522,9 @@ fun NasPhotoTvApp() {
         }
     }
 }
+
+/** 一次取全库条目数：本 NAS 共 5281 条，留足余量避免漏掉更早的年份。 */
+private const val FULL_LIBRARY_LIMIT = 20_000
 
 /** 与媒体库主数据无关、可并行拉取的附属数据 */
 private data class OptionalLibraryData(
