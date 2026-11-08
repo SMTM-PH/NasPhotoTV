@@ -18,7 +18,10 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 - **详情页排版**：顶部标题缩小为单行（30sp + 数量同行），底部导航提示不再压住最后一行；聚焦到最后一行时整张卡片完整可见。
 - **4K 视频卡顿修复**：ExoPlayer 默认前向缓冲 50 秒、不限字节数，75–130 Mbps 的 4K 原片会要求 470 MB 以上，远超电视 192 MB 堆上限，触发持续 GC 与周期性停顿。现在缓冲按 **48 MB / 8–20 秒** 封顶，并开启解码失败自动回退。
 - **稳定性**：关闭 Coil 硬件位图（本机 MTK Android 9 在 `allocateHardwareBitmap` 会因 `glEGLImageTargetTexture2DOES` 报错直接 SIGABRT）；补齐 GET/POST 签名让智能分类可读。
-- **新图标已打进 APK**：`nas-photo-tv-icon-v2` 生成 mdpi–xxxhdpi 启动图标，并重做 320×180 TV 横幅。
+- **新图标已打进 APK**：`nas-photo-tv-icon-v2` 生成 mdpi–xxxhdpi 启动图标；320×180 TV 横幅**只保留图案、去掉文字**。
+- **图库按全库年份**：启动取整库（实测 5281 项 / 11 个年份，2015–2026），不再只显示最近 1000 项的 2026 年。
+- **人物相册出图**：人物头像取飞牛 `ai-person` 的 faceId → `/p/api/v1/stream/face/{id}`；头像区改 1:1 正方形铺满，名字与张数固定在下方。
+- **看图全屏**：胶片条按确认键会收起全部浮层并把焦点还给画面，不再卡在工具条；视频封面提示由「回车」改为「确认」。
 
 > 已知限制：电视为 **100 Mbps 有线网口**。实测 75 Mbps 的 4K 片段可稳定播放（缓冲约 5 秒）；129 Mbps 的 4K 片段码率高于网口上限，实时串流必然间歇性缓冲，需转码或先缓存到本地。
 
@@ -27,6 +30,8 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 > 当前界面改版（2026-11-05，未发布）：[相册体验整改与离线预览](docs/design-refinement-20261105/README.md)，包含三项主导航、回忆集合、简化看图工具和客厅展示相册授权。[TV UX/UI 技能调研](docs/design-next/skills-research.md)、[沉浸式首页](docs/design-immersive/README.md)、[上一版影廊](docs/design-next/README.md)与下方历史截图保留供对照；下文旧功能表不代表本轮界面。
 
 新版设计对外介绍与配图：[论坛发布素材（完整稿、短文、固定链接配图）](docs/promotion/design-preview-20261105/README.md)。
+
+1.2.0 版发布说明：[docs/releases/v1.2.0.md](docs/releases/v1.2.0.md)。
 
 ## 0. 快速开始（TL;DR）
 
