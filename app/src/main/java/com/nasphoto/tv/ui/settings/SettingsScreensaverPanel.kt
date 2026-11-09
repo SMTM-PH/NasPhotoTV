@@ -83,9 +83,9 @@ fun SettingsScreensaverPanel(
 ) {
     val s = store.screensaver
     val purePhoto = s.mode == ScreensaverSettings.Mode.PHOTO_ONLY
-    val photo = screensaverPhotos.firstOrNull()
-        ?: MediaCache.screensaverPhotos.firstOrNull()
-        ?: MediaCache.recent.firstOrNull()
+    // 外壳传入已按当前账号白名单过滤的照片；不能回退到最近照片或未过滤缓存。
+    val photo = if (store.displayAlbumIds.isEmpty()) null else screensaverPhotos.firstOrNull()
+    val displayAlbums = currentDisplayAlbums(store).filter { it.id in store.displayAlbumIds }
     val now = remember { LocalDateTime.now() }
     val kenBurnsScale by rememberInfiniteTransition(label = "kb").animateFloat(
         initialValue = 1.0f,
@@ -116,7 +116,11 @@ fun SettingsScreensaverPanel(
             .fillMaxWidth()
             .verticalScroll(panelScroll),
     ) {
-        PanelTitle("屏保预览", if (s.enabled) "待机时所见即所得" else "屏保已关闭 · 预览仍可查看")
+        PanelTitle("屏保预览", if (s.enabled) "仅使用客厅展示相册" else "屏保已关闭 · 预览仍可查看")
+        if (store.displayAlbumIds.isEmpty()) {
+            Spacer(Modifier.height(TvDimen.SpaceXs))
+            Text("请先在「客厅展示相册」中选择照片范围", fontSize = TvType.Caption, color = TvColor.TextSecondary)
+        }
         Spacer(Modifier.height(TvDimen.SpaceM))
 
         // ---------------- 预览框 ----------------
@@ -157,7 +161,7 @@ fun SettingsScreensaverPanel(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = "当前来源暂无照片",
+                            text = "展示相册暂无可用照片",
                             fontSize = TvType.Caption,
                             color = TvColor.TextTertiary,
                         )
@@ -275,16 +279,14 @@ fun SettingsScreensaverPanel(
                         Text("相册", fontSize = TvType.Tiny, color = TvColor.TextTertiary)
                         Spacer(Modifier.weight(1f))
                         Text(
-                            "${MediaCache.albums.size} 个 · 在左栏按 ← → 切换",
+                            "${displayAlbums.size} 个展示相册 · ← → 切换",
                             fontSize = TvType.Tiny,
                             color = TvColor.TextTertiary.copy(alpha = 0.7f),
                         )
                     }
                     Spacer(Modifier.height(TvDimen.SpaceXs))
                     Text(
-                        text = s.albumName.ifBlank {
-                            if (MediaCache.albums.isEmpty()) "暂无相册" else "未选择"
-                        },
+                        text = displayAlbums.firstOrNull { it.id == s.albumId }?.name ?: "未选择展示相册",
                         fontSize = TvType.CardTitle,
                         fontWeight = FontWeight.Medium,
                         color = TvColor.TextPrimary,
@@ -332,7 +334,7 @@ fun SettingsScreensaverPanel(
         InfoLine(
             "轮播",
             if (s.photoSource == ScreensaverSettings.PhotoSource.ALBUM) {
-                "相册 · ${s.albumName.ifBlank { "未选择" }}"
+                "相册 · ${displayAlbums.firstOrNull { it.id == s.albumId }?.name ?: "未选择展示相册"}"
             } else {
                 s.photoSource.label
             },

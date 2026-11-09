@@ -77,7 +77,7 @@ fun LibraryTopBar(
     onActionFocus: (Int) -> Unit,
     tabFocusRequesters: List<FocusRequester>,
     actionFocusRequesters: List<FocusRequester>,
-    onSearch: () -> Unit,
+    onHome: () -> Unit,
     onScreensaver: () -> Unit,
     onSettings: () -> Unit,
     /** 当前飞牛账号显示名（空 = 还没读到账号，不显示胶囊） */
@@ -92,281 +92,10 @@ fun LibraryTopBar(
     onTabDown: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    // 两行版顶栏（改过一版，原因见下）：
-    // 1920x1080 @320dpi 下可用宽度只有 (1920-128)/2 = 896dp，而单行放
-    // 「Logo+NAS 状态+账号胶囊」约 560dp + 6 个 Tab 约 700dp + 三个图标按钮约 300dp
-    // = 1200dp+。单行必然溢出：实测第 6 个 Tab 只渲染出「最」半个字，
-    // 右侧「搜索/屏保/设置」三个按钮整组被推出屏幕外（基线截图 09-main-library.png 同样如此，
-    // 属既有缺陷）。这里拆两行：第一行身份 + 全局动作，第二行独占整行给 6 个 Tab，
-    // Tab 之间用 weight 均分，任何 label 长度都不会溢出。
-    Column(
-        modifier
-            .fillMaxWidth()
-            .padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceS),
-    ) {
-        // ---- 第一行：Logo + NAS 状态 + 账号（左） / 图标动作（右） ----
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-        // 左：Logo + NAS 状态 + 账号
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = Icons.Outlined.Tv,
-                contentDescription = null,
-                tint = TvColor.Accent,
-                modifier = Modifier.size(30.dp),
-            )
-            Spacer(Modifier.width(TvDimen.SpaceS))
-            Text(
-                text = "NAS 相册",
-                color = TvColor.TextPrimary,
-                fontSize = TvType.CardTitle,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.width(TvDimen.SpaceM))
-            NasStatusChip(connectionName, isOnline)
-            if (accountName.isNotBlank()) {
-                Spacer(Modifier.width(TvDimen.SpaceS))
-                AccountChip(
-                    accountName = accountName,
-                    accountCount = accountCount,
-                    focusRequester = accountFocusRequester,
-                    onClick = onAccountClick,
-                    onDown = onAccountDown,
-                )
-            }
-        }
-
-        Spacer(Modifier.weight(1f))
-
-        // 右：图标按钮组
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TopIconButton(
-                icon = Icons.Filled.Search,
-                label = "搜索",
-                focusRequester = actionFocusRequesters.getOrNull(0),
-                onClick = onSearch,
-                onFocusChanged = { if (it) onActionFocus(0) },
-            )
-            TopIconButton(
-                icon = Icons.Outlined.PlayCircleOutline,
-                label = "屏保",
-                focusRequester = actionFocusRequesters.getOrNull(1),
-                onClick = onScreensaver,
-                onFocusChanged = { if (it) onActionFocus(1) },
-            )
-            TopIconButton(
-                icon = Icons.Filled.Settings,
-                label = "设置",
-                focusRequester = actionFocusRequesters.getOrNull(2),
-                onClick = onSettings,
-                onFocusChanged = { if (it) onActionFocus(2) },
-            )
-        }
-        }
-
-        Spacer(Modifier.height(TvDimen.SpaceXs))
-
-        // ---- 第二行：6 个 Tab 独占整行，weight 均分 ----
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            tabs.forEachIndexed { index, tab ->
-                TabPill(
-                    label = tab.label,
-                    selected = tab == selectedTab,
-                    focusRequester = tabFocusRequesters.getOrNull(index),
-                    onClick = { onTabClick(tab) },
-                    onFocusChanged = { if (it) onTabFocus(index) },
-                    onDown = { onTabDown(index) },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-    }
-}
-
-/** 在线绿点 / 离线灰红点 + 设备名 */
-@Composable
-private fun NasStatusChip(connectionName: String, isOnline: Boolean) {
-    val dot = if (isOnline) TvColor.Accent else TvColor.Danger
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(TvColor.Surface)
-            .padding(horizontal = TvDimen.SpaceS, vertical = 6.dp),
-    ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = if (isOnline) "$connectionName 在线" else "$connectionName 离线",
-            color = TvColor.TextSecondary,
-            fontSize = TvType.Tiny,
-            maxLines = 1,
-        )
-    }
-}
-
-/**
- * 顶栏账号胶囊：淡底 + 圆形首字头像 + 账号名（+ 可切换提示）。
- *
- * 为什么放在 NAS 状态胶囊右边而不是右上角按钮组里：账号是「这台 NAS 上的身份」，
- * 和「这台 NAS 是否在线」是同一层信息，挨着才读得通；右上角那组是动作（搜索/屏保/设置）。
- * 只有 1 个账号时不提示「可切换」—— 点了也切不出第二个账号，属于骗人。
- */
-@Composable
-private fun AccountChip(
-    accountName: String,
-    accountCount: Int,
-    focusRequester: FocusRequester?,
-    onClick: () -> Unit,
-    onDown: () -> Unit,
-) {
-    TvFocusBox(
-        focusRequester = focusRequester,
-        cornerRadiusDp = 24,
-        onConfirm = onClick,
-        onDown = onDown,
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(TvColor.Surface)
-            .padding(horizontal = TvDimen.SpaceS, vertical = TvDimen.SpaceXs),
-    ) { focused ->
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(ACCOUNT_AVATAR_SIZE.dp)
-                    .clip(CircleShape)
-                    .background(if (focused) TvColor.Accent else TvColor.AccentDim),
-                contentAlignment = Alignment.Center,
-            ) {
-                // 头像只放首字：账号名可能很长（含设备前缀），圆形里塞名字会挤成浆糊
-                Text(
-                    text = accountName.take(1),
-                    color = if (focused) TvColor.Bg else TvColor.Accent,
-                    fontSize = TvType.Tiny,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                )
-            }
-            Spacer(Modifier.width(TvDimen.SpaceXs))
-            Text(
-                text = accountName,
-                color = if (focused) TvColor.TextPrimary else TvColor.TextSecondary,
-                fontSize = TvType.Tiny,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                // 账号名可能带设备前缀，不限宽会把中间那排 Tab 挤到换行/被裁
-                modifier = Modifier.widthIn(max = ACCOUNT_NAME_MAX_W.dp),
-            )
-            if (accountCount > 1) {
-                Spacer(Modifier.width(TvDimen.SpaceXs))
-                Text(
-                    text = "$accountCount 个账号",
-                    color = TvColor.TextTertiary,
-                    fontSize = TvType.Tiny,
-                    maxLines = 1,
-                )
-            }
-        }
-    }
-}
-
-/** 账号胶囊里的圆形头像直径（布局常量，与 MEDIA_CELL_W 同类） */
-private const val ACCOUNT_AVATAR_SIZE = 24
-
-/** 账号名最长占位；超出的用省略号，保证 6 个 Tab 的中间那排不会被动挤开 */
-private const val ACCOUNT_NAME_MAX_W = 140
-
-/** 顶栏 Tab：选中=青色胶囊；聚焦=放大 + 白描边；DOWN 交出焦点给主内容 */
-@Composable
-private fun TabPill(
-    label: String,
-    selected: Boolean,
-    focusRequester: FocusRequester?,
-    onClick: () -> Unit,
-    onFocusChanged: (Boolean) -> Unit,
-    onDown: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(TvDimen.RadiusXL)
-    // 注意：DOWN 必须走 TvFocusBox(onDown=)，不要在外层 modifier 上挂 onKeyEvent——
-    // 外层在 focusable 之前，属 preview 阶段；preview 返回 false 时 KeyUp 会被 StandardKeyMapping
-    // 的 OnClick 映射吃掉，返回 true 又会挡住空间移动，两种结果都会让顶栏“卡住”。
-    TvFocusBox(
-        focusRequester = focusRequester,
-        cornerRadiusDp = 24,
-        focusedScale = 1.06f,
-        onFocusChanged = onFocusChanged,
-        onConfirm = onClick,
-        onDown = onDown,
-        modifier = modifier
-            .clip(shape)
-            .background(if (selected) TvColor.Accent else Color.Transparent)
-            .border(
-                width = 1.dp,
-                color = if (selected) Color.Transparent else TvColor.Divider,
-                shape = shape,
-            )
-            .padding(horizontal = TvDimen.SpaceS, vertical = 10.dp),
-    ) {
-        // Tab 用 weight 均分整行宽度，文字居中；label 最长「收藏 · 回忆」6 字，
-        // 在 896/6 ≈ 149dp 里放得下（Tiny 以下才需要省略，这里留 maxLines=1 + Ellipsis 保底）
-        Text(
-            text = label,
-            color = if (selected) Color(0xFF00210F) else TvColor.TextSecondary,
-            fontSize = TvType.Caption,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
-
-/** 顶栏图标按钮：图标 + 小字 */
-@Composable
-private fun TopIconButton(
-    icon: ImageVector,
-    label: String,
-    focusRequester: FocusRequester?,
-    onClick: () -> Unit,
-    onFocusChanged: (Boolean) -> Unit,
-) {
-    TvFocusBox(
-        focusRequester = focusRequester,
-        cornerRadiusDp = 14,
-        onFocusChanged = onFocusChanged,
-        onConfirm = onClick,
-        modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(TvColor.Surface)
-            .padding(horizontal = TvDimen.SpaceS, vertical = 10.dp),
-    ) { focused ->
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = if (focused) TvColor.Accent else TvColor.TextSecondary,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = label,
-                color = if (focused) TvColor.TextPrimary else TvColor.TextSecondary,
-                fontSize = TvType.Tiny,
-                maxLines = 1,
-            )
-        }
-    }
+    GalleryTopBar(tabs, selectedTab, connectionName, isOnline, onTabClick, onTabFocus,
+        onActionFocus, tabFocusRequesters, actionFocusRequesters, onHome, onScreensaver,
+        onSettings, accountName, accountCount, onAccountClick, onAccountDown,
+        accountFocusRequester, onTabDown, modifier)
 }
 
 // ============================== 区块标题 ==============================
@@ -387,7 +116,7 @@ fun SectionHeader(title: String, trailing: String = "", modifier: Modifier = Mod
             Spacer(Modifier.width(TvDimen.SpaceS))
             Text(
                 text = trailing,
-                color = TvColor.TextTertiary,
+                color = TvColor.TextMuted,
                 fontSize = TvType.Caption,
                 modifier = Modifier.padding(bottom = 4.dp),
             )
@@ -398,7 +127,7 @@ fun SectionHeader(title: String, trailing: String = "", modifier: Modifier = Mod
 // ============================== Hero ==============================
 
 /**
- * Hero 大图：铺满上部区域，底部渐隐到背景；左下角标题/日期/元信息 + 主按钮。
+ * Hero：左侧信息与操作，右侧照片舞台；缩放与描边只在整体焦点上出现。
  * Hero 整体可聚焦（ENTER = 打开），且焦点时主按钮高亮。
  * 按钮侧的浮层全部忽略指针事件：点击只由 TvFocusBox 自己的 focusable/clickable 处理，保证一次 ENTER 只触发一次。
  */
@@ -410,137 +139,9 @@ fun LibraryHero(
     onFocusChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     onDown: () -> Unit = {},
+    onUp: (() -> Unit)? = null,
 ) {
-    TvFocusBox(
-        focusRequester = focusRequester,
-        cornerRadiusDp = 24,
-        focusedScale = 1.015f,
-        onFocusChanged = onFocusChanged,
-        onConfirm = onOpen,
-        onDown = onDown,
-        modifier = modifier,
-    ) { focused ->
-        Box(Modifier.fillMaxSize().blockPointer()) {
-            // 封面：ContentScale.Crop 铺满；targetWidth 取实际绘制宽度量级即可（更宽的马赛克没有收益）。
-            MediaImage(
-                url = hero.item.thumbnailUrl.ifBlank { hero.item.url },
-                contentDescription = hero.title,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-                targetWidth = 960,
-                cornerRadiusDp = 24,
-            )
-            // 压暗只作用于文字所在的下/左两侧，右上方大片留给画面本身
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0f to Color.Transparent,
-                            0.50f to Color.Transparent,
-                            0.80f to TvColor.Bg.copy(alpha = 0.55f),
-                            1f to TvColor.Bg.copy(alpha = 0.94f),
-                        ),
-                    ),
-            )
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.horizontalGradient(
-                            0f to TvColor.Bg.copy(alpha = 0.62f),
-                            0.42f to TvColor.Bg.copy(alpha = 0.16f),
-                            0.68f to Color.Transparent,
-                        ),
-                    ),
-            )
-
-            Column(
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = TvDimen.SpaceXl, end = TvDimen.SpaceXl, bottom = TvDimen.SpaceL),
-            ) {
-                if (hero.item.type == MediaType.VIDEO) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        VideoBadge(formatDuration(hero.item.durationMs))
-                        Spacer(Modifier.width(TvDimen.SpaceXs))
-                    }
-                    Spacer(Modifier.height(TvDimen.SpaceXs))
-                }
-                Text(
-                    text = hero.title,
-                    color = TvColor.TextPrimary,
-                    fontSize = TvType.Display,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(TvDimen.SpaceXs))
-                Text(
-                    text = hero.dateText,
-                    color = TvColor.TextSecondary,
-                    fontSize = TvType.Body,
-                    maxLines = 1,
-                )
-                if (hero.metaText.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = hero.metaText,
-                        color = TvColor.TextTertiary,
-                        fontSize = TvType.Caption,
-                        maxLines = 1,
-                    )
-                }
-                Spacer(Modifier.height(TvDimen.SpaceM))
-                PrimaryActionChip(
-                    label = hero.actionLabel,
-                    icon = if (hero.item.type == MediaType.VIDEO) Icons.Filled.PlayArrow else null,
-                    highlighted = focused,
-                )
-            }
-        }
-    }
-}
-
-/**
- * Hero 左下角的主按钮（纯视觉；点击由 Hero 整体的 ENTER 承担，避免焦点嵌套进子节点）。
- *
- * 焦点态体系（与卡片一致，避免"未聚焦看起来像已选中"）：
- *  - 未聚焦：半透明玻璃底（白色 12% + 1dp 白描边），低调、不抢焦点
- *  - 聚焦：青色实心 + 白色描边（呼应 TvColor.FocusRing），才表示"按 ENTER 会执行这个动作"
- */
-@Composable
-private fun PrimaryActionChip(label: String, icon: ImageVector?, highlighted: Boolean) {
-    val shape = RoundedCornerShape(TvDimen.RadiusXL)
-    val fg = if (highlighted) Color(0xFF00210F) else TvColor.TextPrimary
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .clip(shape)
-            .background(if (highlighted) TvColor.Accent else Color.White.copy(alpha = 0.12f))
-            .border(
-                width = if (highlighted) TvDimen.FocusRingWidth else 1.dp,
-                color = if (highlighted) TvColor.FocusRing else Color.White.copy(alpha = 0.30f),
-                shape = shape,
-            )
-            .padding(horizontal = TvDimen.SpaceL, vertical = 14.dp),
-    ) {
-        if (icon != null) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = fg,
-                modifier = Modifier.size(24.dp),
-            )
-            Spacer(Modifier.width(TvDimen.SpaceXs))
-        }
-        Text(
-            text = label,
-            color = fg,
-            fontSize = TvType.Body,
-            fontWeight = FontWeight.SemiBold,
-        )
-    }
+    GalleryHero(hero, focusRequester, onOpen, onFocusChanged, modifier, onDown, onUp)
 }
 
 // ============================== 媒体卡片 ==============================
@@ -602,7 +203,7 @@ fun MediaCard(
                 targetWidth = 480,
                 cornerRadiusDp = 16,
             )
-            if (focused && showMetaOnFocus) {
+            if (showMetaOnFocus) {
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -633,7 +234,7 @@ fun MediaCard(
                         .size(20.dp),
                 )
             }
-            if (focused && showMetaOnFocus) {
+            if (showMetaOnFocus) {
                 Column(
                     Modifier
                         .align(Alignment.BottomStart)
@@ -650,7 +251,7 @@ fun MediaCard(
                     Text(
                         text = formatShortDate(item.dateTaken),
                         color = TvColor.TextSecondary,
-                        fontSize = TvType.Tiny,
+                        fontSize = TvType.Caption,
                         maxLines = 1,
                     )
                 }
@@ -676,71 +277,29 @@ fun AlbumCard(
     onDown: (() -> Unit)? = null,
 ) {
     TvFocusBox(
-        focusRequester = focusRequester,
-        cornerRadiusDp = 20,
-        onFocusChanged = onFocusChanged,
-        onConfirm = onClick,
-        onUp = onUp,
-        onDown = onDown,
-        modifier = modifier
-            .width(width.dp)
-            .height(height.dp)
-            .clip(RoundedCornerShape(20.dp)),
+        focusRequester = focusRequester, cornerRadiusDp = 16,
+        onFocusChanged = onFocusChanged, onConfirm = onClick, onUp = onUp, onDown = onDown,
+        modifier = modifier.width(width.dp).height(height.dp)
+            .clip(RoundedCornerShape(TvDimen.RadiusM)).background(TvColor.Stage),
     ) { focused ->
-        Box(Modifier.fillMaxSize()) {
-            MediaImage(
-                url = coverUrl,
-                contentDescription = album.name,
-                modifier = Modifier.fillMaxSize(),
-                targetWidth = 640,
-                cornerRadiusDp = 20,
-            )
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0.35f to Color.Transparent,
-                            1f to Color(0xF2000000),
-                        ),
-                    ),
-            )
-            if (album.isSmart) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(14.dp)
-                        .clip(CircleShape)
-                        .background(TvColor.AccentAlt.copy(alpha = 0.9f))
-                        .padding(horizontal = 10.dp, vertical = 3.dp),
-                ) {
-                    Text(smartGroupTitle(album.type), color = Color.White, fontSize = TvType.Tiny)
-                }
+        Column(Modifier.fillMaxSize().blockPointer()) {
+            Box(Modifier.fillMaxWidth().weight(1f)) {
+                MediaImage(coverUrl, album.name, Modifier.fillMaxSize(), targetWidth = 640)
+                if (album.isSmart) Text(smartGroupTitle(album.type), color = TvColor.TextPrimary,
+                    fontSize = TvType.Caption,
+                    modifier = Modifier.padding(TvDimen.SpaceS).clip(RoundedCornerShape(TvDimen.RadiusS))
+                        .background(TvColor.Bg.copy(alpha = 0.8f)).padding(TvDimen.SpaceXs))
             }
-            Column(
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-            ) {
-                Text(
-                    text = album.name,
-                    color = TvColor.TextPrimary,
-                    fontSize = TvType.CardTitle,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(2.dp))
-                // 聚焦时优先显示 subtitle，否则显示数量
-                Text(
-                    text = if (focused) albumSubtitle(album) else "${album.itemCount} 项",
-                    color = if (focused) TvColor.Accent else TvColor.TextSecondary,
-                    fontSize = TvType.Tiny,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            Row(Modifier.fillMaxWidth().padding(horizontal = TvDimen.SpaceM, vertical = TvDimen.SpaceS),
+                verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(album.name, color = TvColor.TextPrimary, fontSize = TvType.Body,
+                        fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${album.itemCount} 项", color = TvColor.TextSecondary,
+                        fontSize = TvType.Caption, maxLines = 1)
+                }
+                if (focused) Icon(Icons.Filled.PlayArrow, null, tint = TvColor.Accent,
+                    modifier = Modifier.size(TvDimen.IconSize))
             }
         }
     }
@@ -931,7 +490,7 @@ fun AlbumDetailHeader(
     Row(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceS),
+            .padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceXs),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TvFocusBox(
@@ -944,7 +503,7 @@ fun AlbumDetailHeader(
                 .clip(CircleShape)
                 .background(TvColor.Surface)
                 .verticalNav(onDown = onDown)
-                .padding(horizontal = TvDimen.SpaceM, vertical = 10.dp),
+                .padding(horizontal = TvDimen.SpaceM, vertical = 8.dp),
         ) { focused ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
@@ -958,17 +517,23 @@ fun AlbumDetailHeader(
             }
         }
         Spacer(Modifier.width(TvDimen.SpaceL))
-        Column {
-            Text(
-                albumName,
-                color = TvColor.TextPrimary,
-                fontSize = TvType.Display,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(count, color = TvColor.TextTertiary, fontSize = TvType.Caption)
-        }
+        // 标题与数量同一行：详情页顶部越矮，网格能完整展示的行数越多。
+        Text(
+            albumName,
+            color = TvColor.TextPrimary,
+            fontSize = TvType.Section,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Spacer(Modifier.width(TvDimen.SpaceS))
+        Text(
+            count,
+            color = TvColor.TextTertiary,
+            fontSize = TvType.Caption,
+            maxLines = 1,
+        )
     }
 }
 

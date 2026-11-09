@@ -1,12 +1,7 @@
 package com.nasphoto.tv.ui.settings
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -24,9 +19,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -39,20 +36,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -68,7 +65,7 @@ import kotlinx.coroutines.delay
 /**
  * ================= 设置页（settings-dev） =================
  *
- * 布局：左列表（420dp）+ 右面板（自适应，约 900dp）—— Apple TV 设置页范式。
+ * 布局：左侧分组设置 + 右侧即时预览；窄画布使用更紧凑的内边距。
  *
  * 遥控器：
  *  - ↑↓     在左栏行间移动（列表自动滚动保证聚焦行可见）
@@ -77,7 +74,7 @@ import kotlinx.coroutines.delay
  *  - ENTER  执行（动作行立即执行；「恢复默认」需在 3 秒内按两次）
  *  - BACK   关闭设置页（「设计说明」展开时先收回说明，再按才退出）
  *
- * 初始焦点落在「屏保」开关上 —— 这是本页最常改的东西，不必先上下找。
+ * 已配置 NAS 时初始焦点落在「客厅展示相册」，先明确允许自动展示的范围。
  */
 @Composable
 fun SettingsScreen(
@@ -111,6 +108,19 @@ fun SettingsScreen(
     // 密码 / 访问码的电视键盘输入层
     var textTarget by remember { mutableStateOf<SettingsKey?>(null) }
     var editorOpened by remember { mutableStateOf(false) }
+    var displayAlbumsOpen by remember { mutableStateOf(false) }
+    var displayAlbumsOpened by remember { mutableStateOf(false) }
+
+    LaunchedEffect(displayAlbumsOpen) {
+        if (displayAlbumsOpen) {
+            displayAlbumsOpened = true
+        } else if (displayAlbumsOpened) {
+            focusedKey = SettingsKey.SS_DISPLAY_ALBUMS
+            listState.scrollToItem(rowIndexInList(SettingsKey.SS_DISPLAY_ALBUMS))
+            withFrameMillis { }
+            runCatching { requesterFor(SettingsKey.SS_DISPLAY_ALBUMS).requestFocus() }
+        }
+    }
 
     // 关闭输入层后把焦点还给刚才那一行（输入层拿到焦点时原焦点已丢失）
     LaunchedEffect(textTarget) {
@@ -184,7 +194,6 @@ fun SettingsScreen(
         animationSpec = tween(200),
         label = "panelPad",
     )
-    val listIndex = remember(focusedKey) { rowIndexInList(focusedKey) }
 
     // BACK：挂在整页根节点（preview 阶段），任何焦点位置都能退出
     SettingsBackdrop(
@@ -193,7 +202,9 @@ fun SettingsScreen(
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 if (event.key == Key.Back || event.key == Key.Escape) {
-                    if (textTarget != null) {
+                    if (displayAlbumsOpen) {
+                        displayAlbumsOpen = false
+                    } else if (textTarget != null) {
                         textTarget = null
                     } else if (feedback.showDesignDetail) {
                         feedback.showDesignDetail = false
@@ -215,8 +226,9 @@ fun SettingsScreen(
                     .weight(1f)
                     .padding(horizontal = TvDimen.ScreenPadding),
             ) {
-                // 正常电视（1920dp 宽）左栏 420dp；窄屏（预览/投屏）自动收窄，右栏不至于被挤没
-                val leftWidth = if (maxWidth < 1200.dp) maxWidth * 0.42f else 420.dp
+                val compact = maxWidth < 1200.dp
+                val leftWidth = if (compact) maxWidth * 0.48f else (maxWidth * 0.34f).coerceIn(480.dp, 620.dp)
+                val panelGap = if (compact) TvDimen.SpaceM else TvDimen.SpaceL
 
                 Row(Modifier.fillMaxSize()) {
                     SettingsLeftPanel(
@@ -229,37 +241,29 @@ fun SettingsScreen(
                         requesterFor = { requesterFor(it) },
                         onQueue = { key -> actionQueue.trySend(key) },
                         onEditText = { key -> textTarget = key },
+                        onOpenDisplayAlbums = { displayAlbumsOpen = true },
                         width = leftWidth,
                     )
 
-                    Spacer(Modifier.width(TvDimen.SpaceL))
+                    Spacer(Modifier.width(panelGap))
 
                     // ---------------- 右栏 ----------------
                     Box(
                         Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .clip(RoundedCornerShape(TvDimen.RadiusXL))
-                            .background(TvColor.Surface.copy(alpha = 0.92f))
+                            .clip(RoundedCornerShape(TvDimen.RadiusL))
+                            .background(TvColor.Stage)
                             .border(
                                 width = 1.dp,
                                 color = TvColor.Divider,
-                                shape = RoundedCornerShape(TvDimen.RadiusXL),
+                                shape = RoundedCornerShape(TvDimen.RadiusL),
                             )
-                            .padding(rightPad),
+                            .padding(if (compact) TvDimen.SpaceM else rightPad),
                     ) {
-                        // 玻璃感：顶部一层极淡的白色扫光
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .background(
-                                    Brush.verticalGradient(
-                                        0f to Color.White.copy(alpha = 0.045f),
-                                        1f to Color.Transparent,
-                                    ),
-                                ),
-                        )
-                        Column(Modifier.fillMaxSize().padding(TvDimen.SpaceL)) {
+                        if (displayAlbumsOpen) {
+                            SettingsDisplayAlbumsPanel(store, onClose = { displayAlbumsOpen = false })
+                        } else Column(Modifier.fillMaxSize()) {
                             val group = focusedKey.group
                             AnimatedContent(
                                 targetState = group,
@@ -310,14 +314,18 @@ fun SettingsScreen(
             ) {
                 Text(
                     text = focusedKey.hint,
-                    fontSize = TvType.Tiny,
-                    color = TvColor.TextTertiary,
+                    fontSize = TvType.Caption,
+                    color = TvColor.TextSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.weight(1f))
+                Spacer(Modifier.width(TvDimen.SpaceM))
                 Text(
-                    text = "${focusedKey.group.title} · 第 ${listIndex + 1} / ${SettingsListTotalRows} 项",
-                    fontSize = TvType.Tiny,
-                    color = TvColor.TextTertiary.copy(alpha = 0.8f),
+                    text = focusedKey.group.title,
+                    fontSize = TvType.Caption,
+                    color = TvColor.TextMuted,
+                    maxLines = 1,
                 )
             }
         }
@@ -371,65 +379,59 @@ fun SettingsScreen(
 
 @Composable
 private fun SettingsTopBar(nasName: String, online: Boolean) {
-    Row(
+    BoxWithConstraints(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = TvDimen.ScreenPadding)
             .padding(top = TvDimen.SpaceL, bottom = TvDimen.SpaceM),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
-                .size(10.dp)
-                .clip(CircleShape)
-                .background(TvColor.Accent),
-        )
-        Spacer(Modifier.width(TvDimen.SpaceS))
-        Text(
-            text = "设置",
-            fontSize = TvType.Display,
-            fontWeight = FontWeight.SemiBold,
-            color = TvColor.TextPrimary,
-        )
-        Spacer(Modifier.width(TvDimen.SpaceM))
-        Row(
-            Modifier
-                .clip(CircleShape)
-                .background(TvColor.SurfaceHigh.copy(alpha = 0.50f))
-                .padding(horizontal = TvDimen.SpaceS, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                Modifier
-                    .size(7.dp)
-                    .clip(CircleShape)
-                    .background(if (online) TvColor.Accent else TvColor.Danger),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = nasName,
-                fontSize = TvType.Caption,
-                color = if (online) TvColor.Accent else TvColor.Danger,
-            )
+        val compact = maxWidth < 1200.dp
+        Column {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "设置",
+                        fontSize = if (compact) TvType.Section else TvType.Display,
+                        fontWeight = FontWeight.Medium,
+                        color = TvColor.TextPrimary,
+                    )
+                    Spacer(Modifier.height(TvDimen.SpaceXs))
+                    Text("让相册适合你的客厅", fontSize = TvType.Caption, color = TvColor.TextSecondary)
+                }
+                Spacer(Modifier.width(TvDimen.SpaceM))
+                Row(
+                    Modifier
+                        .widthIn(max = if (compact) 320.dp else 480.dp)
+                        .clip(RoundedCornerShape(TvDimen.RadiusM))
+                        .background(TvColor.SurfaceSoft)
+                        .padding(horizontal = TvDimen.SpaceM, vertical = TvDimen.SpaceS),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(TvDimen.SpaceXs).clip(CircleShape).background(if (online) TvColor.Accent else TvColor.Danger))
+                    Spacer(Modifier.width(TvDimen.SpaceS))
+                    Text(
+                        text = "${nasName.ifBlank { "NAS" }} · ${if (online) "已连接" else "未连接"}",
+                        fontSize = TvType.Caption,
+                        color = TvColor.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Spacer(Modifier.height(TvDimen.SpaceM))
+            Row(horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM)) { KeyHintRow() }
         }
-        Spacer(Modifier.weight(1f))
-        KeyHintRow()
     }
 }
 
 /** 右上角按键提示 */
 @Composable
 private fun KeyHintRow() {
-    listOf("↑↓ 选择", "←→ 调值", "ENTER 执行", "BACK 返回").forEach { h ->
+    listOf("↑ ↓ 选择", "← → 调整", "确认 应用", "返回 退出").forEach { h ->
         Text(
             text = h,
-            fontSize = TvType.Tiny,
-            color = TvColor.TextTertiary,
-            modifier = Modifier
-                .padding(start = TvDimen.SpaceXs)
-                .clip(CircleShape)
-                .background(TvColor.Surface.copy(alpha = 0.70f))
-                .padding(horizontal = TvDimen.SpaceS, vertical = 4.dp),
+            fontSize = TvType.Caption,
+            color = TvColor.TextMuted,
         )
     }
 }
@@ -445,6 +447,7 @@ private fun SettingsLeftPanel(
     requesterFor: (SettingsKey) -> FocusRequester,
     onQueue: (SettingsKey) -> Unit,
     onEditText: (SettingsKey) -> Unit,
+    onOpenDisplayAlbums: () -> Unit,
     width: Dp,
 ) {
     LazyColumn(
@@ -452,8 +455,8 @@ private fun SettingsLeftPanel(
         modifier = Modifier
             .width(width)
             .fillMaxHeight(),
-        contentPadding = PaddingValues(bottom = TvDimen.SpaceL),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        contentPadding = PaddingValues(start = TvDimen.SpaceXs, end = TvDimen.SpaceXs, bottom = TvDimen.SpaceL, top = TvDimen.SpaceXs),
+        verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs),
     ) {
         SettingsGroup.entries.forEach { group ->
             item(key = "header_${group.name}") {
@@ -470,7 +473,10 @@ private fun SettingsLeftPanel(
                     focused = focusedKey == key,
                     focusRequester = requesterFor(key),
                     onFocus = { onFocusKey(key) },
-                    onConfirm = { performConfirm(key, actions, onQueue, onEditText) },
+                    onConfirm = {
+                        if (key == SettingsKey.SS_DISPLAY_ALBUMS) onOpenDisplayAlbums()
+                        else performConfirm(key, actions, onQueue, onEditText)
+                    },
                     onStepLeft = step?.let { fn -> { fn(true) } },
                     onStepRight = step?.let { fn -> { fn(false) } },
                 )
@@ -563,44 +569,21 @@ private fun stepAction(key: SettingsKey, actions: SettingsActions): ((Boolean) -
 // 背景 / 辅助
 // ---------------------------------------------------------------------------
 
-/** 整页背景：深空黑 + 左上极淡星蓝辉光 + 右下极淡青光（缓慢漂移，24s 一来回） */
+/** 静态的深墨蓝背景，让焦点和右侧预览承担视觉层级。 */
 @Composable
 fun SettingsBackdrop(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
-    val drift by rememberInfiniteTransition(label = "bgDrift").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(24000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "bgDriftPhase",
-    )
     Box(
         modifier
             .background(TvColor.Bg)
             .drawBehind {
-                drawRect(
-                    Brush.radialGradient(
-                        colors = listOf(TvColor.AccentAlt.copy(alpha = 0.10f), Color.Transparent),
-                        center = Offset(size.width * (0.12f + 0.03f * drift), -size.height * 0.05f),
-                        radius = size.width * 0.80f,
-                    ),
-                )
-                drawRect(
-                    Brush.radialGradient(
-                        colors = listOf(TvColor.Accent.copy(alpha = 0.06f), Color.Transparent),
-                        center = Offset(size.width * (0.92f - 0.03f * drift), size.height * 1.02f),
-                        radius = size.width * 0.55f,
-                    ),
-                )
+                drawRect(Brush.verticalGradient(listOf(TvColor.Stage, TvColor.Bg)))
             },
         content = content,
     )
 }
 
 /** 初始焦点行：屏保开关 */
-private val INITIAL_KEY = SettingsKey.SS_ENABLED
-
-/** 左栏总行数（4 个组标题 + 所有行），用于底部计数 */
-private val SettingsListTotalRows: Int =
-    SettingsKey.entries.size + SettingsGroup.entries.size
+private val INITIAL_KEY = SettingsKey.SS_DISPLAY_ALBUMS
 
 /** key 在 LazyColumn 里的下标（组标题也占一行，必须对齐，否则滚动错位） */
 fun rowIndexInList(key: SettingsKey): Int {

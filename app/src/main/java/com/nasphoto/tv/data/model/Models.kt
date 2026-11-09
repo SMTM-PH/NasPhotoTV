@@ -261,7 +261,7 @@ data class Person(
  * 屏保（待机显示）配置，对应 iOS StandBy。
  */
 data class ScreensaverSettings(
-    val enabled: Boolean = true,
+    val enabled: Boolean = false,
     /** 静止多久后进入屏保（秒） */
     val idleTimeoutSec: Int = 60,
     /** 单张照片停留时长（秒） */
@@ -283,6 +283,10 @@ data class ScreensaverSettings(
     val nightDim: Boolean = true,
     /** Ken Burns 缓慢推拉动画 */
     val kenBurns: Boolean = true,
+    /** 客厅展示授权属于明确的飞牛账号；空值或换账号时不授权任何相册。 */
+    val displayOwnerAccountId: String = "",
+    /** 仅这些相册可用于首页回忆与自动屏保，不能从旧轮播来源推断授权。 */
+    val displayAlbumIds: Set<String> = emptySet(),
 ) {
     enum class Mode(val label: String) {
         CLOCK("时钟待机"),

@@ -22,6 +22,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil.ImageLoader
+import coil.annotation.ExperimentalCoilApi
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.decode.GifDecoder
@@ -37,7 +38,7 @@ import com.nasphoto.tv.data.fn.FnOsTransport
  *  - 自签证书的 TOFU 信任；
  *  - AccessToken 由拦截器动态注入（重登后无需重建 ImageLoader）。
  *
- * 加载中 / 失败 / 非 http 地址（Compose Preview 的假数据）统一显示渐变占位，
+ * 支持 http(s) NAS 图片和本地 android.resource 示例；加载中 / 失败 / 其他地址显示渐变占位，
  * 保证 10-foot UI 不会出现白块或崩溃。
  */
 
@@ -81,6 +82,12 @@ object NasImageLoader {
                     add(GifDecoder.Factory())
                 }
             }
+            // 本机（MTK Android 9 / Hisense）在 RenderThread 上传硬件位图时会因
+            // glEGLImageTargetTexture2DOES 返回 GL_INVALID_VALUE 直接 SIGABRT
+            // （libhwui: OpenGLPipeline::allocateHardwareBitmap）。Coil 默认用
+            // ImageDecoder 生成 Config.HARDWARE 位图，正好踩中这个厂商 bug。
+            // 关掉硬件位图改用软件位图：解码/绘制略耗 CPU，但不会再让整个进程闪退。
+            .allowHardware(false)
             .crossfade(true)
             .build()
             .also { instance = it }
@@ -95,6 +102,7 @@ object NasImageLoader {
      *
      * [context] 为 null（还没初始化过 ImageLoader）时什么都不做：没有实例就没有缓存。
      */
+    @OptIn(ExperimentalCoilApi::class)
     fun clearCaches(context: Context?) {
         val loader = instance ?: return
         loader.memoryCache?.clear()
@@ -119,7 +127,8 @@ fun MediaImage(
         modifier
     }
 
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    if (!url.startsWith("http://") && !url.startsWith("https://") &&
+        !url.startsWith("android.resource://")) {
         Placeholder(colorForUrl(url), boxModifier)
         return
     }

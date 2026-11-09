@@ -33,6 +33,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -153,6 +154,7 @@ fun TvFocusBox(
     onConfirm: (() -> Unit)? = null,
     onUp: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
+    focusRingColor: Color = TvColor.FocusRing,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -180,7 +182,7 @@ fun TvFocusBox(
             drawContent()
             if (glow > 0f) {
                 drawRoundRect(
-                    color = TvColor.FocusRing.copy(alpha = glow),
+                    color = focusRingColor.copy(alpha = glow),
                     cornerRadius = CornerRadius(cornerRadiusDp.dp.toPx()),
                     style = Stroke(width = TvDimen.FocusRingWidth.toPx()),
                 )
@@ -241,12 +243,20 @@ suspend fun scrollRowTo(state: LazyListState, focusedIndex: Int) {
  * 网格自动滚动：只在聚焦行"完全不可见"时滚动（滚到上一行做参照），
  * 已在可视区时不动，避免上下移动时画面跳动。
  */
-suspend fun scrollGridTo(state: LazyGridState, focusedIndex: Int, columns: Int) {
+suspend fun scrollGridTo(
+    state: LazyGridState,
+    focusedIndex: Int,
+    columns: Int,
+    bottomInsetPx: Int = 0,
+) {
     if (focusedIndex < 0) return
     val vp = state.layoutInfo.viewportSize.height
     if (vp <= 0) return
     val info = state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == focusedIndex } ?: return
-    val fullyVisible = info.offset.y >= 0 && info.offset.y + info.size.height <= vp
+    // 底部导航提示是覆盖在网格上的，不算进 LazyGrid 的 viewport；
+    // 不扣掉这段高度，最后一行会「看起来在屏幕内」却被提示条挡住半张图。
+    val usableHeight = (vp - bottomInsetPx).coerceAtLeast(1)
+    val fullyVisible = info.offset.y >= 0 && info.offset.y + info.size.height <= usableHeight
     if (fullyVisible) return
     val row = focusedIndex / columns.coerceAtLeast(1)
     runCatching { state.animateScrollToItem(((row - 1).coerceAtLeast(0)) * columns) }
@@ -257,7 +267,7 @@ val GridContentPadding = PaddingValues(
     start = TvDimen.ScreenPadding,
     end = TvDimen.ScreenPadding,
     top = 16.dp,
-    bottom = 32.dp,
+    bottom = 72.dp,
 )
 
 /** 横向行内容边距：左右对齐屏幕 padding，上下留出放大空间 */

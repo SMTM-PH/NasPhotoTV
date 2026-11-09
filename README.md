@@ -11,6 +11,30 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 ---
 
+## 1.2.0 更新（2026-11-09）
+
+- **全新电视界面**：由 `codex/tv-gallery-ui` 重做，包含沉浸式首页、「回忆 / 图库 / 相册」三项主导航、回忆集合、简化看图工具与客厅展示相册授权；本次已合入 `main` 并发布。
+- **首页改用飞牛 AI 智能分类**：直接读取 `ai-smart-rec` 的场景 / 事物分类（天空云彩、山、登山徒步…），用分类封面铺满客厅相册行；点开分类或按「播放这个分类」时才通过 magic-search 拉取媒体，不再启动时预取几十个相册。
+- **相册 / 分类详情按需加载**：进入详情才拉当前相册媒体，并区分「加载中 / 失败 / 空 / 就绪」；大相册不再常驻 Java 堆，给 4K 解码腾出内存。
+- **详情页排版**：顶部标题缩小为单行（30sp + 数量同行），底部导航提示不再压住最后一行；聚焦到最后一行时整张卡片完整可见。
+- **4K 视频卡顿修复**：ExoPlayer 默认前向缓冲 50 秒、不限字节数，75–130 Mbps 的 4K 原片会要求 470 MB 以上，远超电视 192 MB 堆上限，触发持续 GC 与周期性停顿。现在缓冲按 **48 MB / 8–20 秒** 封顶，并开启解码失败自动回退。
+- **视频串流更稳**：视频流改用独立媒体客户端，取消 30 秒「整次请求」超时（保留连接 / 读取超时），不会中途被掐断；播放控制层只由用户操作重置计时，进度刷新不再阻止自动隐藏。
+- **稳定性**：关闭 Coil 硬件位图（本机 MTK Android 9 在 `allocateHardwareBitmap` 会因 `glEGLImageTargetTexture2DOES` 报错直接 SIGABRT）；补齐 GET/POST 签名让智能分类可读。
+- **新图标已打进 APK**：`nas-photo-tv-icon-v2` 生成 mdpi–xxxhdpi 启动图标；320×180 TV 横幅**只保留图案、去掉文字**。
+- **图库按全库年份**：启动取整库（实测 5281 项 / 11 个年份，2015–2026），不再只显示最近 1000 项的 2026 年。
+- **人物相册出图**：人物头像取飞牛 `ai-person` 的 faceId → `/p/api/v1/stream/face/{id}`；头像区改 1:1 正方形铺满，名字与张数固定在下方。
+- **看图全屏**：胶片条按确认键会收起全部浮层并把焦点还给画面，不再卡在工具条；视频封面提示由「回车」改为「确认」。
+
+> 已知限制：电视为 **100 Mbps 有线网口**。实测 75 Mbps 的 4K 片段可稳定播放（缓冲约 5 秒）；129 Mbps 的 4K 片段码率高于网口上限，实时串流必然间歇性缓冲，需转码或先缓存到本地。
+
+---
+
+> 当前界面改版（2026-11-05，已随 1.2.0 发布）：[相册体验整改与离线预览](docs/design-refinement-20261105/README.md)，包含三项主导航、回忆集合、简化看图工具和客厅展示相册授权。[TV UX/UI 技能调研](docs/design-next/skills-research.md)、[沉浸式首页](docs/design-immersive/README.md)、[上一版影廊](docs/design-next/README.md)与下方历史截图保留供对照；下文旧功能表不代表本轮界面。
+
+新版设计对外介绍与配图：[论坛发布素材（完整稿、短文、固定链接配图）](docs/promotion/design-preview-20261105/README.md)。
+
+1.2.0 版发布说明：[docs/releases/v1.2.0.md](docs/releases/v1.2.0.md)。
+
 ## 0. 快速开始（TL;DR）
 
 ```bash
@@ -24,11 +48,9 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.nasphoto.tv/.MainActivity
 ```
 
-APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 21 MB，含 Media3/OkHttp/Coil）。
+APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 23 MB，含 Media3/OkHttp/Coil）。
 
 不想自己构建？可直接从 [GitHub Releases](https://github.com/SMTM-PH/NasPhotoTV/releases) 下载 APK 安装包。
-
-`1.2.0` 修复视频串流被 30 秒整次请求超时中断、播放控制层无法自动隐藏的问题；首页原相册横排改为飞牛 AI 识别的「场景事物」智能分类，点开后按需加载照片与视频，普通相册仍在「相册」Tab。APK 同时更新自适应启动图标、圆形图标和 Android TV 横幅。
 
 首次运行需要在设置页填 NAS 地址（默认 `5667`）+ 账号密码，或等局域网自动发现。
 
@@ -142,7 +164,7 @@ adb logcat -s AndroidRuntime:E
 
 | 场景 | 做法 |
 |---|---|
-| **推荐：Android TV 镜像** | SDK Manager 安装 `system-images;android-36;android-tv;x86_64`（或 android-35 的 TV 版），新建 AVD 时选 `tv_1080p` 设备模板（1920×1080 / density 320 → 1dp ≈ 1px，与设计稿 1:1） |
+| **推荐：Android TV 镜像** | SDK Manager 安装 `system-images;android-36;android-tv;x86_64`（或 android-35 的 TV 版），新建 AVD 时选 `tv_1080p` 设备模板（1920×1080 / density 320 → 960×540 dp；density 160 → 1920×1080 dp，按实际逻辑画布核对布局） |
 | **只有手机 AVD** | 临时把 `android.software.leanback` 的 `required` 改 `false`（仅本地验证，**不要提交**） |
 | **真机电视** | 无需改动，直接安装 |
 

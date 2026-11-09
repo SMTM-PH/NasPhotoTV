@@ -182,11 +182,15 @@ class FnOsMediaRepository(
                 val name = json.optString("name")
                     .ifBlank { json.optString("personName") }
                     .ifBlank { json.optString("tagName") }
+                // ai-person 列表只返回 faceId，不带任何封面字段；人物头像就是
+                // /p/api/v1/stream/face/{faceId} 这张人脸裁图（实测返回 image/jpeg）。
+                val faceId = json.optLong("faceId", 0L)
                 val cover = absolute(
                     json.optString("coverUrl")
                         .ifBlank { json.optString("cover") }
                         .ifBlank { json.optString("avatarUrl") }
-                        .ifBlank { json.optString("posterUrl") },
+                        .ifBlank { json.optString("posterUrl") }
+                        .ifBlank { if (faceId > 0L) "/p/api/v1/stream/face/$faceId" else "" },
                 )
                 add(
                     Person(

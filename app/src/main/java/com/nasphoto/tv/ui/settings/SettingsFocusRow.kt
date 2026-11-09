@@ -27,7 +27,13 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.zIndex
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
 
@@ -59,6 +65,7 @@ fun SettingsFocusRow(
     onAdjust: ((isLeft: Boolean) -> Boolean)? = null,
     onFocused: ((Boolean) -> Unit)? = null,
     autoOnFocus: (() -> Unit)? = null,
+    rowHeight: Dp = SettingsRowHeight,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -72,20 +79,25 @@ fun SettingsFocusRow(
 
     Box(
         modifier = modifier
-            .height(SettingsRowHeight)
+            .height(rowHeight)
             .fillMaxWidth()
+            .zIndex(if (focused) 1f else 0f)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .clip(shape)
-            .background(if (focused) TvColor.SurfaceHigh else TvColor.Surface.copy(alpha = 0.34f))
+            .background(if (focused) TvColor.SurfaceSoft else TvColor.Stage)
             .border(
                 width = if (focused) TvDimen.FocusRingWidth else 1.dp,
-                color = if (focused) TvColor.FocusRing else TvColor.Divider,
+                color = if (focused) TvColor.FocusRing else TvColor.Stage,
                 shape = shape,
             )
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                onClick { onConfirm(); true }
+            }
             .onFocusChanged { state ->
                 if (focused != state.isFocused) {
                     focused = state.isFocused
@@ -124,4 +136,4 @@ fun SettingsFocusRow(
 }
 
 /** 行高：1080p 下 8~10 行刚好一屏 + 上下留白 */
-val SettingsRowHeight = 62.dp
+val SettingsRowHeight = TvDimen.SpaceXxl

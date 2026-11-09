@@ -86,7 +86,7 @@ internal class FnOsSmartAlbums(
         val id = firstString(poster, "photoId", "id")
         val uuid = firstString(poster, "uuid", "photoUUID", "session")
         return if (id.isNotEmpty() && uuid.isNotEmpty()) {
-            absolute("/p/api/v1/stream/p/t/$id/s/$uuid")
+            absolute("/p/api/v1/stream/p/t/$id/m/$uuid")
         } else {
             ""
         }

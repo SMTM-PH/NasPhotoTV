@@ -33,9 +33,12 @@ data class LibraryState(
     val accountCount: Int = 1,
     val people: List<Person> = emptyList(),
     val peopleLoaded: Boolean = true,
-    /** 飞牛 AI 识别的事物 / 场景分类，独立于用户创建的普通相册。 */
+    /** 飞牛 AI 识别的「场景事物」分类，首页用它替代手动挑选的文件夹相册。 */
     val smartAlbums: List<com.nasphoto.tv.data.model.Album> = emptyList(),
+    /** 智能分类读取失败时给首页的提示；与「确实没有分类」区分开。 */
     val smartAlbumsError: String? = null,
+    /** Account that owns this snapshot; presentation scope must never cross accounts. */
+    val ownerAccountId: String = "",
 )
 
 /**
@@ -45,6 +48,7 @@ data class ViewerRequest(
     val items: List<com.nasphoto.tv.data.model.MediaItem>,
     val initialIndex: Int,
     val contextTitle: String,
+    val startSlideshow: Boolean = false,
 )
 
 /**

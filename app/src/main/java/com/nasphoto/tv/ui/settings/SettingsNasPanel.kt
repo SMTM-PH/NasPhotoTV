@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -53,15 +54,18 @@ fun SettingsNasPanel(store: SettingsStore, feedback: SettingsFeedback, modifier:
     val testing = feedback.nasTesting
     val failed = feedback.nasTestOk == false
 
-    val flow by rememberInfiniteTransition(label = "nasFlow").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(if (testing) 900 else 2600, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "nasFlowPhase",
-    )
+    val flow = if (testing) {
+        val phase by rememberInfiniteTransition(label = "nasFlow").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(900, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "nasFlowPhase",
+        )
+        phase
+    } else 0f
 
     val lineColor = when {
         failed -> TvColor.Danger
@@ -101,82 +105,105 @@ fun SettingsNasPanel(store: SettingsStore, feedback: SettingsFeedback, modifier:
 
         Spacer(Modifier.height(TvDimen.SpaceM))
 
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(
-                Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
-            ) {
-                NodeCapsule(
-                    icon = { Icon(Icons.Outlined.Tv, null, Modifier.size(22.dp), tint = TvColor.AccentAlt) },
-                    title = "这台电视",
-                    subtitle = "Android TV · 遥控器",
-                    accent = TvColor.AccentAlt,
-                    active = true,
-                )
-
-                Connector(
-                    phase = flow,
-                    color = lineColor,
-                    animated = testing || feedback.nasTestOk == true,
-                    leftLabel = "局域网",
-                    rightLabel = when {
-                        testing -> "探测中…"
-                        failed -> "未连接"
-                        feedback.nasTestOk == true -> "已连接"
-                        else -> "未测试"
-                    },
-                )
-
-                NodeCapsule(
-                    icon = {
-                        Icon(
-                            Icons.Outlined.Dns,
-                            null,
-                            Modifier.size(22.dp),
-                            tint = if (failed) TvColor.Danger else TvColor.Accent,
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val compact = maxWidth < 620.dp
+            val topology: @Composable (Modifier) -> Unit = { diagramModifier ->
+                Column(
+                    diagramModifier,
+                    verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
+                ) {
+                    if (!compact) {
+                        NodeCapsule(
+                            icon = { Icon(Icons.Outlined.Tv, null, Modifier.size(22.dp), tint = TvColor.AccentAlt) },
+                            title = "这台电视",
+                            subtitle = "Android TV · 遥控器",
+                            accent = TvColor.AccentAlt,
+                            active = true,
                         )
-                    },
-                    title = nas.name.ifBlank { "Home-NAS" },
-                    subtitle = "${nas.host.ifBlank { "未设置" }}:${nas.port} · 飞牛相册",
-                    accent = if (failed) TvColor.Danger else TvColor.Accent,
-                    active = nas.isConfigured && !failed,
-                )
+
+                        Connector(
+                            phase = flow,
+                            color = lineColor,
+                            animated = testing,
+                            leftLabel = "局域网",
+                            rightLabel = when {
+                                testing -> "探测中…"
+                                failed -> "未连接"
+                                feedback.nasTestOk == true -> "已连接"
+                                else -> "未测试"
+                            },
+                        )
+                    }
+
+                    NodeCapsule(
+                        icon = {
+                            Icon(
+                                Icons.Outlined.Dns,
+                                null,
+                                Modifier.size(22.dp),
+                                tint = if (failed) TvColor.Danger else TvColor.Accent,
+                            )
+                        },
+                        title = nas.name.ifBlank { "Home-NAS" },
+                        subtitle = "${nas.host.ifBlank { "未设置" }}:${nas.port} · 飞牛相册",
+                        accent = if (failed) TvColor.Danger else TvColor.Accent,
+                        active = nas.isConfigured && !failed,
+                    )
+                }
             }
-
-            Spacer(Modifier.width(TvDimen.SpaceM))
-
-            Column(
-                Modifier.width(210.dp),
-                verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
-            ) {
-                MetricRow(
-                    "状态",
-                    when {
-                        testing -> "探测中…"
-                        failed -> "连接失败"
-                        feedback.nasTestOk == true -> "已连接"
-                        else -> if (nas.isConfigured) "待测试" else "未配置"
-                    },
-                    if (failed) TvColor.Danger else TvColor.Accent,
-                )
-                MetricRow(
-                    "延迟",
-                    if (failed || feedback.nasTestOk != true) "—" else "${nas.latencyMs} ms",
-                    if (failed) TvColor.TextTertiary else TvColor.TextPrimary,
-                )
-                MetricRow("账号", nas.username.ifBlank { "—" }, TvColor.TextSecondary)
-                MetricRow(
-                    "密码",
-                    if (nas.password.isBlank()) "未设置" else "已设置",
-                    if (nas.password.isBlank()) TvColor.Warn else TvColor.TextSecondary,
-                )
-                MetricRow(
-                    "访问码",
-                    if (nas.accessCode.isBlank()) "未启用" else "已设置",
-                    TvColor.TextSecondary,
-                )
-                MetricRow("照片", "${MediaCache.photoCount} 张", TvColor.TextSecondary)
-                MetricRow("相册", "${MediaCache.albums.size} 个", TvColor.TextSecondary)
+            val metrics: @Composable (Modifier) -> Unit = { metricsModifier ->
+                Column(
+                    metricsModifier,
+                    verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
+                ) {
+                    MetricRow(
+                        "状态",
+                        when {
+                            testing -> "探测中…"
+                            failed -> "连接失败"
+                            feedback.nasTestOk == true -> "已连接"
+                            else -> if (nas.isConfigured) "待测试" else "未配置"
+                        },
+                        if (failed) TvColor.Danger else TvColor.Accent,
+                    )
+                    if (!compact) {
+                        MetricRow(
+                            "延迟",
+                            if (failed || feedback.nasTestOk != true) "—" else "${nas.latencyMs} ms",
+                            if (failed) TvColor.TextTertiary else TvColor.TextPrimary,
+                        )
+                    }
+                    MetricRow("账号", nas.username.ifBlank { "—" }, TvColor.TextSecondary)
+                    if (!compact) {
+                        MetricRow(
+                            "密码",
+                            if (nas.password.isBlank()) "未设置" else "已设置",
+                            if (nas.password.isBlank()) TvColor.Warn else TvColor.TextSecondary,
+                        )
+                        MetricRow(
+                            "访问码",
+                            if (nas.accessCode.isBlank()) "未启用" else "已设置",
+                            TvColor.TextSecondary,
+                        )
+                        MetricRow("照片", "${MediaCache.photoCount} 张", TvColor.TextSecondary)
+                        MetricRow("相册", "${MediaCache.albums.size} 个", TvColor.TextSecondary)
+                    } else {
+                        MetricRow("媒体", "${MediaCache.photoCount} 张照片 · ${MediaCache.albums.size} 个相册", TvColor.TextSecondary)
+                    }
+                }
+            }
+            if (compact) {
+                Column {
+                    topology(Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(TvDimen.SpaceM))
+                    metrics(Modifier.fillMaxWidth())
+                }
+            } else {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    topology(Modifier.weight(1f))
+                    Spacer(Modifier.width(TvDimen.SpaceL))
+                    metrics(Modifier.width(210.dp))
+                }
             }
         }
     }
@@ -218,15 +245,15 @@ private fun NodeCapsule(
                 text = title,
                 fontSize = TvType.CardTitle,
                 fontWeight = FontWeight.Medium,
-                color = if (active) TvColor.TextPrimary else TvColor.TextTertiary,
+                color = if (active) TvColor.TextPrimary else TvColor.TextSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(2.dp))
             Text(
                 text = subtitle,
-                fontSize = TvType.Tiny,
-                color = TvColor.TextTertiary,
+                fontSize = TvType.Caption,
+                color = TvColor.TextMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -289,8 +316,8 @@ private fun Connector(
 @Composable
 private fun MetricRow(label: String, value: String, valueColor: Color) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = TvType.Tiny, color = TvColor.TextTertiary)
-        Spacer(Modifier.weight(1f))
+        Text(label, fontSize = TvType.Caption, color = TvColor.TextMuted)
+        Spacer(Modifier.width(TvDimen.SpaceS))
         Text(
             text = value,
             fontSize = TvType.Caption,
@@ -298,6 +325,8 @@ private fun MetricRow(label: String, value: String, valueColor: Color) {
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
         )
     }
 }

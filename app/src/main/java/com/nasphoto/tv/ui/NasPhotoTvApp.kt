@@ -26,11 +26,12 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalView
 import com.nasphoto.tv.data.AppContextHolder
+import com.nasphoto.tv.data.displayPhotos
+import com.nasphoto.tv.data.mediaIdentityKey
 import com.nasphoto.tv.data.FavoritesStore
 import com.nasphoto.tv.data.FnOsMediaRepository
 import com.nasphoto.tv.data.MediaCache
 import com.nasphoto.tv.data.SettingsStore
-import com.nasphoto.tv.data.fn.FnOsStats
 import com.nasphoto.tv.data.fn.FnOsTransport
 import com.nasphoto.tv.data.fn.LanNasDevice
 import com.nasphoto.tv.data.model.Album
@@ -50,9 +51,12 @@ import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.video.VideoPlayerScreen
 import com.nasphoto.tv.ui.viewer.PhotoViewerScreen
 import kotlinx.coroutines.async
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 
 /**
  * ================= 应用外壳 =================
@@ -70,11 +74,15 @@ fun NasPhotoTvApp() {
         val screensaverSettings = SettingsStore.screensaver
         val playbackSettings = SettingsStore.playback
         val nas = SettingsStore.nas
+        val identityKey = remember(nas.host, nas.port, nas.activeAccountId, nas.username, nas.password, nas.accessCode) {
+            nas.mediaIdentityKey()
+        }
 
         var lastInteractionMs by remember { mutableStateOf(System.currentTimeMillis()) }
         var screensaverVisible by remember { mutableStateOf(false) }
         var refreshToken by remember { mutableIntStateOf(0) }
-        var loadState by remember { mutableStateOf<LibraryLoad>(LibraryLoad.Loading) }
+        // Reset during composition, before effects run: the previous identity is never Ready for a new one.
+        var loadState by remember(identityKey) { mutableStateOf<LibraryLoad>(LibraryLoad.Loading) }
         // 看图/播放/设置都走 AnimatedContent 换内容，库页会被移出组合：
         // 用 SaveableStateHolder 保住 Tab、年/月层级和滚动位置，BACK 才能回到原处。
         val libraryStateHolder = rememberSaveableStateHolder()
@@ -97,16 +105,16 @@ fun NasPhotoTvApp() {
             onDispose { repository?.close() }
         }
 
-        // 换账号：清干净上一个账号留下的一切，再让下面的数据加载重新跑。
+        // 完整身份变化也覆盖同一账号槽位更换用户名/服务器；设置路由同样清理。
         // 顺序很重要 —— 先清 MediaCache/图片缓存、丢掉旧 AccessToken，再重建仓库，最后才发请求，
         // 否则旧账号的照片会在新账号的界面上闪现。这不是显示问题，是隐私问题：
         // 家人切到自己账号后，不能看到上一个账号的缓存缩略图和星标。
         val activeAccountId = nas.activeAccountId
-        var previousAccountId by remember { mutableStateOf<String?>(null) }
-        LaunchedEffect(activeAccountId) {
-            val switched = previousAccountId != null && previousAccountId != activeAccountId
-            previousAccountId = activeAccountId
-            if (activeAccountId.isBlank()) return@LaunchedEffect
+        var previousIdentityKey by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(identityKey) {
+            val switched = (previousIdentityKey != null && previousIdentityKey != identityKey) ||
+                (MediaCache.ownerAccountId.isNotBlank() && MediaCache.ownerIdentityKey != identityKey)
+            previousIdentityKey = identityKey
             // 首次进入只加载该账号的星标，不做破坏性清理（冷启动没有旧数据可清）
             if (switched) {
                 MediaCache.clear()
@@ -114,11 +122,14 @@ fun NasPhotoTvApp() {
                 // token 是全局单例，仓库 close() 不会带走它：不清的话新账号登录前
                 // 图片请求会带着旧账号的 token 打到 NAS 上
                 FnOsTransport.token = null
+                viewer = null
+                player = null
+                screensaverVisible = false
             }
             FavoritesStore.load(activeAccountId)
         }
 
-        LaunchedEffect(repository, refreshToken, route) {
+        LaunchedEffect(identityKey, repository, refreshToken, route) {
             if (route != AppRoute.Library) return@LaunchedEffect
             if (repository == null) {
                 MediaCache.clear()
@@ -131,13 +142,17 @@ fun NasPhotoTvApp() {
                 // 「最近添加」横排与「年·月·日」时间线共用这份数据：
                 // 取 24 会让时间线只剩最近一天、用户永远看不到更早的照片，
                 // 这里按服务端可分页上限取足，保证时间线覆盖整个照片库。
-                val recent = repository.getRecent(1000)
+                // 图库（年/月/日）要按年份分组，只取最近 1000 条时这 5281 张素材
+                // 会全挤在 2026 年，2021 之前的年份根本看不到。一次取全库：
+                // 实测 5281 条约 1.3 秒、5.3 MB JSON，作为首屏唯一的主请求仍可接受，
+                // 相册详情已改为按需加载，堆内不再有第二份全量副本。
+                val recent = repository.getRecent(FULL_LIBRARY_LIMIT)
                 val albums = repository.getAlbums()
-                // 相册媒体改为进入详情时按需加载（见 LibraryScreen.onLoadAlbumMedia）：
-                // 以前首页启动会把每个相册的全部媒体都拉一遍，相册一多就要串行发几十个大请求，
-                // 几万条 MediaItem 常驻 Java 堆，直接挤占视频解码的缓冲区。
-                // 智能分类 / 人物 / 屏保池 / 统计互不依赖，并行请求，首屏更快。
+                // 相册媒体改为进入详情时按需加载（见 LibraryScreen.onLoadAlbumMedia）。
+                // 启动时只补拉「客厅展示」授权的那几个相册，供屏保使用；
+                // 智能分类、人物、屏保池、统计并行请求，首屏不再串行等几十个大相册。
                 var smartAlbumsError: String? = null
+                val approvedAlbumIds = SettingsStore.displayAlbumIds
                 val optional = coroutineScope {
                     val screensaverDeferred = async {
                         runCatching { repository.getScreensaverPhotos() }.getOrDefault(emptyList())
@@ -159,13 +174,27 @@ fun NasPhotoTvApp() {
                     val statsDeferred = async {
                         runCatching { repository.stats() }.getOrNull()
                     }
+                    val approvedDeferred = async {
+                        val ids = approvedAlbumIds.intersect(albums.map { it.id }.toSet())
+                        ids.map { id ->
+                            async {
+                                id to runCatching { repository.getMedia(id) }.getOrDefault(emptyList())
+                            }
+                        }.awaitAll().toMap()
+                    }
                     OptionalLibraryData(
                         screensaverPhotos = screensaverDeferred.await(),
                         people = peopleDeferred.await(),
                         smartAlbums = smartDeferred.await(),
                         stats = statsDeferred.await(),
+                        approvedMedia = approvedDeferred.await(),
                     )
                 }
+
+                // Some repository helpers wrap failures: explicitly propagate cancellation and
+                // reject a late result from an identity that changed while requests were in flight.
+                currentCoroutineContext().ensureActive()
+                if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
 
                 MediaCache.update(
                     recent = recent,
@@ -175,13 +204,15 @@ fun NasPhotoTvApp() {
                     videoCount = optional.stats?.videoCount ?: recent.count { it.type == MediaType.VIDEO },
                     people = optional.people,
                     ownerAccountId = nas.activeAccountId,
+                    ownerIdentityKey = identityKey,
                 )
                 SettingsStore.updateNas { it.copy(connected = true) }
                 loadState = LibraryLoad.Ready(
                     library = LibraryState(
                         recent = recent,
                         albums = albums,
-                        mediaByAlbum = emptyMap(),
+                        ownerAccountId = nas.activeAccountId,
+                        mediaByAlbum = optional.approvedMedia,
                         connectionName = nas.name.ifBlank { "Home-NAS" },
                         isOnline = true,
                         accountName = nas.activeAccount?.displayName.orEmpty(),
@@ -194,73 +225,60 @@ fun NasPhotoTvApp() {
                     screensaverPhotos = optional.screensaverPhotos,
                 )
             } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
                 SettingsStore.updateNas { it.copy(connected = false) }
                 loadState = LibraryLoad.Error(t.message ?: "无法连接 NAS")
             }
         }
 
-        // 屏保实际使用的照片池：按来源切换（人物需要走 NAS 人脸接口，失败时回退到最近）
-        var peoplePhotos by remember { mutableStateOf<List<MediaItem>?>(null) }
-        var saverPhotos by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
-        LaunchedEffect(refreshToken) { peoplePhotos = null }
-        LaunchedEffect(
-            loadState,
-            screensaverSettings.mode,
-            screensaverSettings.background,
-            screensaverSettings.photoSource,
-            screensaverSettings.albumId,
-            repository,
-        ) {
-            val ready = loadState as? LibraryLoad.Ready
-            if (ready == null) {
-                saverPhotos = emptyList()
-                return@LaunchedEffect
-            }
-            val usesPhotos = screensaverSettings.mode == ScreensaverSettings.Mode.PHOTO_ONLY ||
-                screensaverSettings.background == ScreensaverSettings.BackgroundStyle.PHOTO
-            if (!usesPhotos) {
-                saverPhotos = emptyList()
-                return@LaunchedEffect
-            }
-            val recentPool = ready.screensaverPhotos
-            saverPhotos = when (screensaverSettings.photoSource) {
-                ScreensaverSettings.PhotoSource.RECENT,
-                ScreensaverSettings.PhotoSource.RANDOM,
-                -> recentPool
-
-                ScreensaverSettings.PhotoSource.ALBUM -> {
-                    val albumId = screensaverSettings.albumId
-                        .ifBlank { ready.library.albums.firstOrNull()?.id.orEmpty() }
-                    // 首页不再预取相册媒体，这里必须能按需拉一次；缓存命中就不再请求。
-                    val cached = ready.library.mediaByAlbum[albumId]
-                    val fetched = cached ?: try {
-                        repository?.getMedia(albumId)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        null
+        // 用户新授权客厅展示相册后，补拉缺失相册的媒体，屏保不必等整库重载。
+        val approvedDisplayIds = SettingsStore.displayAlbumIds
+        LaunchedEffect(approvedDisplayIds, repository, identityKey, loadState) {
+            val repo = repository ?: return@LaunchedEffect
+            val ready = loadState as? LibraryLoad.Ready ?: return@LaunchedEffect
+            val missing = approvedDisplayIds - ready.library.mediaByAlbum.keys
+            if (missing.isEmpty()) return@LaunchedEffect
+            val fetched = coroutineScope {
+                missing.map { id ->
+                    async {
+                        id to runCatching { repo.getMedia(id) }.getOrDefault(emptyList())
                     }
-                    fetched.orEmpty()
-                        .filter { it.type == MediaType.PHOTO }
-                        .ifEmpty { recentPool }
-                }
+                }.awaitAll()
+            }.toMap()
+            currentCoroutineContext().ensureActive()
+            if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
+            val current = loadState as? LibraryLoad.Ready ?: return@LaunchedEffect
+            loadState = current.copy(
+                library = current.library.copy(mediaByAlbum = current.library.mediaByAlbum + fetched),
+            )
+        }
 
-                ScreensaverSettings.PhotoSource.PEOPLE -> {
-                    val cached = peoplePhotos
-                    if (cached != null) {
-                        cached.ifEmpty { recentPool }
-                    } else {
-                        // 先给最近照片，避免人脸接口慢时屏保空窗
-                        saverPhotos = recentPool
-                        val fetched = runCatching { repository?.getPeoplePhotos() }
-                            .getOrNull()
-                            .orEmpty()
-                        peoplePhotos = fetched
-                        fetched.ifEmpty { recentPool }
-                    }
-                }
+        // 客厅照片严格来自当前账号明确授权的相册；空、失效、切账号均不回退。
+        val approvedIds = SettingsStore.displayAlbumIds
+        val readyLibrary = (loadState as? LibraryLoad.Ready)?.library
+        val scopedSaverPhotos = remember(readyLibrary, approvedIds, identityKey, screensaverSettings.albumId, screensaverSettings.photoSource) {
+            if (readyLibrary == null || readyLibrary.ownerAccountId != nas.activeAccountId) emptyList()
+            else {
+                val ids = if (screensaverSettings.photoSource == ScreensaverSettings.PhotoSource.ALBUM)
+                    setOf(screensaverSettings.albumId).intersect(approvedIds) else approvedIds
+                displayPhotos(readyLibrary.albums, readyLibrary.mediaByAlbum, ids)
             }
         }
+        var peopleIds by remember(identityKey, repository) { mutableStateOf<Set<String>>(emptySet()) }
+        LaunchedEffect(repository, refreshToken, approvedIds, screensaverSettings.photoSource, scopedSaverPhotos) {
+            peopleIds = emptySet()
+            if (screensaverSettings.photoSource == ScreensaverSettings.PhotoSource.PEOPLE && scopedSaverPhotos.isNotEmpty()) {
+                val ids = runCatching { repository?.getPeoplePhotos().orEmpty().map { it.id }.toSet() }
+                    .getOrDefault(emptySet())
+                currentCoroutineContext().ensureActive()
+                if (SettingsStore.nas.mediaIdentityKey() == identityKey) peopleIds = ids
+            }
+        }
+        val photoPool = if (screensaverSettings.photoSource == ScreensaverSettings.PhotoSource.PEOPLE)
+            scopedSaverPhotos.filter { it.id in peopleIds } else scopedSaverPhotos
+        val saverPhotos = if (screensaverSettings.mode == ScreensaverSettings.Mode.PHOTO_ONLY ||
+            screensaverSettings.background == ScreensaverSettings.BackgroundStyle.PHOTO) photoPool else emptyList()
 
         // 任何设置变更立即落盘
         LaunchedEffect(screensaverSettings, playbackSettings, nas) {
@@ -273,11 +291,8 @@ fun NasPhotoTvApp() {
             route = AppRoute.Settings
         }
 
-        // 显式进入屏保（顶栏 / 设置预览）：屏保关闭时顺手打开，退出计时重新起算
+        // 显式预览不改变自动屏保开关，退出计时重新起算
         val enterScreensaver = {
-            if (!screensaverSettings.enabled) {
-                SettingsStore.updateScreensaver { it.copy(enabled = true) }
-            }
             lastInteractionMs = System.currentTimeMillis()
             screensaverVisible = true
         }
@@ -309,7 +324,7 @@ fun NasPhotoTvApp() {
         var swallowScreensaverKeyUp by remember { mutableStateOf(false) }
 
         // 空闲检测：有真实照片时才进入屏保
-        LaunchedEffect(screensaverSettings.enabled, screensaverSettings.idleTimeoutSec, loadState) {
+        LaunchedEffect(screensaverSettings, saverPhotos, loadState) {
             while (true) {
                 delay(1000)
                 val idleSec = screensaverSettings.idleTimeoutSec
@@ -323,7 +338,9 @@ fun NasPhotoTvApp() {
                     player == null &&
                     viewer == null &&
                     loadState is LibraryLoad.Ready
-                if (eligible && idle >= idleSec) screensaverVisible = true
+                val photoMode = screensaverSettings.mode == ScreensaverSettings.Mode.PHOTO_ONLY ||
+                    screensaverSettings.background == ScreensaverSettings.BackgroundStyle.PHOTO
+                if (eligible && idle >= idleSec && (!photoMode || saverPhotos.isNotEmpty())) screensaverVisible = true
             }
         }
 
@@ -381,6 +398,7 @@ fun NasPhotoTvApp() {
                             items = v.items,
                             initialIndex = v.initialIndex,
                             contextTitle = v.contextTitle,
+                            startSlideshow = v.startSlideshow,
                             onClose = { viewer = null },
                             onOpenVideo = { item, list ->
                                 viewer = null
@@ -403,11 +421,14 @@ fun NasPhotoTvApp() {
                         )
 
                         else -> when (val state = loadState) {
-                            is LibraryLoad.Ready -> libraryStateHolder.SaveableStateProvider("library") {
+                            is LibraryLoad.Ready -> libraryStateHolder.SaveableStateProvider(identityKey) {
                                 LibraryScreen(
                                     state = state.library,
                                     onOpenPhoto = { items, index, title ->
                                         viewer = ViewerRequest(items, index, title)
+                                    },
+                                    onPlaySlideshow = { items, index, title ->
+                                        viewer = ViewerRequest(items, index, title, startSlideshow = true)
                                     },
                                     onOpenVideo = { items, index, title ->
                                         player = PlayerRequest(items, index, title)
@@ -421,17 +442,15 @@ fun NasPhotoTvApp() {
                                             runCatching { repo.getPersonPhotos(personId) }.getOrNull()
                                         }
                                     },
-                                    onLoadSmartAlbumMedia = { albumId ->
+                                    onLoadSmartAlbumMedia = { categoryId ->
                                         try {
-                                            repository?.getSmartAlbumMedia(albumId)
+                                            repository?.getSmartAlbumMedia(categoryId)
                                         } catch (cancelled: CancellationException) {
                                             throw cancelled
                                         } catch (_: Exception) {
                                             null
                                         }
                                     },
-                                    // 普通相册同样按需拉取：列表页只需要封面与数量，
-                                    // 打开某个相册时再取它的全部媒体（大相册会自动分页）。
                                     onLoadAlbumMedia = { albumId ->
                                         try {
                                             repository?.getMedia(albumId)
@@ -504,6 +523,18 @@ fun NasPhotoTvApp() {
     }
 }
 
+/** 一次取全库条目数：本 NAS 共 5281 条，留足余量避免漏掉更早的年份。 */
+private const val FULL_LIBRARY_LIMIT = 20_000
+
+/** 与媒体库主数据无关、可并行拉取的附属数据 */
+private data class OptionalLibraryData(
+    val screensaverPhotos: List<MediaItem>,
+    val people: List<Person>,
+    val smartAlbums: List<Album>,
+    val stats: com.nasphoto.tv.data.fn.FnOsStats?,
+    val approvedMedia: Map<String, List<MediaItem>>,
+)
+
 /** 媒体库的加载状态：所有内容都来自 NAS，没有就绪数据时显示对应引导页 */
 private sealed interface LibraryLoad {
     data object NeedsSetup : LibraryLoad
@@ -514,11 +545,3 @@ private sealed interface LibraryLoad {
         val screensaverPhotos: List<MediaItem>,
     ) : LibraryLoad
 }
-
-/** 与媒体库主数据无关、可并行拉取的附属数据 */
-private data class OptionalLibraryData(
-    val screensaverPhotos: List<MediaItem>,
-    val people: List<Person>,
-    val smartAlbums: List<Album>,
-    val stats: FnOsStats?,
-)

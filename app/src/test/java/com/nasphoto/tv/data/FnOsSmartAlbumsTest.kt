@@ -35,7 +35,7 @@ class FnOsSmartAlbumsTest {
         val albums = helper.getAlbums()
         assertEquals(listOf("天空", "猫"), albums.map { it.name })
         assertEquals(listOf(12, 0), albums.map { it.itemCount })
-        assertEquals("https://nas.test:5667/p/api/v1/stream/p/t/73/s/cover-session", albums[0].coverUrl)
+        assertEquals("https://nas.test:5667/p/api/v1/stream/p/t/73/m/cover-session", albums[0].coverUrl)
         assertEquals("https://nas.test:5667/cat.jpg", albums[1].coverUrl)
         assertTrue(albums.all { it.type == AlbumType.SMART_CATEGORY && it.isSmart })
         assertEquals(listOf("/p/api/v1/ai-smart-rec/categories"), calls)

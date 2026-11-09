@@ -1,0 +1,13 @@
+--------- beginning of main
+11-05 16:21:00.712  4920  4920 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch
+11-05 16:28:10.475  5294  5294 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch
+11-05 16:28:14.607  5347  5347 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch
+11-05 16:43:58.176  5723  5723 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch
+11-05 16:44:05.239  5775  5775 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch
+11-05 16:47:36.562  6164  6164 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch
+11-05 16:48:24.785  6230  6230 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch
+11-05 16:50:04.615  6461  6461 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch
+11-05 16:54:47.824  6755  6755 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch, identity-change
+11-05 16:55:43.885  6913  6913 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch, identity-change
+11-05 16:56:38.418  6913  6913 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch, identity-change
+11-05 16:56:42.559  7068  7068 I DisplayScopeQA: PASS empty, stale, empty-album, approved-only, account-switch, identity-change

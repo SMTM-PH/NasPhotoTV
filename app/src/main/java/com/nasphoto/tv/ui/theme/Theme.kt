@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.sp
 
 private val TvColorScheme = darkColorScheme(
     primary = TvColor.Accent,
-    onPrimary = Color(0xFF00210F),
+    onPrimary = TvColor.InkOnAccent,
     secondary = TvColor.AccentAlt,
     onSecondary = Color.White,
     background = TvColor.Bg,

@@ -33,6 +33,9 @@ object MediaCache {
     /** 当前缓存属于哪个账号（切换账号后用它判断是否需要重新拉取） */
     var ownerAccountId: String by mutableStateOf("")
         private set
+    /** Full connection identity, including identity changes within the same local account id. */
+    var ownerIdentityKey: String by mutableStateOf("")
+        private set
 
     fun update(
         recent: List<MediaItem>,
@@ -42,6 +45,7 @@ object MediaCache {
         videoCount: Int,
         people: List<Person> = this.people,
         ownerAccountId: String = this.ownerAccountId,
+        ownerIdentityKey: String = "",
     ) {
         this.recent = recent
         this.albums = albums
@@ -50,6 +54,7 @@ object MediaCache {
         this.videoCount = videoCount
         this.people = people
         this.ownerAccountId = ownerAccountId
+        this.ownerIdentityKey = ownerIdentityKey
     }
 
     fun clear() {
@@ -60,5 +65,6 @@ object MediaCache {
         photoCount = 0
         videoCount = 0
         ownerAccountId = ""
+        ownerIdentityKey = ""
     }
 }

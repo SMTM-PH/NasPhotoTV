@@ -1,0 +1,118 @@
+{
+  "date": "2026-11-05",
+  "type": "design-preview-publication-materials",
+  "repository": "https://github.com/SMTM-PH/NasPhotoTV",
+  "branch": "codex/tv-gallery-ui",
+  "code_commit": "ca088c226f5256ded9dba30428c0f481efe6b712",
+  "code_url": "https://github.com/SMTM-PH/NasPhotoTV/commit/ca088c226f5256ded9dba30428c0f481efe6b712",
+  "publication_by": "user",
+  "formal_release_created": false,
+  "icon_applied_to_apk": true,
+  "screenshots": "actual Compose rendering in generic Android emulator, offline debug sample data",
+  "build": {
+    "result": "PASS",
+    "exit_code": 0,
+    "elapsed_seconds": 65,
+    "command": "gradlew.bat --offline --no-daemon --no-parallel :app:assembleDebug"
+  },
+  "apk_sha256": "2f246d32d29c4587feb24ae937069181131132c44e7dbf0e6ad7f8021de3e050",
+  "lint": {
+    "result": "FAIL_EXISTING_SOURCE_ERRORS",
+    "exit_code": 1,
+    "elapsed_seconds": 53,
+    "counts": {
+      "Error": 16,
+      "Warning": 37,
+      "Information": 10
+    },
+    "error_files_unchanged_from_base": [
+      "app/src/main/java/com/nasphoto/tv/MainActivity.kt",
+      "app/src/main/java/com/nasphoto/tv/data/fn/FnOsTransport.kt",
+      "app/src/main/java/com/nasphoto/tv/ui/common/LivePhotoVideo.kt",
+      "app/src/main/java/com/nasphoto/tv/ui/screensaver/ScreensaverClock.kt",
+      "app/src/main/java/com/nasphoto/tv/ui/video/VideoPlayerScreen.kt",
+      "app/src/main/res/values/themes.xml"
+    ],
+    "report": "app/build/reports/lint-results-debug.html"
+  },
+  "validation_limits": [
+    "Real TV remote and hardware",
+    "Real NAS login/media/permission integration",
+    "Video/Live Photo codec playback",
+    "Portrait fixture visual QA"
+  ],
+  "images": [
+    {
+      "file": "images/01-home.png",
+      "source_path": "docs/design-refinement-20261105/qa/01-home-960dp.png",
+      "source_commit": "ca088c226f5256ded9dba30428c0f481efe6b712",
+      "fixed_url": "https://raw.githubusercontent.com/SMTM-PH/NasPhotoTV/ca088c226f5256ded9dba30428c0f481efe6b712/docs/design-refinement-20261105/qa/01-home-960dp.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "bytes": 1302321,
+      "sha256": "902575603ac472b6aecd426519bc85e6c8cc6db96f472640b8d2151e900ad97b"
+    },
+    {
+      "file": "images/02-collection.png",
+      "source_path": "docs/design-refinement-20261105/qa/02-album-collection.png",
+      "source_commit": "ca088c226f5256ded9dba30428c0f481efe6b712",
+      "fixed_url": "https://raw.githubusercontent.com/SMTM-PH/NasPhotoTV/ca088c226f5256ded9dba30428c0f481efe6b712/docs/design-refinement-20261105/qa/02-album-collection.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "bytes": 1314201,
+      "sha256": "413a8f9b21e4902bdfdbff0062d9fd05115eac1ef3879dc8729fe243a3a6aec5"
+    },
+    {
+      "file": "images/03-viewer.png",
+      "source_path": "docs/design-refinement-20261105/qa/05-viewer-controls.png",
+      "source_commit": "ca088c226f5256ded9dba30428c0f481efe6b712",
+      "fixed_url": "https://raw.githubusercontent.com/SMTM-PH/NasPhotoTV/ca088c226f5256ded9dba30428c0f481efe6b712/docs/design-refinement-20261105/qa/05-viewer-controls.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "bytes": 744109,
+      "sha256": "4940eba8ded7e9b399689496ec8b3e81d33c74e1ed9506a012cc5e7581a21551"
+    },
+    {
+      "file": "images/04-display-albums.png",
+      "source_path": "docs/design-refinement-20261105/qa/17-picker-selected.png",
+      "source_commit": "ca088c226f5256ded9dba30428c0f481efe6b712",
+      "fixed_url": "https://raw.githubusercontent.com/SMTM-PH/NasPhotoTV/ca088c226f5256ded9dba30428c0f481efe6b712/docs/design-refinement-20261105/qa/17-picker-selected.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "bytes": 183418,
+      "sha256": "575acc0782768c26689334dbdf8a72779a825c3632d543fadd6d3f53759c21bf"
+    },
+    {
+      "file": "images/05-albums.png",
+      "source_path": "docs/design-refinement-20261105/qa/20-albums-nav.png",
+      "source_commit": "ca088c226f5256ded9dba30428c0f481efe6b712",
+      "fixed_url": "https://raw.githubusercontent.com/SMTM-PH/NasPhotoTV/ca088c226f5256ded9dba30428c0f481efe6b712/docs/design-refinement-20261105/qa/20-albums-nav.png",
+      "size": [
+        1920,
+        1080
+      ],
+      "bytes": 1070905,
+      "sha256": "d8295a85c5a114bc6468c9a74d88794f0a03b722837d6720e85132c2509da35e"
+    },
+    {
+      "file": "images/06-icon.png",
+      "source_path": "docs/design-icon/nas-photo-tv-icon-v2.png",
+      "source_commit": "ca088c226f5256ded9dba30428c0f481efe6b712",
+      "fixed_url": "https://raw.githubusercontent.com/SMTM-PH/NasPhotoTV/ca088c226f5256ded9dba30428c0f481efe6b712/docs/design-icon/nas-photo-tv-icon-v2.png",
+      "size": [
+        1254,
+        1254
+      ],
+      "bytes": 1080596,
+      "sha256": "eeced892935db4e08f60a68338b971a375d98a058a70e895bb0ab16922e9172c"
+    }
+  ]
+}
