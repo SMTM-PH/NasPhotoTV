@@ -92,6 +92,14 @@ fun LibraryScreen(
      * 后者是正常结果，提示重试只会把人绕进死循环。
      */
     onLoadPersonPhotos: suspend (personId: String) -> List<MediaItem>? = { emptyList() },
+    /** 按飞牛 AI 分类加载媒体；null 表示读取失败，空列表表示该分类确实没有媒体。 */
+    onLoadSmartAlbumMedia: suspend (categoryId: String) -> List<MediaItem>? = { emptyList() },
+    /**
+     * 打开普通相册时按需加载，不再在首页启动阶段把每个相册的所有照片都拉进内存。
+     * 低内存电视上那一步既拖慢首屏（相册多时要串行拉几十页），又会和白占的
+     * Java 堆一起挤压视频解码缓冲区。null 语义同人物/智能分类。
+     */
+    onLoadAlbumMedia: suspend (albumId: String) -> List<MediaItem>? = { emptyList() },
     modifier: Modifier = Modifier,
 ) {
     var selectedTab by rememberSaveable(state.selectedTabIndex) {
@@ -99,10 +107,14 @@ fun LibraryScreen(
     }
     var openedAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
     var openedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
+    var openedSmartAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
     // 从人物详情 BACK 回来时要落回原来那张脸，否则一排人里跳回第一个很别扭
     var peopleFocusIndex by rememberSaveable { mutableStateOf(0) }
     // 从相册详情 BACK 回来时要落回刚才那个相册卡片；否则焦点掉到顶栏，得重新往下找
     var albumsFocusIndex by rememberSaveable { mutableIntStateOf(0) }
+    // 首页在分类详情打开期间会离开组合，分类落点必须保存在这一层。
+    var smartAlbumsFocusIndex by rememberSaveable { mutableIntStateOf(0) }
+    var homeFocusRow by rememberSaveable { mutableIntStateOf(0) }
 
     // 派生数据（全部空安全）
     val hero = remember(state) { buildHero(state) }
@@ -110,6 +122,7 @@ fun LibraryScreen(
     val favorites = remember(state, FavoritesStore.ids) { favoriteItems(state) }
     val openedAlbum = openedAlbumId?.let { id -> state.albums.firstOrNull { it.id == id } }
     val openedPerson = openedPersonId?.let { id -> state.people.firstOrNull { it.id == id } }
+    val openedSmartAlbum = openedSmartAlbumId?.let { id -> state.smartAlbums.firstOrNull { it.id == id } }
 
     // ---- 顶栏焦点 ----
     val tabRequesters = remember { LibraryTab.entries.map { FocusRequester() } }
@@ -159,6 +172,7 @@ fun LibraryScreen(
                 selectedTab = tab
                 openedAlbumId = null
                 openedPersonId = null
+                openedSmartAlbumId = null
             },
             onTabFocus = { lastTab = it },
             onActionFocus = { lastAction = it },
@@ -172,12 +186,12 @@ fun LibraryScreen(
 
         // 有照片列表才算「有库」；但要给人物留一条活路 —— 相册接口失败而人脸结果已到时，
         // 整个页面被空状态盖掉，人物 Tab 就永远进不去了。
-        val isEmptyLibrary = state.recent.isEmpty() && state.albums.isEmpty() && state.people.isEmpty()
+        val isEmptyLibrary = state.recent.isEmpty() && state.albums.isEmpty() &&
+            state.people.isEmpty() && state.smartAlbums.isEmpty() && state.smartAlbumsError == null
         when {
             isEmptyLibrary -> LibraryEmptyState(onOpenSettings = { onNavigate(AppRoute.Settings) })
 
             openedAlbum != null -> AlbumDetailPane(
-                state = state,
                 album = openedAlbum,
                 onBack = {
                     openedAlbumId = null
@@ -187,6 +201,7 @@ fun LibraryScreen(
                 },
                 onOpenPhoto = onOpenPhoto,
                 onOpenVideo = onOpenVideo,
+                onLoadMedia = onLoadAlbumMedia,
             )
 
             openedPerson != null -> PersonDetailPane(
@@ -201,6 +216,17 @@ fun LibraryScreen(
                 onLoadPhotos = onLoadPersonPhotos,
             )
 
+            openedSmartAlbum != null -> SmartAlbumDetailPane(
+                album = openedSmartAlbum,
+                onBack = {
+                    openedSmartAlbumId = null
+                    contentFocus.requestBlock(BLOCK_CONTENT)
+                },
+                onOpenPhoto = onOpenPhoto,
+                onOpenVideo = onOpenVideo,
+                onLoadMedia = onLoadSmartAlbumMedia,
+            )
+
             else -> when (selectedTab) {
                 LibraryTab.ALL -> HomeTab(
                     state = state,
@@ -208,9 +234,13 @@ fun LibraryScreen(
                     allItems = allItems,
                     onOpenPhoto = onOpenPhoto,
                     onOpenVideo = onOpenVideo,
-                    onOpenAlbum = { openedAlbumId = it.id },
-                    onOpenAlbumsTab = { selectedTab = LibraryTab.ALBUMS },
+                    onOpenSmartAlbum = { openedSmartAlbumId = it.id },
                     contentFocus = contentFocus,
+                    smartAlbumIndex = smartAlbumsFocusIndex,
+                    onFocusSmartAlbum = { smartAlbumsFocusIndex = it },
+                    lastRow = homeFocusRow,
+                    onFocusRow = { homeFocusRow = it },
+                    onUpToTopBar = { topFocus.request(tabRequesters.getOrNull(selectedTab.ordinal)) },
                 )
 
                 LibraryTab.CHRONO -> ChronologyTab(
@@ -268,19 +298,19 @@ private fun HomeTab(
     allItems: List<MediaItem>,
     onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
-    onOpenAlbum: (Album) -> Unit,
-    onOpenAlbumsTab: () -> Unit,
+    onOpenSmartAlbum: (Album) -> Unit,
     contentFocus: PendingFocus,
+    smartAlbumIndex: Int,
+    onFocusSmartAlbum: (Int) -> Unit,
+    lastRow: Int,
+    onFocusRow: (Int) -> Unit,
+    onUpToTopBar: () -> Unit,
 ) {
     val recentItems = remember(state) { recentRow(state) }
-    val albums = remember(state) { folderAlbums(state) }
-    // 记住两行各自看到第几张 + 最后焦点在哪一行，看图返回后落回原处（不只是回 Hero）
+    val albums = state.smartAlbums
     var recentIndex by rememberSaveable { mutableIntStateOf(0) }
-    var albumIndex by rememberSaveable { mutableIntStateOf(0) }
-    var openAllFocused by rememberSaveable { mutableStateOf(false) }
-    var lastRow by rememberSaveable { mutableIntStateOf(0) } // 0=Hero 1=最近添加 2=相册
     val recentSafe = recentIndex.coerceIn(0, recentItems.lastIndex.coerceAtLeast(0))
-    val albumSafe = albumIndex.coerceIn(0, albums.lastIndex.coerceAtLeast(0))
+    val albumSafe = smartAlbumIndex.coerceIn(0, albums.lastIndex.coerceAtLeast(0))
     val recentState = rememberLazyListState(initialFirstVisibleItemIndex = (recentSafe - 1).coerceAtLeast(0))
     val albumState = rememberLazyListState(initialFirstVisibleItemIndex = (albumSafe - 1).coerceAtLeast(0))
 
@@ -292,28 +322,27 @@ private fun HomeTab(
 
     // 让聚焦项可见（契约 5）：focus 回调只记录 index，滚动在 LaunchedEffect 里做
     LaunchedEffect(recentIndex) { scrollRowTo(recentState, recentIndex) }
-    LaunchedEffect(albumIndex, openAllFocused) {
-        scrollRowTo(albumState, if (openAllFocused) albums.size else albumIndex)
-    }
+    LaunchedEffect(smartAlbumIndex) { scrollRowTo(albumState, smartAlbumIndex) }
 
     // 主内容落点：按「上次焦点在哪一行」还原；首次进入仍以 Hero 优先
     ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = {
         when (lastRow) {
             1 -> recentItems.getOrNull(recentSafe)?.let { requesterAt(recentRequesters, recentSafe) }
-            2 -> if (openAllFocused) {
-                requesterAt(albumRequesters, albums.size)
-            } else {
-                albums.getOrNull(albumSafe)?.let { requesterAt(albumRequesters, albumSafe) }
-            }
-
-            else -> if (hero != null) heroRequester else requesterAt(recentRequesters, 0)
+            2 -> albums.getOrNull(albumSafe)?.let { requesterAt(albumRequesters, albumSafe) }
+            else -> null
+        } ?: when {
+            hero != null -> heroRequester
+            recentItems.isNotEmpty() -> requesterAt(recentRequesters, recentSafe)
+            albums.isNotEmpty() -> requesterAt(albumRequesters, albumSafe)
+            else -> null
         }
     })
 
     val heroHeight = (screenHeightDp() * 0.42f).dp
 
     LazyColumn(
-        state = rememberLazyListState(),
+        // 返回分类时先组合分类行，随后才有可接收焦点的卡片。
+        state = rememberLazyListState(initialFirstVisibleItemIndex = if (lastRow == 2) 3 else 0),
         contentPadding = PaddingValues(bottom = TvDimen.SpaceXl),
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -325,10 +354,12 @@ private fun HomeTab(
                         hero = hero,
                         focusRequester = heroRequester,
                         onOpen = { openMedia(hero.item, hero.items, "全部照片", onOpenPhoto, onOpenVideo) },
-                        onFocusChanged = { focused -> if (focused) lastRow = 0 },
+                        onFocusChanged = { focused -> if (focused) onFocusRow(0) },
                         onDown = {
                             if (recentItems.isNotEmpty()) {
                                 contentFocus.request(requesterAt(recentRequesters, recentIndex.coerceAtMost(recentItems.size - 1)))
+                            } else if (albums.isNotEmpty()) {
+                                contentFocus.request(requesterAt(albumRequesters, albumSafe))
                             }
                         },
                         modifier = Modifier.fillMaxWidth().height(heroHeight),
@@ -366,10 +397,12 @@ private fun HomeTab(
                             onFocusChanged = { focused ->
                                 if (focused) {
                                     recentIndex = index
-                                    lastRow = 1
+                                    onFocusRow(1)
                                 }
                             },
-                            onUp = { contentFocus.request(heroRequester.takeIf { hero != null } ?: requesterAt(recentRequesters, 0)) },
+                            onUp = {
+                                if (hero != null) contentFocus.request(heroRequester) else onUpToTopBar()
+                            },
                             onDown = { if (albums.isNotEmpty()) contentFocus.request(requesterAt(albumRequesters, index.coerceAtMost(albums.size - 1))) },
                         )
                     }
@@ -377,24 +410,29 @@ private fun HomeTab(
             }
         }
 
-        // ---------- 相册（LazyRow）----------
+        // ---------- 飞牛 AI 识别的事物 / 场景分类（LazyRow）----------
         item(key = "albumHeader") {
             SectionHeader(
-                title = "相册",
+                title = "智能分类",
                 trailing = if (albums.isEmpty()) "" else "共 ${albums.size} 个",
                 modifier = Modifier.padding(start = TvDimen.ScreenPadding, end = TvDimen.ScreenPadding, top = TvDimen.SpaceL),
             )
         }
         item(key = "albumRow") {
-            if (albums.isEmpty()) {
-                RowEmptyState("相册还没加载出来 · 去设置里刷新 NAS")
-            } else {
-                // 相册行 UP = 回「最近添加」同列；无最近项则回 Hero
+            if (state.smartAlbumsError != null) {
+                RowEmptyState(state.smartAlbumsError)
+            }
+            if (albums.isEmpty() && state.smartAlbumsError == null) {
+                RowEmptyState("还没有智能分类 · 请先在飞牛相册中开启 AI 识别并等待分析完成")
+            } else if (albums.isNotEmpty()) {
+                // 分类行 UP = 回「最近添加」同列；无最近项则回 Hero / 顶栏。
                 val goUp = {
                     if (recentItems.isNotEmpty()) {
-                        contentFocus.request(requesterAt(recentRequesters, albumIndex.coerceAtMost(recentItems.size - 1)))
-                    } else {
+                        contentFocus.request(requesterAt(recentRequesters, smartAlbumIndex.coerceAtMost(recentItems.size - 1)))
+                    } else if (hero != null) {
                         contentFocus.request(heroRequester)
+                    } else {
+                        onUpToTopBar()
                     }
                 }
                 LazyRow(
@@ -409,28 +447,11 @@ private fun HomeTab(
                             width = 380,
                             height = 220,
                             focusRequester = requesterAt(albumRequesters, index),
-                            onClick = { onOpenAlbum(album) },
+                            onClick = { onOpenSmartAlbum(album) },
                             onFocusChanged = { focused ->
                                 if (focused) {
-                                    albumIndex = index
-                                    openAllFocused = false
-                                    lastRow = 2
-                                }
-                            },
-                            onUp = goUp,
-                        )
-                    }
-                    item(key = "openAlbums") {
-                        OpenFolderCard(
-                            width = 380,
-                            height = 220,
-                            focusRequester = requesterAt(albumRequesters, albums.size),
-                            onClick = onOpenAlbumsTab,
-                            onFocusChanged = { focused ->
-                                if (focused) {
-                                    albumIndex = albums.size
-                                    openAllFocused = true
-                                    lastRow = 2
+                                    onFocusSmartAlbum(index)
+                                    onFocusRow(2)
                                 }
                             },
                             onUp = goUp,
@@ -1063,75 +1084,32 @@ private fun SmartAlbumRow(
 
 @Composable
 private fun AlbumDetailPane(
-    state: LibraryState,
     album: Album,
     onBack: () -> Unit,
     onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
+    onLoadMedia: suspend (String) -> List<MediaItem>?,
 ) {
-    val items = remember(state, album.id) { albumItems(state, album) }
-    val columns = MEDIA_GRID_COLUMNS
-    // 记住「看的是哪一张」：从全屏看图返回时，LibraryScreen 整体重新组合，
-    // 若落点永远是第 0 张，用户就被丢回相册开头 —— 这与顶栏掉焦点一样恼人。
-    // rememberSaveable 由外层 SaveableStateProvider("library") 保管，看图往返不丢。
-    var focusedIndex by rememberSaveable(album.id) { mutableIntStateOf(0) }
-    // 网格初始化在记忆位置所在行，目标图才被组合（Lazy 只组合可见项），requestFocus 才有效
-    val gridState = rememberLazyGridState(
-        initialFirstVisibleItemIndex = (focusedIndex / columns) * columns,
+    // 与人物 / AI 分类共用同一套按需加载页：
+    // 首页启动时不再预取每个相册的全部媒体（相册多时会串行拉几十页，
+    // 也要把几万条 MediaItem 常驻 Java 堆），改为进入详情时再拉。
+    RemoteMediaDetailPane(
+        requestId = album.id,
+        stateKey = "album:${album.id}",
+        title = album.name,
+        contextTitle = album.name,
+        loadingText = "正在加载「${album.name}」中的照片与视频…",
+        emptyCount = "空文件夹",
+        failureTitle = "读取这个相册失败了",
+        failureSubtitle = "可能是 NAS 连接中断或相册权限已变化，按 BACK 返回后可以重试",
+        emptyTitle = "这个相册还是空的",
+        emptySubtitle = "NAS 上的「${album.name}」暂无照片或视频",
+        emptyIcon = Icons.Outlined.Image,
+        onBack = onBack,
+        onOpenPhoto = onOpenPhoto,
+        onOpenVideo = onOpenVideo,
+        onLoadMedia = onLoadMedia,
     )
-    val backRequester = remember { FocusRequester() }
-    val requesters = remember { mutableListOf<FocusRequester>() }
-    val innerFocus = remember { PendingFocus() }
-
-    // 进入详情：有内容 → 记忆位置（默认第一张）；空相册 → 返回按钮
-    LaunchedEffect(album.id) {
-        val target = if (items.isNotEmpty()) {
-            requesterAt(requesters, focusedIndex.coerceIn(0, items.lastIndex))
-        } else {
-            backRequester
-        }
-        // 网格刚进组合时节点可能还没挂上布局树，requestFocus 会静默失败、焦点留在顶栏，
-        // 等一帧再试一次（与 PersonDetailPane 同款兜底）。
-        if (runCatching { target.requestFocus() }.isFailure) {
-            withFrameMillis { }
-            runCatching { target.requestFocus() }
-        }
-        innerFocus.request(target)
-    }
-    ConsumeBlockRequest(innerFocus, BLOCK_CONTENT, blockFallback = {
-        if (items.isNotEmpty()) requesterAt(requesters, focusedIndex.coerceIn(0, items.lastIndex)) else backRequester
-    })
-
-    Column(Modifier.fillMaxSize()) {
-        AlbumDetailHeader(
-            albumName = album.name,
-            count = if (items.isEmpty()) "空文件夹" else countText(items),
-            backFocusRequester = backRequester,
-            onBack = onBack,
-            onBackFocusChanged = { },
-            onDown = { if (items.isNotEmpty()) innerFocus.request(requesterAt(requesters, 0)) },
-        )
-        if (items.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                EmptyState(
-                    title = "这个相册还是空的",
-                    subtitle = "NAS 上的「${album.name}」暂无照片或视频",
-                    icon = Icons.Outlined.Image,
-                )
-            }
-        } else {
-            MediaGrid(
-                items = items,
-                columns = columns,
-                gridState = gridState,
-                requesters = requesters,
-                focusedIndex = focusedIndex,
-                onFocused = { focusedIndex = it },
-                onFirstRowUp = { innerFocus.request(backRequester) },
-                onClick = { index, item -> openMedia(item, items, album.name, onOpenPhoto, onOpenVideo) },
-            )
-        }
-    }
 }
 
 // ============================== 人物详情（一个人下的全部照片） ==============================
@@ -1151,28 +1129,92 @@ private fun PersonDetailPane(
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
     onLoadPhotos: suspend (String) -> List<MediaItem>?,
 ) {
+    RemoteMediaDetailPane(
+        requestId = person.id,
+        stateKey = "person:${person.id}",
+        title = person.displayName,
+        contextTitle = "人物 · ${person.displayName}",
+        loadingText = "正在加载${person.displayName}的照片…",
+        emptyCount = "还没有照片",
+        failureTitle = "读取这个人物失败了",
+        failureSubtitle = "可能是 NAS 连接中断或 AI 相册服务未响应，按 BACK 返回后可以重试",
+        emptyTitle = "这个人物下还没有照片",
+        emptySubtitle = "可能刚完成识别，或该人物的照片已被移出 NAS 相册",
+        emptyIcon = Icons.Outlined.Person,
+        onBack = onBack,
+        onOpenPhoto = onOpenPhoto,
+        onOpenVideo = onOpenVideo,
+        onLoadMedia = onLoadPhotos,
+    )
+}
+
+@Composable
+private fun SmartAlbumDetailPane(
+    album: Album,
+    onBack: () -> Unit,
+    onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
+    onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
+    onLoadMedia: suspend (String) -> List<MediaItem>?,
+) {
+    RemoteMediaDetailPane(
+        requestId = album.id,
+        stateKey = "smart-category:${album.id}",
+        title = album.name,
+        contextTitle = "智能分类 · ${album.name}",
+        loadingText = "正在加载「${album.name}」中的照片与视频…",
+        emptyCount = "暂无照片或视频",
+        failureTitle = "读取这个智能分类失败了",
+        failureSubtitle = "可能是 NAS 连接中断或智能识别服务未响应，按 BACK 返回后可以重试",
+        emptyTitle = "这个分类下还没有照片或视频",
+        emptySubtitle = "飞牛 AI 尚未在「${album.name}」中识别出媒体，或相关媒体已被移出相册",
+        emptyIcon = Icons.Outlined.Image,
+        onBack = onBack,
+        onOpenPhoto = onOpenPhoto,
+        onOpenVideo = onOpenVideo,
+        onLoadMedia = onLoadMedia,
+    )
+}
+
+/** 人物与 AI 分类共用按需加载、失败 / 空状态及网格焦点导航。 */
+@Composable
+private fun RemoteMediaDetailPane(
+    requestId: String,
+    stateKey: String,
+    title: String,
+    contextTitle: String,
+    loadingText: String,
+    emptyCount: String,
+    failureTitle: String,
+    failureSubtitle: String,
+    emptyTitle: String,
+    emptySubtitle: String,
+    emptyIcon: ImageVector,
+    onBack: () -> Unit,
+    onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
+    onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
+    onLoadMedia: suspend (String) -> List<MediaItem>?,
+) {
     // 四态用类型表达，不再拿 null 兼「加载中 / 失败」两义：
     // 「读失败」和「确实没有照片」对用户是两件事 —— 前者要提示可以重试，后者是正常结果。
-    var photosState by remember(person.id) { mutableStateOf<PersonPhotos>(PersonPhotos.Loading) }
+    var photosState by remember(stateKey) { mutableStateOf<DetailMedia>(DetailMedia.Loading) }
     val columns = MEDIA_GRID_COLUMNS
     // 同 AlbumDetailPane：记住看到的是哪一张，全屏看图返回后落回它而不是第一张
-    var focusedIndex by rememberSaveable(person.id) { mutableIntStateOf(0) }
+    var focusedIndex by rememberSaveable(stateKey) { mutableIntStateOf(0) }
     val gridState = rememberLazyGridState(
         initialFirstVisibleItemIndex = (focusedIndex / columns) * columns,
     )
     val backRequester = remember { FocusRequester() }
     val requesters = remember { mutableListOf<FocusRequester>() }
     val innerFocus = remember { PendingFocus() }
-    val contextTitle = "人物 · ${person.displayName}"
-    val readyItems = (photosState as? PersonPhotos.Ready)?.items.orEmpty()
+    val readyItems = (photosState as? DetailMedia.Ready)?.items.orEmpty()
 
-    LaunchedEffect(person.id) {
-        photosState = PersonPhotos.Loading
+    LaunchedEffect(stateKey) {
+        photosState = DetailMedia.Loading
         // 外层注入的接口返回 null = 这次失败；这里不再 try/catch 兜底成空列表，
         // 否则一次网络抖动会被显示成「这个人没有照片」，用户以为数据丢了。
-        photosState = when (val loaded = onLoadPhotos(person.id)) {
-            null -> PersonPhotos.Failed
-            else -> if (loaded.isEmpty()) PersonPhotos.Empty else PersonPhotos.Ready(loaded)
+        photosState = when (val loaded = onLoadMedia(requestId)) {
+            null -> DetailMedia.Failed
+            else -> if (loaded.isEmpty()) DetailMedia.Empty else DetailMedia.Ready(loaded)
         }
     }
     BackHandler { onBack() }
@@ -1180,14 +1222,14 @@ private fun PersonDetailPane(
     // 落点：只有拿到照片才落第一张；加载中 / 失败 / 空都落返回按钮
     // —— 这三种状态下网格并不存在，指过去的 requester 会 requestFocus 失败、焦点留在顶栏。
     val firstTarget = {
-        if (photosState is PersonPhotos.Ready) {
+        if (photosState is DetailMedia.Ready) {
             val last = readyItems.lastIndex.coerceAtLeast(0)
             requesterAt(requesters, focusedIndex.coerceIn(0, last))
         } else {
             backRequester
         }
     }
-    LaunchedEffect(person.id, photosState) {
+    LaunchedEffect(stateKey, photosState) {
         val target = firstTarget()
         // 照片是异步到的：网格刚进组合时节点可能还没挂上布局树，requestFocus 会直接抛，
         // 于是等一帧再试一次，避免「加载完成但焦点留在顶栏」的掉焦点问题。
@@ -1201,25 +1243,25 @@ private fun PersonDetailPane(
 
     Column(Modifier.fillMaxSize()) {
         AlbumDetailHeader(
-            albumName = person.displayName,
+            albumName = title,
             count = when (photosState) {
-                PersonPhotos.Loading -> "正在加载…"
-                PersonPhotos.Failed -> "读取失败"
-                PersonPhotos.Empty -> "还没有照片"
-                is PersonPhotos.Ready -> countText(readyItems)
+                DetailMedia.Loading -> "正在加载…"
+                DetailMedia.Failed -> "读取失败"
+                DetailMedia.Empty -> emptyCount
+                is DetailMedia.Ready -> countText(readyItems)
             },
             backFocusRequester = backRequester,
             onBack = onBack,
             onBackFocusChanged = { },
-            onDown = { if (photosState is PersonPhotos.Ready) innerFocus.request(requesterAt(requesters, 0)) },
+            onDown = { if (photosState is DetailMedia.Ready) innerFocus.request(requesterAt(requesters, 0)) },
         )
         when (photosState) {
-            PersonPhotos.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            DetailMedia.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = TvColor.Accent)
                     Spacer(Modifier.height(TvDimen.SpaceM))
                     Text(
-                        text = "正在加载${person.displayName}的照片…",
+                        text = loadingText,
                         color = TvColor.TextTertiary,
                         fontSize = TvType.Caption,
                     )
@@ -1227,23 +1269,23 @@ private fun PersonDetailPane(
             }
 
             // 失败：明确说是「读取失败」并给出下一步，而不是伪装成「没有照片」
-            PersonPhotos.Failed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            DetailMedia.Failed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
-                    title = "读取这个人物失败了",
-                    subtitle = "可能是 NAS 连接中断或 AI 相册服务未响应，按 BACK 返回后可以重试",
-                    icon = Icons.Outlined.Person,
+                    title = failureTitle,
+                    subtitle = failureSubtitle,
+                    icon = emptyIcon,
                 )
             }
 
-            PersonPhotos.Empty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            DetailMedia.Empty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
-                    title = "这个人物下还没有照片",
-                    subtitle = "可能刚完成识别，或该人物的照片已被移出 NAS 相册",
-                    icon = Icons.Outlined.Person,
+                    title = emptyTitle,
+                    subtitle = emptySubtitle,
+                    icon = emptyIcon,
                 )
             }
 
-            is PersonPhotos.Ready -> MediaGrid(
+            is DetailMedia.Ready -> MediaGrid(
                 items = readyItems,
                 columns = columns,
                 gridState = gridState,
@@ -1260,16 +1302,16 @@ private fun PersonDetailPane(
 }
 
 /**
- * 人物照片的四种状态。
+ * 按需加载媒体的四种状态。
  *
  * 为什么单独建类型：用 `List<MediaItem>?` 时 null 同时代表「还在读」和「读失败」，
  * 空列表又代表「读到了但没有」—— 三种含义挤在两个值里，改文案时必然漏掉一种。
  */
-private sealed interface PersonPhotos {
-    data object Loading : PersonPhotos
-    data object Failed : PersonPhotos
-    data object Empty : PersonPhotos
-    data class Ready(val items: List<MediaItem>) : PersonPhotos
+private sealed interface DetailMedia {
+    data object Loading : DetailMedia
+    data object Failed : DetailMedia
+    data object Empty : DetailMedia
+    data class Ready(val items: List<MediaItem>) : DetailMedia
 }
 
 // ============================== 通用媒体网格 ==============================

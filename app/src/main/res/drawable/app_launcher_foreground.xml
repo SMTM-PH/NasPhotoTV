@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Preserve the existing photo-frame mark inside the adaptive icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#08090D"
+        android:fillType="evenOdd"
+        android:pathData="M36,32H72Q80,32 80,40V68Q80,76 72,76H36Q28,76 28,68V40Q28,32 36,32ZM36,36Q32,36 32,40V68Q32,72 36,72H72Q76,72 76,68V40Q76,36 72,36Z" />
+    <path
+        android:fillColor="#08090D"
+        android:pathData="M48,45A5,5 0,1 1,38 45A5,5 0,1 1,48 45ZM35,68L50,52L61,63L69,56L73,68Z" />
+</vector>

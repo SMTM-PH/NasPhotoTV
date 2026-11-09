@@ -54,11 +54,21 @@ object FnOsTransport {
             .build()
     }
 
-    /** ExoPlayer 数据源：http(s) 走带鉴权的 OkHttp，android.resource 等仍走默认源 */
+    /**
+     * 视频响应会持续读取，缓冲足够时还会暂停读取，不能套用 API 的 30 秒整次请求超时。
+     * 派生客户端保留连接/读取超时、鉴权、证书信任与连接池，只取消完整响应的总时限。
+     */
+    internal val mediaClient: OkHttpClient by lazy {
+        client.newBuilder()
+            .callTimeout(0, TimeUnit.MILLISECONDS)
+            .build()
+    }
+
+    /** ExoPlayer 数据源：http(s) 走带鉴权的流媒体客户端，android.resource 等仍走默认源 */
     fun mediaDataSourceFactory(context: Context): DataSource.Factory =
         DefaultDataSource.Factory(
             context,
-            OkHttpDataSource.Factory(client).setUserAgent(USER_AGENT),
+            OkHttpDataSource.Factory(mediaClient).setUserAgent(USER_AGENT),
         )
 
     private const val USER_AGENT = "NASPhotoTV/1.0 (Android TV)"

@@ -5,7 +5,7 @@
 Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`，单 Activity、纯 Compose、无 TV 专用库；
 屏保待机显示对标 iPhone 的 StandBy —— 大号时钟 + 照片氛围 + 天气 + 防烧屏。
 
-- 版本：`1.0.0-prototype`（versionCode 1）
+- 版本：`1.2.0`（versionCode 6）
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
 
@@ -27,6 +27,8 @@ adb shell am start -n com.nasphoto.tv/.MainActivity
 APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 21 MB，含 Media3/OkHttp/Coil）。
 
 不想自己构建？可直接从 [GitHub Releases](https://github.com/SMTM-PH/NasPhotoTV/releases) 下载 APK 安装包。
+
+`1.2.0` 修复视频串流被 30 秒整次请求超时中断、播放控制层无法自动隐藏的问题；首页原相册横排改为飞牛 AI 识别的「场景事物」智能分类，点开后按需加载照片与视频，普通相册仍在「相册」Tab。APK 同时更新自适应启动图标、圆形图标和 Android TV 横幅。
 
 首次运行需要在设置页填 NAS 地址（默认 `5667`）+ 账号密码，或等局域网自动发现。
 

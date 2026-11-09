@@ -27,6 +27,12 @@ interface MediaRepository {
     /** 所有相册（文件夹）+ 智能相册 */
     suspend fun getAlbums(): List<Album>
 
+    /** 飞牛 AI 识别的场景 / 事物分类，首页独立展示。 */
+    suspend fun getSmartAlbums(): List<Album> = emptyList()
+
+    /** 点开智能分类后再取对应媒体，避免首页预加载所有 AI 分类。 */
+    suspend fun getSmartAlbumMedia(albumId: String): List<MediaItem> = emptyList()
+
     /** 某个相册下的媒体，按拍摄时间倒序 */
     suspend fun getMedia(albumId: String): List<MediaItem>
 

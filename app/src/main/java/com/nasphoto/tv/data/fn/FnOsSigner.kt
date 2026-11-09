@@ -25,10 +25,14 @@ internal object FnOsSigner {
         path: String,
         params: List<Pair<String, String>>,
         mode: SignMode,
-    ): String {
+    ): String = authPayloadHeader(path, payload(params, mode))
+
+    /** POST 必须签名实际发送的 JSON 字节串，不能按 GET 查询参数排序 / 编码。 */
+    fun authJsonHeader(path: String, body: String): String = authPayloadHeader(path, body)
+
+    private fun authPayloadHeader(path: String, payload: String): String {
         val nonce = (100_000 + random.nextInt(900_000)).toString()
         val timestamp = System.currentTimeMillis().toString()
-        val payload = payload(params, mode)
         val sign = FnOsCrypto.md5(
             listOf(SALT, path, nonce, timestamp, FnOsCrypto.md5(payload), SECRET).joinToString("_"),
         )

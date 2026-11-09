@@ -33,6 +33,9 @@ data class LibraryState(
     val accountCount: Int = 1,
     val people: List<Person> = emptyList(),
     val peopleLoaded: Boolean = true,
+    /** 飞牛 AI 识别的事物 / 场景分类，独立于用户创建的普通相册。 */
+    val smartAlbums: List<com.nasphoto.tv.data.model.Album> = emptyList(),
+    val smartAlbumsError: String? = null,
 )
 
 /**

@@ -231,7 +231,7 @@ fun rowValueText(key: SettingsKey, store: SettingsStore, feedback: SettingsFeedb
         SettingsKey.PB_LOOP,
         -> if (toggleState(key, store) == true) "开" else "关"
 
-        SettingsKey.ABOUT_VERSION -> "1.0.0-prototype"
+        SettingsKey.ABOUT_VERSION -> com.nasphoto.tv.BuildConfig.VERSION_NAME
         SettingsKey.ABOUT_ENGINE -> "Compose"
         SettingsKey.ABOUT_DEVICE -> "Android TV"
         SettingsKey.NAS_REFRESH,

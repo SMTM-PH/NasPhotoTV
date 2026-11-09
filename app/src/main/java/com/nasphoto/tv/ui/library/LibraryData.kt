@@ -311,6 +311,7 @@ fun albumSubtitle(album: Album): String = album.subtitle.ifBlank {
         AlbumType.FOLDER -> "NAS 文件夹"
         AlbumType.SMART_PEOPLE -> "人物识别"
         AlbumType.SMART_PLACE -> "地点聚合"
+        AlbumType.SMART_CATEGORY -> "AI 智能识别"
         AlbumType.MEMORY -> "往年今日"
         AlbumType.FAVORITES -> "星标收藏"
     }
@@ -321,6 +322,7 @@ fun smartGroupTitle(type: AlbumType): String = when (type) {
     AlbumType.FAVORITES -> "收藏"
     AlbumType.SMART_PEOPLE -> "人物"
     AlbumType.SMART_PLACE -> "地点"
+    AlbumType.SMART_CATEGORY -> "智能分类"
     AlbumType.MEMORY -> "回忆"
     AlbumType.FOLDER -> "相册"
 }
@@ -392,6 +394,14 @@ object LibraryPreviewData {
         photo("r12", "蓝色深潜", "raw/wall_ocean", 7, "a3"),
     )
 
+    /** AI 事物 / 场景分类预览，与用户创建的普通相册分开。 */
+    val smartCategories: List<Album> = listOf(
+        Album("category-mountain", "山川", "raw/video_mountain", 18, AlbumType.SMART_CATEGORY, isSmart = true),
+        Album("category-sea", "海边", "raw/wall_ocean", 26, AlbumType.SMART_CATEGORY, isSmart = true),
+        Album("category-forest", "森林", "raw/wall_forest", 12, AlbumType.SMART_CATEGORY, isSmart = true),
+        Album("category-city", "城市", "raw/video_city", 31, AlbumType.SMART_CATEGORY, isSmart = true),
+    )
+
     val mediaByAlbum: Map<String, List<MediaItem>> = run {
         val pool = recent + listOf(
             photo("x1", "雪原", "raw/wall_aurora", 6, "a1"),
@@ -447,6 +457,7 @@ object LibraryPreviewData {
         accountCount = 3,
         people = people,
         peopleLoaded = true,
+        smartAlbums = smartCategories,
     )
 
     /** 空数据：验证不崩（MockData 尚未就绪时的真实状态） */

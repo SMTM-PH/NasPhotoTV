@@ -17,10 +17,13 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import org.json.JSONArray
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
@@ -114,12 +117,23 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
 
     /** 带签名 GET；[params] 会按 key 排序后同时用于 URL 与签名 */
     suspend fun getJson(path: String, params: List<Pair<String, String>> = emptyList()): JSONObject =
+        requestJson(path, params, body = null)
+
+    /** 只读 AI 搜索也使用 POST；序列化一次，保证签名与发送的 JSON 完全一致。 */
+    suspend fun postJson(path: String, body: JSONObject): JSONObject =
+        requestJson(path, emptyList(), body.toString())
+
+    private suspend fun requestJson(
+        path: String,
+        params: List<Pair<String, String>>,
+        body: String?,
+    ): JSONObject =
         withContext(Dispatchers.IO) {
             var current = ensureSession(force = false)
             var authRetried = false
             var signRetried = false
             while (true) {
-                val result = execute(current, path, params)
+                val result = execute(current, path, params, body)
                 when {
                     result.code == 401 || result.code == 5001 -> {
                         if (authRetried) throw FnOsException("AccessToken 已失效，请重新登录")
@@ -128,7 +142,7 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
                     }
 
                     result.code == 5000 -> {
-                        if (signRetried) throw FnOsException("authx 签名被拒绝")
+                        if (signRetried || body != null) throw FnOsException("authx 签名被拒绝")
                         signRetried = true
                         signMode = signMode.next()
                     }
@@ -158,18 +172,26 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
         session: FnOsSession,
         path: String,
         params: List<Pair<String, String>>,
+        requestBody: String?,
     ): ApiResult {
         // session 只用于保证调用前已登录；AccessToken 由 FnOsTransport 拦截器统一注入
         @Suppress("UNUSED_EXPRESSION")
         session
         val query = FnOsSigner.payload(params, SignMode.ENCODED)
         val url = access.baseUrl + path + if (query.isEmpty()) "" else "?$query"
-        val request = Request.Builder()
+        val builder = Request.Builder()
             .url(url)
             .header("AccessToken", session.token)
-            .header("authx", FnOsSigner.authHeader(path, params, signMode))
-            .get()
-            .build()
+            .header("authx", if (requestBody == null) {
+                FnOsSigner.authHeader(path, params, signMode)
+            } else {
+                FnOsSigner.authJsonHeader(path, requestBody)
+            })
+        val request = if (requestBody == null) {
+            builder.get().build()
+        } else {
+            builder.post(requestBody.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
+        }
         FnOsTransport.client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw FnOsException("NAS 返回 HTTP ${response.code}")
@@ -179,7 +201,13 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
             if (code != 0) {
                 return ApiResult(code, json.optString("msg").ifBlank { json.optString("result") })
             }
-            return ApiResult(0, "", json.optJSONObject("data") ?: JSONObject())
+            // 智能分类在部分 fnOS 版本里直接返回 data 数组，统一包装为 list。
+            val data = when (val value = json.opt("data")) {
+                is JSONObject -> value
+                is JSONArray -> JSONObject().put("list", value)
+                else -> JSONObject()
+            }
+            return ApiResult(0, "", data)
         }
     }
 

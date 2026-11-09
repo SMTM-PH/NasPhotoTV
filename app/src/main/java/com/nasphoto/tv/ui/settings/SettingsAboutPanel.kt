@@ -64,7 +64,7 @@ fun SettingsAboutPanel(store: SettingsStore, feedback: SettingsFeedback, modifie
                     color = TvColor.TextPrimary,
                 )
                 Text(
-                    text = "版本 1.0.0 · Kotlin + Jetpack Compose",
+                    text = "版本 ${com.nasphoto.tv.BuildConfig.VERSION_NAME} · Kotlin + Jetpack Compose",
                     fontSize = TvType.Tiny,
                     color = TvColor.TextTertiary,
                 )

@@ -30,10 +30,13 @@ import com.nasphoto.tv.data.FavoritesStore
 import com.nasphoto.tv.data.FnOsMediaRepository
 import com.nasphoto.tv.data.MediaCache
 import com.nasphoto.tv.data.SettingsStore
+import com.nasphoto.tv.data.fn.FnOsStats
 import com.nasphoto.tv.data.fn.FnOsTransport
 import com.nasphoto.tv.data.fn.LanNasDevice
+import com.nasphoto.tv.data.model.Album
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
+import com.nasphoto.tv.data.model.Person
 import com.nasphoto.tv.data.model.ScreensaverSettings
 import com.nasphoto.tv.ui.connection.ConnectionMode
 import com.nasphoto.tv.ui.connection.ConnectionScreen
@@ -47,7 +50,7 @@ import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.video.VideoPlayerScreen
 import com.nasphoto.tv.ui.viewer.PhotoViewerScreen
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 
@@ -130,27 +133,47 @@ fun NasPhotoTvApp() {
                 // 这里按服务端可分页上限取足，保证时间线覆盖整个照片库。
                 val recent = repository.getRecent(1000)
                 val albums = repository.getAlbums()
-                val albumMedia = coroutineScope {
-                    albums.map { album ->
-                        async {
-                            album.id to runCatching { repository.getMedia(album.id) }
-                                .getOrDefault(emptyList())
+                // 相册媒体改为进入详情时按需加载（见 LibraryScreen.onLoadAlbumMedia）：
+                // 以前首页启动会把每个相册的全部媒体都拉一遍，相册一多就要串行发几十个大请求，
+                // 几万条 MediaItem 常驻 Java 堆，直接挤占视频解码的缓冲区。
+                // 智能分类 / 人物 / 屏保池 / 统计互不依赖，并行请求，首屏更快。
+                var smartAlbumsError: String? = null
+                val optional = coroutineScope {
+                    val screensaverDeferred = async {
+                        runCatching { repository.getScreensaverPhotos() }.getOrDefault(emptyList())
+                    }
+                    val peopleDeferred = async {
+                        // 人物列表：NAS 没开 AI 相册时接口会失败或返回空，不能让它拖垮整个媒体库
+                        runCatching { repository.getPeople() }.getOrDefault(emptyList())
+                    }
+                    val smartDeferred = async {
+                        try {
+                            repository.getSmartAlbums()
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            smartAlbumsError = "智能分类暂时无法读取 · 请检查飞牛相册的智能识别状态后重试"
+                            emptyList()
                         }
-                    }.awaitAll().toMap()
+                    }
+                    val statsDeferred = async {
+                        runCatching { repository.stats() }.getOrNull()
+                    }
+                    OptionalLibraryData(
+                        screensaverPhotos = screensaverDeferred.await(),
+                        people = peopleDeferred.await(),
+                        smartAlbums = smartDeferred.await(),
+                        stats = statsDeferred.await(),
+                    )
                 }
-                val screensaverPhotos = runCatching { repository.getScreensaverPhotos() }
-                    .getOrDefault(emptyList())
-                // 人物列表：NAS 没开 AI 相册时接口会失败或返回空，不能让它拖垮整个媒体库
-                val people = runCatching { repository.getPeople() }.getOrDefault(emptyList())
-                val stats = runCatching { repository.stats() }.getOrNull()
 
                 MediaCache.update(
                     recent = recent,
                     albums = albums,
-                    screensaverPhotos = screensaverPhotos,
-                    photoCount = stats?.photoCount ?: recent.count { it.type == MediaType.PHOTO },
-                    videoCount = stats?.videoCount ?: recent.count { it.type == MediaType.VIDEO },
-                    people = people,
+                    screensaverPhotos = optional.screensaverPhotos,
+                    photoCount = optional.stats?.photoCount ?: recent.count { it.type == MediaType.PHOTO },
+                    videoCount = optional.stats?.videoCount ?: recent.count { it.type == MediaType.VIDEO },
+                    people = optional.people,
                     ownerAccountId = nas.activeAccountId,
                 )
                 SettingsStore.updateNas { it.copy(connected = true) }
@@ -158,15 +181,17 @@ fun NasPhotoTvApp() {
                     library = LibraryState(
                         recent = recent,
                         albums = albums,
-                        mediaByAlbum = albumMedia,
+                        mediaByAlbum = emptyMap(),
                         connectionName = nas.name.ifBlank { "Home-NAS" },
                         isOnline = true,
                         accountName = nas.activeAccount?.displayName.orEmpty(),
                         accountCount = nas.accounts.size.coerceAtLeast(1),
-                        people = people,
+                        people = optional.people,
                         peopleLoaded = true,
+                        smartAlbums = optional.smartAlbums,
+                        smartAlbumsError = smartAlbumsError,
                     ),
-                    screensaverPhotos = screensaverPhotos,
+                    screensaverPhotos = optional.screensaverPhotos,
                 )
             } catch (t: Throwable) {
                 SettingsStore.updateNas { it.copy(connected = false) }
@@ -206,7 +231,16 @@ fun NasPhotoTvApp() {
                 ScreensaverSettings.PhotoSource.ALBUM -> {
                     val albumId = screensaverSettings.albumId
                         .ifBlank { ready.library.albums.firstOrNull()?.id.orEmpty() }
-                    ready.library.mediaByAlbum[albumId].orEmpty()
+                    // 首页不再预取相册媒体，这里必须能按需拉一次；缓存命中就不再请求。
+                    val cached = ready.library.mediaByAlbum[albumId]
+                    val fetched = cached ?: try {
+                        repository?.getMedia(albumId)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        null
+                    }
+                    fetched.orEmpty()
                         .filter { it.type == MediaType.PHOTO }
                         .ifEmpty { recentPool }
                 }
@@ -387,6 +421,26 @@ fun NasPhotoTvApp() {
                                             runCatching { repo.getPersonPhotos(personId) }.getOrNull()
                                         }
                                     },
+                                    onLoadSmartAlbumMedia = { albumId ->
+                                        try {
+                                            repository?.getSmartAlbumMedia(albumId)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (_: Exception) {
+                                            null
+                                        }
+                                    },
+                                    // 普通相册同样按需拉取：列表页只需要封面与数量，
+                                    // 打开某个相册时再取它的全部媒体（大相册会自动分页）。
+                                    onLoadAlbumMedia = { albumId ->
+                                        try {
+                                            repository?.getMedia(albumId)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (_: Exception) {
+                                            null
+                                        }
+                                    },
                                     onNavigate = { next ->
                                         if (next == AppRoute.ScreensaverPreview) {
                                             route = AppRoute.Library
@@ -460,3 +514,11 @@ private sealed interface LibraryLoad {
         val screensaverPhotos: List<MediaItem>,
     ) : LibraryLoad
 }
+
+/** 与媒体库主数据无关、可并行拉取的附属数据 */
+private data class OptionalLibraryData(
+    val screensaverPhotos: List<MediaItem>,
+    val people: List<Person>,
+    val smartAlbums: List<Album>,
+    val stats: FnOsStats?,
+)

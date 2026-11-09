@@ -7,13 +7,14 @@ plugins {
 android {
     namespace = "com.nasphoto.tv"
     compileSdk = 35
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "com.nasphoto.tv"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.1.2"
+        versionCode = 6
+        versionName = "1.2.0"
     }
 
     buildTypes {
@@ -32,6 +33,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 
@@ -63,5 +65,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     // 动图（GIF / 动态 WebP / HEIF 序列）解码
     implementation("io.coil-kt:coil-gif:2.7.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
