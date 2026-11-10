@@ -50,7 +50,23 @@ data class FnOsProbeResult(
     val latencyMs: Int = 0,
     val stats: FnOsStats? = null,
     val error: String? = null,
+    /** 非 null = 账号已开启两步验证，需要用户输入动态码；调用 [FnOsApi.verifyTwoFactor] 完成登录 */
+    val twoFactor: FnOsTwoFactorChallenge? = null,
 )
+
+/**
+ * 密码正确，但当前设备不在信任列表里，fnOS 要求再输一次动态验证码。
+ *
+ * 这不是错误，而是一个中间态：WebSocket 必须保持打开，验证码要和登录用同一个会话提交。
+ */
+data class FnOsTwoFactorChallenge(
+    /** true = 账号已绑定验证器 App（TOTP）；false = 只绑了邮箱，客户端暂不支持 */
+    val totpBound: Boolean = true,
+)
+
+/** [FnOsApi] 内部抛出的「需要两步验证」信号，UI 据此弹出验证码输入框。 */
+class FnOsTwoFactorRequired(val challenge: FnOsTwoFactorChallenge) :
+    Exception("该账号已开启两步验证")
 
 fun NasConnection.toFnOsAccess(): FnOsAccess = FnOsAccess(
     host = host.trim()
@@ -89,6 +105,14 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
     private var pingJob: Job? = null
     private var signMode = SignMode.RAW
 
+    /**
+     * 等待两步验证的登录会话。非 null 时：
+     *  - WebSocket 保持打开（验证码要在同一连接上提交）；
+     *  - 任何请求都直接抛 [FnOsTwoFactorRequired]，避免并发协程反复重登、覆盖这个会话。
+     */
+    @Volatile
+    private var pendingTwoFactor: PendingTwoFactor? = null
+
     // ------------------------------------------------------------------ 对外
 
     /** 登录 + stat：连接测试用（每次都重新登录，确保验证的是当前凭据） */
@@ -102,6 +126,9 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
                 latencyMs = ((System.nanoTime() - started) / 1_000_000L).toInt(),
                 stats = stats,
             )
+        } catch (e: FnOsTwoFactorRequired) {
+            // 不是失败：保留 WebSocket，等 UI 收到动态码后走 verifyTwoFactor
+            FnOsProbeResult(ok = false, error = e.message, twoFactor = e.challenge)
         } catch (e: Exception) {
             FnOsProbeResult(ok = false, error = describe(e))
         }
@@ -163,6 +190,8 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
         runCatching { socket?.close(1000, "bye") }
         socket = null
         session = null
+        pendingTwoFactor = null
+        handshakeInbox = null
         scope.cancel()
     }
 
@@ -214,6 +243,8 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
     // ------------------------------------------------------------------ 登录
 
     private suspend fun ensureSession(force: Boolean): FnOsSession = loginMutex.withLock {
+        // 卡在两步验证时不能重新登录：那会丢掉服务端下发的临时凭证和当前连接。
+        pendingTwoFactor?.let { throw FnOsTwoFactorRequired(it.challenge) }
         if (!force) session?.let { return@withLock it }
 
         pingJob?.cancel()
@@ -267,8 +298,8 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
             val si = hello.optString("si")
             if (pub.isBlank() || si.isBlank()) throw FnOsException("NAS 没有返回 RSA 公钥")
 
-            val aesKey = FnOsCrypto.randomAscii(32)
-            val iv = FnOsCrypto.randomBytes(16)
+            // 固定 did：服务端按它记住「信任此设备」，否则每次冷启动都要重输动态码
+            val did = FnOsDeviceId.get()
             val payload = JSONObject()
                 .put("req", "user.login")
                 .put("reqid", FnOsReqId.next())
@@ -278,38 +309,145 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
                 .put("stay", true)
                 .put("deviceType", "AndroidTV")
                 .put("deviceName", "NAS Photo TV")
-                .put("did", FnOsCrypto.randomHex(12))
+                .put("did", did)
 
-            val envelope = JSONObject()
-                .put("req", "encrypted")
-                .put("iv", FnOsCrypto.base64(iv))
-                .put("rsa", FnOsCrypto.base64(FnOsCrypto.rsaEncrypt(pub, aesKey.toByteArray(Charsets.UTF_8))))
-                .put(
-                    "aes",
-                    FnOsCrypto.base64(
-                        FnOsCrypto.aesCbcEncrypt(
-                            payload.toString().toByteArray(Charsets.UTF_8),
-                            aesKey,
-                            iv,
-                        ),
-                    ),
-                )
-
-            val reply = request(inbox, envelope)
+            val reply = request(inbox, encryptEnvelope(pub, payload))
             val errno = reply.optInt("errno", 0)
             val result = reply.optString("result")
             if (errno != 0 || result != "succ") throw FnOsException(loginErrorText(errno, result))
-            val token = reply.optString("token")
-            if (token.isBlank()) throw FnOsException("登录成功但 NAS 没有返回 AccessToken")
-            FnOsReqId.setBackId(reply.optString("backId"))
-            return FnOsSession(token = token, secret = reply.optString("secret"))
+
+            when (val outcome = classifyLoginReply(reply)) {
+                is FnOsLoginReply.Success -> {
+                    FnOsReqId.setBackId(reply.optString("backId"))
+                    pendingTwoFactor = null
+                    return FnOsSession(token = outcome.token, secret = reply.optString("secret"))
+                }
+
+                is FnOsLoginReply.TwoFactor -> {
+                    if (outcome.accessToken.isBlank()) {
+                        throw FnOsException("NAS 要求两步验证，但没有返回临时凭证")
+                    }
+                    // 保留 socket / inbox：动态码必须和这次登录在同一连接上提交
+                    val pending = PendingTwoFactor(
+                        challenge = FnOsTwoFactorChallenge(totpBound = true),
+                        accessToken = outcome.accessToken,
+                        did = did,
+                        pub = pub,
+                        si = si,
+                        inbox = inbox,
+                    )
+                    pendingTwoFactor = pending
+                    throw FnOsTwoFactorRequired(pending.challenge)
+                }
+
+                is FnOsLoginReply.SetupRequired -> throw FnOsException(
+                    if (outcome.emailOnly) {
+                        "该账号使用邮箱两步验证，电视端收不到邮件：请在飞牛 App 的账号安全里改为验证器（动态码）后再连接"
+                    } else {
+                        "该账号被要求开启两步验证，请先在飞牛 App 中绑定验证器后再连接"
+                    },
+                )
+
+                is FnOsLoginReply.MissingToken -> throw FnOsException(
+                    buildString {
+                        append("登录成功但 NAS 没有返回 AccessToken")
+                        if (outcome.fields.isNotEmpty()) {
+                            append("（响应字段：")
+                            append(outcome.fields.joinToString(", "))
+                            append("）")
+                        }
+                    },
+                )
+            }
+        } catch (t: FnOsTwoFactorRequired) {
+            // 连接要留给 verifyTwoFactor，不能走下面的断连清理
+            throw t
         } catch (t: Throwable) {
+            pendingTwoFactor = null
             runCatching { ws.cancel() }
             if (socket === ws) socket = null
             throw t
         } finally {
-            handshakeInbox = null
+            if (pendingTwoFactor == null) handshakeInbox = null
         }
+    }
+
+    /**
+     * 提交两步验证动态码，完成后本 API 即可正常请求。
+     *
+     * 与登录一样走 RSA+AES 加密信封，且必须在登录用的同一 WebSocket 上发送
+     * （`accessToken` 只对该连接有效）。
+     */
+    suspend fun verifyTwoFactor(code: String): Unit = withContext(Dispatchers.IO) {
+        val digits = code.filter(Char::isDigit)
+        if (digits.length != 6) throw FnOsException("请输入 6 位动态验证码")
+        loginMutex.withLock {
+            val pending = pendingTwoFactor
+                ?: throw FnOsException("两步验证会话已过期，请重新测试连接")
+            val payload = JSONObject()
+                .put("req", "user.2fa.loginVerify")
+                .put("reqid", FnOsReqId.next())
+                .put("si", pending.si)
+                .put("accessToken", pending.accessToken)
+                .put("code", digits)
+                // 与飞牛 Web 端一致：勾选「信任此设备」时 stay=2，服务端按 did 记住本机
+                .put("stay", 2)
+                .put("isTrustedDevice", true)
+                .put("deviceName", "NAS Photo TV")
+                .put("deviceType", "AndroidTV")
+                .put("did", pending.did)
+
+            val reply = request(pending.inbox, encryptEnvelope(pending.pub, payload))
+            val errno = reply.optInt("errno", 0)
+            val result = reply.optString("result")
+            if (errno != 0 || result != "succ") {
+                throw FnOsException(
+                    if (errno == ERRNO_INVALID_CREDENTIAL) "动态验证码错误或已过期，请重新输入"
+                    else loginErrorText(errno, result),
+                )
+            }
+            val token = reply.optString("token")
+            if (token.isBlank()) throw FnOsException("两步验证通过，但 NAS 没有返回 AccessToken")
+            FnOsReqId.setBackId(reply.optString("backId"))
+            val newSession = FnOsSession(token = token, secret = reply.optString("secret"))
+            session = newSession
+            FnOsTransport.token = newSession.token
+            pendingTwoFactor = null
+            handshakeInbox = null
+            startPing()
+        }
+    }
+
+    /** 是否还有一个可以提交动态码的会话（验证失败后 UI 据此决定要不要让用户重试） */
+    fun hasPendingTwoFactor(): Boolean = pendingTwoFactor != null
+
+    /** 放弃等待中的两步验证：关掉半登录连接，API 本身仍可重新登录 */
+    fun cancelTwoFactor() {
+        pendingTwoFactor = null
+        handshakeInbox = null
+        runCatching { socket?.close(1000, "cancel 2fa") }
+        socket = null
+        session = null
+    }
+
+    /** 登录 / 两步验证共用的加密信封（AES-256-CBC + RSA 加密 AES key） */
+    private fun encryptEnvelope(pub: String, payload: JSONObject): JSONObject {
+        val aesKey = FnOsCrypto.randomAscii(32)
+        val iv = FnOsCrypto.randomBytes(16)
+        return JSONObject()
+            .put("req", "encrypted")
+            .put("iv", FnOsCrypto.base64(iv))
+            .put("rsa", FnOsCrypto.base64(FnOsCrypto.rsaEncrypt(pub, aesKey.toByteArray(Charsets.UTF_8))))
+            .put(
+                "aes",
+                FnOsCrypto.base64(
+                    FnOsCrypto.aesCbcEncrypt(
+                        payload.toString().toByteArray(Charsets.UTF_8),
+                        aesKey,
+                        iv,
+                    ),
+                ),
+            )
     }
 
     private suspend fun request(inbox: Channel<JSONObject>, message: JSONObject): JSONObject {
@@ -354,6 +492,9 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
         401 -> "会话被拒绝：可能需要访问码，或上一次登录状态没有重置"
         8192 -> "登录参数被拒绝（si 必须以字符串回传）"
         131072 -> "账号或密码错误"
+        // 连续输错密码后 fnOS 会临时封禁来源 IP（Web 端提示「当前 IP 已被封禁」）
+        131089 -> "登录失败次数过多，NAS 已临时封禁本机 IP，请稍后再试"
+        135168 -> "动态验证码错误或已过期"
         else -> result.takeIf { it.isNotBlank() && it != "succ" }
             ?.let { "登录失败：$it" }
             ?: "登录失败（errno $errno）"
@@ -376,3 +517,65 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
 
     private class ApiResult(val code: Int, val message: String, val data: JSONObject = JSONObject())
 }
+
+/**
+ * 登录响应分类。fnOS 在密码正确但需要两步验证时，`errno=0`、`result=succ`，
+ * 但 `token` 为空，只给一个临时 `accessToken` —— 旧代码直接把它当成
+ * 「登录成功但没返回 AccessToken」，用户看到的就是这句没有任何指导意义的报错。
+ */
+internal sealed interface FnOsLoginReply {
+    data class Success(val token: String) : FnOsLoginReply
+    data class TwoFactor(val accessToken: String) : FnOsLoginReply
+    /** 需要两步验证，但账号没绑定验证器（只有邮箱验证码）：电视端拿不到邮箱，只能让用户改绑 */
+    data class SetupRequired(val emailOnly: Boolean = false) : FnOsLoginReply
+    data class MissingToken(val fields: List<String>) : FnOsLoginReply
+}
+
+internal fun classifyLoginReply(reply: JSONObject): FnOsLoginReply {
+    val token = reply.optString("token").trim()
+    if (token.isNotBlank()) return FnOsLoginReply.Success(token)
+
+    val bound = reply.flag("isBindTwofaSecret")
+    val enforced = reply.flag("isTwofaEnforced")
+    val accessToken = reply.optString("accessToken").trim()
+    // secureEmail 非空 = 走邮箱验证码流程，电视端收不到邮件，只能引导用户改绑验证器
+    val emailOnly = reply.optString("secureEmail").isNotBlank()
+    return when {
+        bound -> FnOsLoginReply.TwoFactor(accessToken)
+        // 管理员强制要求、但账号还没绑定验证器：客户端没有可验证的秘密，只能在飞牛端先开启
+        enforced -> FnOsLoginReply.SetupRequired(emailOnly = emailOnly)
+        else -> FnOsLoginReply.MissingToken(
+            reply.keys().asSequence()
+                .filterNot { it == "reqid" || it == "errno" || it == "result" }
+                .sorted()
+                .toList(),
+        )
+    }
+}
+
+/**
+ * 服务端的布尔字段并不总是 JSON 布尔：不同版本会回 true / "true" / 1，
+ * 用 optBoolean 读数字会得到 false，直接把两步验证误判成普通失败。
+ */
+private fun JSONObject.flag(name: String): Boolean {
+    val raw = opt(name) ?: return false
+    return when (raw) {
+        is Boolean -> raw
+        is Number -> raw.toInt() != 0
+        is String -> raw.equals("true", ignoreCase = true) || raw == "1"
+        else -> false
+    }
+}
+
+/** 等待动态码的登录会话：临时凭证、设备标识与握手公钥都要原样带进验证请求 */
+private class PendingTwoFactor(
+    val challenge: FnOsTwoFactorChallenge,
+    val accessToken: String,
+    val did: String,
+    val pub: String,
+    val si: String,
+    val inbox: Channel<JSONObject>,
+)
+
+/** fnOS 的 E_INVALID_TOKEN：两步验证里表示动态码错误 / 已过期 */
+private const val ERRNO_INVALID_CREDENTIAL = 135168

@@ -5,9 +5,25 @@
 Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`，单 Activity、纯 Compose、无 TV 专用库；
 屏保待机显示对标 iPhone 的 StandBy —— 大号时钟 + 照片氛围 + 天气 + 防烧屏。
 
-- 版本：`1.2.0`（versionCode 6）
+- 版本：`1.2.1`（versionCode 7）
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
+
+---
+
+## 1.2.1 更新（2026-11-10）
+
+- **修复：开启两步验证的账号连不上 NAS**。飞牛在密码正确但设备未被信任时返回
+  `errno=0 / result=succ` 但**不给 `token`**，只给一个临时 `accessToken`；旧版本把这句
+  当成「登录成功但没返回 AccessToken」，于是永远连不上。现在会识别这个挑战，
+  用同一连接提交 `user.2fa.loginVerify` + 6 位动态码完成登录。
+- **动态码输入**：设置页「测试连接」与首屏加载都会弹电视数字键盘（遥控器选数字、确认输入、BACK 取消）。
+- **固定设备标识 `did`**：原来每次登录随机生成，勾了「信任此设备」也会在下次冷启动重新要验证码；
+  现在持久化到本机，信任状态才能生效。
+- **错误提示更准确**：验证码错误 / IP 被临时封禁 / 只能用邮箱验证 / 真的缺 token 分别给不同文案。
+- **输入浮层不再被抢焦点**：电视键盘改用 `Dialog` 独立窗口承载，遥控器按键不会跑到遮罩底下的页面。
+
+详见 [docs/releases/v1.2.1.md](docs/releases/v1.2.1.md)。
 
 ---
 
@@ -33,6 +49,7 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 新版设计对外介绍与配图：[论坛发布素材（完整稿、短文、固定链接配图）](docs/promotion/design-preview-20261105/README.md)。
 
+1.2.1 版发布说明：[docs/releases/v1.2.1.md](docs/releases/v1.2.1.md)。
 1.2.0 版发布说明：[docs/releases/v1.2.0.md](docs/releases/v1.2.0.md)。
 
 ## 0. 快速开始（TL;DR）

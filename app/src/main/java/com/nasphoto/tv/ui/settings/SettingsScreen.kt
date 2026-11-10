@@ -31,10 +31,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
@@ -61,6 +64,7 @@ import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
 import com.nasphoto.tv.ui.theme.TvType
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * ================= 设置页（settings-dev） =================
@@ -86,6 +90,9 @@ fun SettingsScreen(
     screensaverPhotos: List<MediaItem> = emptyList(),
 ) {
     val feedback = remember { SettingsFeedback() }
+    val scope = rememberCoroutineScope()
+    // 离开设置页时丢掉还没完成的两步验证会话（否则 WebSocket 会一直挂着）
+    DisposableEffect(Unit) { onDispose { feedback.release() } }
     val actions = remember(store) {
         SettingsActions(
             store = store,
@@ -202,7 +209,10 @@ fun SettingsScreen(
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 if (event.key == Key.Back || event.key == Key.Escape) {
-                    if (displayAlbumsOpen) {
+                    if (feedback.twoFactor != null) {
+                        // 两步验证浮层在最上层：BACK 只取消验证，不能顺手退出整个设置页
+                        feedback.cancelTwoFactor()
+                    } else if (displayAlbumsOpen) {
                         displayAlbumsOpen = false
                     } else if (textTarget != null) {
                         textTarget = null
@@ -354,6 +364,35 @@ fun SettingsScreen(
                     textTarget = null
                 },
             )
+        }
+
+        // ---------------- 两步验证：6 位动态码（复用电视数字键盘） ----------------
+        feedback.twoFactor?.let { challenge ->
+            // key = 错误信息：验证码错误后重建输入层，用户不用先删掉 6 位旧数字
+            key(feedback.twoFactorError) {
+                TextEntryOverlay(
+                    title = "两步验证",
+                    subtitle = buildString {
+                        if (challenge.totpBound) {
+                            append("该账号已开启两步验证，请输入验证器 App 中的 6 位动态码；验证成功后本机会被信任")
+                        } else {
+                            append("该账号需要邮箱验证码，请先在飞牛 App 中改用验证器后再连接")
+                        }
+                        if (feedback.twoFactorBusy) append(" · 正在验证…")
+                        feedback.twoFactorError?.let { append(" · $it") }
+                    },
+                    masked = false,
+                    initial = "",
+                    numericOnly = true,
+                    maxLength = 6,
+                    onCancel = { feedback.cancelTwoFactor() },
+                    onDone = { code ->
+                        if (!feedback.twoFactorBusy) {
+                            scope.launch { feedback.submitTwoFactor(store, code) }
+                        }
+                    },
+                )
+            }
         }
 
         // ---------------- 右下角 toast ----------------

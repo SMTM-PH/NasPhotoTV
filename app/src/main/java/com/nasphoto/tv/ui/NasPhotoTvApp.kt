@@ -13,9 +13,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -33,6 +35,8 @@ import com.nasphoto.tv.data.FnOsMediaRepository
 import com.nasphoto.tv.data.MediaCache
 import com.nasphoto.tv.data.SettingsStore
 import com.nasphoto.tv.data.fn.FnOsTransport
+import com.nasphoto.tv.data.fn.FnOsTwoFactorChallenge
+import com.nasphoto.tv.data.fn.FnOsTwoFactorRequired
 import com.nasphoto.tv.data.fn.LanNasDevice
 import com.nasphoto.tv.data.model.Album
 import com.nasphoto.tv.data.model.MediaItem
@@ -46,6 +50,7 @@ import com.nasphoto.tv.ui.common.NasImageLoader
 import com.nasphoto.tv.ui.common.ScreenIdleGuard
 import com.nasphoto.tv.ui.screensaver.ScreensaverScreen
 import com.nasphoto.tv.ui.settings.SettingsScreen
+import com.nasphoto.tv.ui.settings.TextEntryOverlay
 import com.nasphoto.tv.ui.theme.NasPhotoTvTheme
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.video.VideoPlayerScreen
@@ -57,6 +62,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 
 /**
  * ================= 应用外壳 =================
@@ -81,8 +87,13 @@ fun NasPhotoTvApp() {
         var lastInteractionMs by remember { mutableStateOf(System.currentTimeMillis()) }
         var screensaverVisible by remember { mutableStateOf(false) }
         var refreshToken by remember { mutableIntStateOf(0) }
+        val uiScope = rememberCoroutineScope()
         // Reset during composition, before effects run: the previous identity is never Ready for a new one.
         var loadState by remember(identityKey) { mutableStateOf<LibraryLoad>(LibraryLoad.Loading) }
+        // 账号开启两步验证时，首屏登录只走到「半程」，这里保存等待输入动态码的状态
+        var startupTwoFactor by remember(identityKey) {
+            mutableStateOf<StartupTwoFactor?>(null)
+        }
         // 看图/播放/设置都走 AnimatedContent 换内容，库页会被移出组合：
         // 用 SaveableStateHolder 保住 Tab、年/月层级和滚动位置，BACK 才能回到原处。
         val libraryStateHolder = rememberSaveableStateHolder()
@@ -207,6 +218,7 @@ fun NasPhotoTvApp() {
                     ownerIdentityKey = identityKey,
                 )
                 SettingsStore.updateNas { it.copy(connected = true) }
+                startupTwoFactor = null
                 loadState = LibraryLoad.Ready(
                     library = LibraryState(
                         recent = recent,
@@ -224,6 +236,11 @@ fun NasPhotoTvApp() {
                     ),
                     screensaverPhotos = optional.screensaverPhotos,
                 )
+            } catch (e: FnOsTwoFactorRequired) {
+                if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
+                // 密码已通过，只差动态码：WebSocket 由仓库里的 FnOsApi 继续持有
+                startupTwoFactor = StartupTwoFactor(challenge = e.challenge)
+                loadState = LibraryLoad.Loading
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
@@ -420,7 +437,8 @@ fun NasPhotoTvApp() {
                             screensaverPhotos = saverPhotos,
                         )
 
-                        else -> when (val state = loadState) {
+                        else -> Box(Modifier.fillMaxSize()) {
+                            when (val state = loadState) {
                             is LibraryLoad.Ready -> libraryStateHolder.SaveableStateProvider(identityKey) {
                                 LibraryScreen(
                                     state = state.library,
@@ -499,8 +517,63 @@ fun NasPhotoTvApp() {
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
+
+                        // 两步验证覆盖层：整页 Loading 之上弹数字键盘，不改路由
+                        startupTwoFactor?.let { prompt ->
+                            // key = 错误信息：验证码错误后重建输入层，用户不用先删掉 6 位旧数字
+                            key(prompt.error) {
+                                TextEntryOverlay(
+                                    title = "两步验证",
+                                    subtitle = buildString {
+                                        append("该账号已开启两步验证，请输入验证器 App 中的 6 位动态码")
+                                        append("；验证成功后本机会被信任")
+                                        if (prompt.busy) append(" · 正在验证…")
+                                        prompt.error?.let {
+                                            append(" · ")
+                                            append(it)
+                                        }
+                                    },
+                                    masked = false,
+                                    initial = "",
+                                    numericOnly = true,
+                                    maxLength = 6,
+                                    onCancel = {
+                                        startupTwoFactor = null
+                                        repository?.cancelTwoFactor()
+                                        loadState = LibraryLoad.Error("已取消两步验证，可以重新连接")
+                                    },
+                                    onDone = { code ->
+                                        val repo = repository
+                                        if (repo != null && !prompt.busy) {
+                                            startupTwoFactor = StartupTwoFactor(prompt.challenge, busy = true)
+                                            uiScope.launch {
+                                                try {
+                                                    repo.verifyTwoFactor(code)
+                                                    startupTwoFactor = null
+                                                    refreshToken += 1
+                                                } catch (e: Exception) {
+                                                    if (repo.hasPendingTwoFactor()) {
+                                                        startupTwoFactor = startupTwoFactor?.copy(
+                                                            busy = false,
+                                                            error = e.message ?: "验证失败",
+                                                        )
+                                                    } else {
+                                                        // 半登录会话已失效：收起输入层，回到可重试的错误页
+                                                        startupTwoFactor = null
+                                                        loadState = LibraryLoad.Error(
+                                                            e.message ?: "两步验证失败，请重新连接",
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
+            }
 
                 // 屏保是覆盖层而非替换：下层页面保持组合，退出后焦点与滚动位置原样回来
                 if (screensaverVisible) {
@@ -533,6 +606,13 @@ private data class OptionalLibraryData(
     val smartAlbums: List<Album>,
     val stats: com.nasphoto.tv.data.fn.FnOsStats?,
     val approvedMedia: Map<String, List<MediaItem>>,
+)
+
+/** 首屏两步验证提示：challenge 决定文案，busy/error 跟随验证请求更新 */
+private data class StartupTwoFactor(
+    val challenge: FnOsTwoFactorChallenge,
+    val busy: Boolean = false,
+    val error: String? = null,
 )
 
 /** 媒体库的加载状态：所有内容都来自 NAS，没有就绪数据时显示对应引导页 */

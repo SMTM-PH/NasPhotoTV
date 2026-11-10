@@ -8,6 +8,7 @@ import com.nasphoto.tv.data.SettingsStore
 import com.nasphoto.tv.data.model.NasAccount
 import com.nasphoto.tv.data.model.ScreensaverSettings
 import com.nasphoto.tv.data.fn.FnOsApi
+import com.nasphoto.tv.data.fn.FnOsTwoFactorChallenge
 import com.nasphoto.tv.data.fn.toFnOsAccess
 
 /**
@@ -265,6 +266,18 @@ class SettingsFeedback {
     var nasTestError by mutableStateOf<String?>(null)
         private set
 
+    /** 非 null = 账号开启了两步验证，等待用户输入 6 位动态码 */
+    var twoFactor by mutableStateOf<FnOsTwoFactorChallenge?>(null)
+        private set
+    var twoFactorBusy by mutableStateOf(false)
+        private set
+    var twoFactorError by mutableStateOf<String?>(null)
+        private set
+
+    /** 两步验证期间必须保留同一个 FnOsApi：临时凭证只对那条 WebSocket 有效 */
+    private var twoFactorApi: FnOsApi? = null
+    private var testStartedNs = 0L
+
     var resetArmed by mutableStateOf(false)
         private set
 
@@ -283,6 +296,13 @@ class SettingsFeedback {
     /** 地址/账号/密码改动后旧的探测结果失效 */
     fun invalidateNasTest() {
         if (nasTesting) return
+        // 改了账号/密码，等着的动态码就对应旧凭据了，直接丢弃这次半登录会话
+        if (twoFactor != null) {
+            twoFactorApi?.close()
+            twoFactorApi = null
+            twoFactor = null
+            twoFactorError = null
+        }
         nasTestOk = null
         nasTestLatency = null
         nasTestDetail = null
@@ -300,26 +320,97 @@ class SettingsFeedback {
         try {
             val nas = store.nas
             val api = FnOsApi(nas.toFnOsAccess())
-            val result = try {
-                api.testConnection()
-            } finally {
-                api.close()
-            }
-            nasTestOk = result.ok
-            if (result.ok) {
-                nasTestLatency = result.latencyMs
-                nasTestDetail = buildString {
-                    append("登录成功")
-                    result.stats?.let { append(" · ${it.photoCount} 张照片 / ${it.videoCount} 个视频") }
+            var keepForTwoFactor = false
+            try {
+                testStartedNs = System.nanoTime()
+                val result = api.testConnection()
+                val challenge = result.twoFactor
+                if (challenge != null) {
+                    // 不是失败：同一会话等用户输入动态码，验证通过后再 stat
+                    keepForTwoFactor = true
+                    twoFactorApi?.close()
+                    twoFactorApi = api
+                    twoFactor = challenge
+                    twoFactorError = null
+                } else {
+                    nasTestOk = result.ok
+                    if (result.ok) {
+                        nasTestLatency = result.latencyMs
+                        nasTestDetail = buildString {
+                            append("登录成功")
+                            result.stats?.let { append(" · ${it.photoCount} 张照片 / ${it.videoCount} 个视频") }
+                        }
+                        store.reportNasResult(result.latencyMs)
+                    } else {
+                        nasTestError = result.error ?: "连接失败"
+                        store.reportNasResult(null)
+                    }
                 }
-                store.reportNasResult(result.latencyMs)
-            } else {
-                nasTestError = result.error ?: "连接失败"
-                store.reportNasResult(null)
+            } finally {
+                if (!keepForTwoFactor) api.close()
             }
         } finally {
             nasTesting = false
         }
+    }
+
+    /** 提交两步验证动态码；成功后才算「测试通过」 */
+    suspend fun submitTwoFactor(store: SettingsStore, code: String) {
+        val api = twoFactorApi ?: return
+        if (twoFactorBusy) return
+        twoFactorBusy = true
+        twoFactorError = null
+        try {
+            api.verifyTwoFactor(code)
+            val stats = api.stat()
+            val latency = ((System.nanoTime() - testStartedNs) / 1_000_000L)
+                .coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+            nasTestOk = true
+            nasTestLatency = latency
+            nasTestDetail = buildString {
+                append("两步验证通过 · 登录成功")
+                append(" · ${stats.photoCount} 张照片 / ${stats.videoCount} 个视频")
+            }
+            twoFactor = null
+            twoFactorApi = null
+            api.close()
+            store.reportNasResult(latency)
+        } catch (e: Exception) {
+            // 验证码错误时保留会话，用户可以直接改输一次；
+            // 会话本身已经没了（超时/连接断开）就收起输入层，避免一直让用户白输
+            if (api.hasPendingTwoFactor()) {
+                twoFactorError = e.message ?: "验证失败"
+            } else {
+                twoFactorApi = null
+                twoFactor = null
+                twoFactorError = null
+                nasTestError = e.message ?: "两步验证失败，请重新测试连接"
+                runCatching { api.close() }
+            }
+        } finally {
+            twoFactorBusy = false
+        }
+    }
+
+    /** 设置页销毁时收尾：半登录会话不能留着，否则 WebSocket 会一直挂在 NAS 上 */
+    fun release() {
+        twoFactorApi?.close()
+        twoFactorApi = null
+        twoFactor = null
+        twoFactorBusy = false
+    }
+
+    /** 取消两步验证：关掉半登录会话，避免 WebSocket 一直挂着 */
+    fun cancelTwoFactor() {
+        twoFactorApi?.close()
+        twoFactorApi = null
+        twoFactor = null
+        twoFactorError = null
+        nasTestOk = null
+        nasTestLatency = null
+        nasTestDetail = null
+        nasTestError = null
+        toast = "已取消两步验证"
     }
 
     fun armReset() {
@@ -342,6 +433,7 @@ class SettingsFeedback {
 /** 「测试连接」的结果文案（左栏胶囊） */
 fun nasResultText(feedback: SettingsFeedback): String? = when {
     feedback.nasTesting -> "正在测试连接…"
+    feedback.twoFactor != null -> "需要两步验证"
     feedback.nasTestOk == true -> "连接正常 · ${feedback.nasTestLatency ?: 0}ms"
     feedback.nasTestOk == false -> "连接失败"
     else -> null

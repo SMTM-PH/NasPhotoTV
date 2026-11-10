@@ -42,6 +42,17 @@ class FnOsMediaRepository(
 
     suspend fun probe(): FnOsProbeResult = api.testConnection()
 
+    /**
+     * 账号开启两步验证时，密码登录只算「半程」：调用这里提交 6 位动态码，
+     * 同一个 [FnOsApi] 会话（含未关闭的 WebSocket）随即转为已登录。
+     */
+    suspend fun verifyTwoFactor(code: String) = api.verifyTwoFactor(code)
+
+    fun hasPendingTwoFactor(): Boolean = api.hasPendingTwoFactor()
+
+    /** 放弃两步验证（用户按 BACK）：下次加载会重新走密码登录 */
+    fun cancelTwoFactor() = api.cancelTwoFactor()
+
     override suspend fun ping(): Boolean = probe().ok
 
     suspend fun stats(): FnOsStats = api.stat()

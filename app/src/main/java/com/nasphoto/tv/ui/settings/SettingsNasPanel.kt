@@ -69,6 +69,7 @@ fun SettingsNasPanel(store: SettingsStore, feedback: SettingsFeedback, modifier:
 
     val lineColor = when {
         failed -> TvColor.Danger
+        feedback.twoFactor != null -> TvColor.Warn
         testing -> TvColor.Warn
         feedback.nasTestOk == true -> TvColor.Accent
         else -> TvColor.TextTertiary
@@ -90,6 +91,15 @@ fun SettingsNasPanel(store: SettingsStore, feedback: SettingsFeedback, modifier:
                 text = "测试通过：$detail",
                 fontSize = TvType.Tiny,
                 color = TvColor.Accent.copy(alpha = 0.92f),
+                maxLines = 2,
+            )
+        }
+        feedback.twoFactor?.let {
+            Spacer(Modifier.height(TvDimen.SpaceXs))
+            Text(
+                text = "密码已验证 · 请输入验证器 App 中的 6 位动态码完成登录",
+                fontSize = TvType.Tiny,
+                color = TvColor.Warn.copy(alpha = 0.92f),
                 maxLines = 2,
             )
         }
@@ -128,6 +138,7 @@ fun SettingsNasPanel(store: SettingsStore, feedback: SettingsFeedback, modifier:
                             leftLabel = "局域网",
                             rightLabel = when {
                                 testing -> "探测中…"
+                                feedback.twoFactor != null -> "待验证"
                                 failed -> "未连接"
                                 feedback.nasTestOk == true -> "已连接"
                                 else -> "未测试"
@@ -160,6 +171,7 @@ fun SettingsNasPanel(store: SettingsStore, feedback: SettingsFeedback, modifier:
                         "状态",
                         when {
                             testing -> "探测中…"
+                            feedback.twoFactor != null -> "待两步验证"
                             failed -> "连接失败"
                             feedback.nasTestOk == true -> "已连接"
                             else -> if (nas.isConfigured) "待测试" else "未配置"
