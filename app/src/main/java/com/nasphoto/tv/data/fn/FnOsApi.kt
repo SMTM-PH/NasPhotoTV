@@ -79,7 +79,12 @@ fun NasConnection.toFnOsAccess(): FnOsAccess = FnOsAccess(
     accessCode = accessCode.trim(),
 )
 
-internal class FnOsException(message: String, cause: Throwable? = null) : Exception(message, cause)
+internal class FnOsException(
+    message: String,
+    cause: Throwable? = null,
+    /** 非 null = 这是网关层（nginx）返回的 HTTP 错误，不是业务 JSON 里的 code */
+    val httpStatus: Int? = null,
+) : Exception(message, cause)
 
 /**
  * 飞牛相册 API 会话：
@@ -159,8 +164,20 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
             var current = ensureSession(force = false)
             var authRetried = false
             var signRetried = false
+            var accessCodeRetried = false
             while (true) {
-                val result = execute(current, path, params, body)
+                val result = try {
+                    execute(current, path, params, body)
+                } catch (e: FnOsException) {
+                    // 访问码 cookie 过期：网关直接回 HTTP 401，此时还没有走到业务 JSON，
+                    // 上面按 code 判定的重登分支永远看不到它。重新校验访问码后再试一次。
+                    val expired = e.httpStatus == 401 && access.accessCode.isNotBlank()
+                    if (!expired || accessCodeRetried) throw e
+                    accessCodeRetried = true
+                    withContext(Dispatchers.IO) { verifyAccessCode() }
+                    current = ensureSession(force = true)
+                    continue
+                }
                 when {
                     result.code == 401 || result.code == 5001 -> {
                         if (authRetried) throw FnOsException("AccessToken 已失效，请重新登录")
@@ -223,7 +240,13 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
         }
         FnOsTransport.client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw FnOsException("NAS 返回 HTTP ${response.code}")
+            if (!response.isSuccessful) {
+                throw FnOsException(
+                    if (response.code == 401) "访问码已失效或未通过校验（HTTP 401）"
+                    else "NAS 返回 HTTP ${response.code}",
+                    httpStatus = response.code,
+                )
+            }
             val json = runCatching { JSONObject(body) }
                 .getOrElse { throw FnOsException("NAS 返回的不是 JSON") }
             val code = if (json.has("code")) json.optInt("code") else json.optInt("errno", -1)
@@ -481,7 +504,12 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
             .build()
         FnOsTransport.client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw FnOsException("访问码校验失败（HTTP ${response.code}）")
+                // 401 = 访问码本身不对（或已被管理员改掉），其余状态码是网关/网络问题
+                throw FnOsException(
+                    if (response.code == 401) "访问码不正确，请在设置里重新填写"
+                    else "访问码校验失败（HTTP ${response.code}）",
+                    httpStatus = response.code,
+                )
             }
         }
     }

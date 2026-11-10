@@ -22,6 +22,9 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
   现在持久化到本机，信任状态才能生效。
 - **错误提示更准确**：验证码错误 / IP 被临时封禁 / 只能用邮箱验证 / 真的缺 token 分别给不同文案。
 - **输入浮层不再被抢焦点**：电视键盘改用 `Dialog` 独立窗口承载，遥控器按键不会跑到遮罩底下的页面。
+- **访问码网关修复**：开启访问码的 NAS 会下发 `os-access-code` cookie，它是后续所有请求（含 WebSocket 握手）
+  的前提。原来 cookie 表按 host 整桶替换，任何一次响应带别的 `Set-Cookie` 就会把它挤掉，
+  表现为媒体库突然全部 401。现在按名合并，并在 401 时自动重新校验访问码。
 
 详见 [docs/releases/v1.2.1.md](docs/releases/v1.2.1.md)。
 

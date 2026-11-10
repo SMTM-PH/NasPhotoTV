@@ -74,12 +74,42 @@ object FnOsTransport {
     private const val USER_AGENT = "NASPhotoTV/1.0 (Android TV)"
 }
 
+/**
+ * 进程内 cookie 表，按 host 分桶、按 cookie 名合并。
+ *
+ * 为什么不能整桶替换：开启「访问码」的 NAS 会在 `/access_code_verify` 下发
+ * `os-access-code`（HttpOnly，网关级凭证）。它只在那一次响应里出现，之后的
+ * 每个请求都靠它才被放行。如果后续任何一次响应带了别的 Set-Cookie 就把整张表
+ * 覆盖掉，访问码凭证会静默丢失 —— 表现是媒体库突然全部 401，重启才好。
+ * 所以这里按名字合并，只让同名 cookie 被更新。
+ */
 internal class InMemoryCookieJar : CookieJar {
-    private val byHost = ConcurrentHashMap<String, List<Cookie>>()
+    private val byHost = ConcurrentHashMap<String, Map<String, Cookie>>()
 
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-        byHost[url.host] = cookies
+        if (cookies.isEmpty()) return
+        byHost.compute(url.host) { _, existing ->
+            val merged = LinkedHashMap(existing.orEmpty())
+            cookies.forEach { merged[it.name] = it }
+            merged
+        }
     }
 
-    override fun loadForRequest(url: HttpUrl): List<Cookie> = byHost[url.host].orEmpty()
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        val now = System.currentTimeMillis()
+        val stored = byHost[url.host]?.values?.toList().orEmpty()
+        val usable = stored.filter { it.expiresAt > now && it.matches(url) }
+        // 过期项顺手清掉：电视常年不关机，别让死 cookie 一直堆在表里
+        if (usable.size != stored.size) {
+            byHost.computeIfPresent(url.host) { _, existing ->
+                existing.filterValues { it.expiresAt > now }
+            }
+        }
+        return usable
+    }
+
+    /** 仅供测试：清空 */
+    internal fun clearForTest() {
+        byHost.clear()
+    }
 }
