@@ -85,6 +85,15 @@ fun MediaItem.isPanoramaPhoto(): Boolean {
 
 enum class AlbumType { FOLDER, SMART_PEOPLE, SMART_PLACE, MEMORY, FAVORITES, SMART_CATEGORY }
 
+/** 飞牛「文件夹视图」里的一个扫描目录（photo/folder/view 的 myFile 节点）。 */
+data class NasFolder(
+    val id: String,
+    val path: String,
+    val name: String,
+    val photoCount: Int = 0,
+    val videoCount: Int = 0,
+)
+
 /**
  * ================= NAS 上的一个飞牛登录账号 =================
  *
@@ -283,6 +292,10 @@ data class ScreensaverSettings(
     val nightDim: Boolean = true,
     /** Ken Burns 缓慢推拉动画 */
     val kenBurns: Boolean = true,
+    /** 幻灯片 / 屏保播放时循环播放手机上传的背景音乐 */
+    val musicEnabled: Boolean = true,
+    /** 背景音乐音量 0f..1f */
+    val musicVolume: Float = 0.7f,
     /** 客厅展示授权属于明确的飞牛账号；空值或换账号时不授权任何相册。 */
     val displayOwnerAccountId: String = "",
     /** 仅这些相册可用于首页回忆与自动屏保，不能从旧轮播来源推断授权。 */

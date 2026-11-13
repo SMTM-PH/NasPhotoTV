@@ -139,16 +139,21 @@ fun SettingsScreen(
         }
     }
 
-    // 初始焦点：等首帧布局完成
+    // 初始焦点：首帧后重试直到成功。
+    // 之前只 delay(120) 后试一次，若那一帧行还没挂上布局树就会静默失败，
+    // 表现为「设置界面已经显示，但遥控器方向键没反应」。逐帧重试把这个竞态消除。
     LaunchedEffect(Unit) {
-        delay(120)
-        runCatching { requesterFor(initialKey).requestFocus() }
+        repeat(20) {
+            if (runCatching { requesterFor(initialKey).requestFocus() }.isSuccess) return@LaunchedEffect
+            delay(50)
+        }
     }
 
     // 动作队列：串行执行（测试连接会挂起），不会叠跑
     LaunchedEffect(Unit) {
         for (key in actionQueue) {
             when (key) {
+                SettingsKey.SS_MUSIC -> feedback.musicPanel = true
                 SettingsKey.NAS_TEST -> feedback.runNasTest(store)
                 SettingsKey.NAS_REFRESH -> {
                     // 回媒体库会触发外壳重新拉取时间线与相册
@@ -209,7 +214,9 @@ fun SettingsScreen(
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 if (event.key == Key.Back || event.key == Key.Escape) {
-                    if (feedback.twoFactor != null) {
+                    if (feedback.musicPanel) {
+                        feedback.musicPanel = false
+                    } else if (feedback.twoFactor != null) {
                         // 两步验证浮层在最上层：BACK 只取消验证，不能顺手退出整个设置页
                         feedback.cancelTwoFactor()
                     } else if (displayAlbumsOpen) {
@@ -364,6 +371,11 @@ fun SettingsScreen(
                     textTarget = null
                 },
             )
+        }
+
+        // ---------------- 背景音乐（手机上传） ----------------
+        if (feedback.musicPanel) {
+            MusicOverlay(store = store, feedback = feedback, onClose = { feedback.musicPanel = false })
         }
 
         // ---------------- 两步验证：6 位动态码（复用电视数字键盘） ----------------
@@ -536,7 +548,7 @@ private fun performConfirm(
     onEditText: (SettingsKey) -> Unit,
 ) {
     when (key) {
-        SettingsKey.NAS_TEST, SettingsKey.NAS_REFRESH -> onQueue(key)
+        SettingsKey.NAS_TEST, SettingsKey.NAS_REFRESH, SettingsKey.SS_MUSIC -> onQueue(key)
         SettingsKey.NAS_DEVICE,
         SettingsKey.NAS_HOST,
         SettingsKey.NAS_PORT,

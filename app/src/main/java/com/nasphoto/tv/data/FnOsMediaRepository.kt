@@ -9,6 +9,7 @@ import com.nasphoto.tv.data.model.AlbumType
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.data.model.NasConnection
+import com.nasphoto.tv.data.model.NasFolder
 import com.nasphoto.tv.data.model.Person
 import com.nasphoto.tv.data.model.RAW_EXTENSIONS
 import kotlinx.coroutines.async
@@ -58,17 +59,31 @@ class FnOsMediaRepository(
     suspend fun stats(): FnOsStats = api.stat()
 
     override suspend fun getRecent(limit: Int): List<MediaItem> {
-        val data = api.getJson(
-            path = GALLERY_LIST,
-            params = listOf(
-                "start_time" to "1970:01:01 00:00:00",
-                "end_time" to "2099:12:31 23:59:59",
-                "limit" to limit.toString(),
-                "offset" to "0",
-                "mode" to "index",
-            ),
-        )
-        return parseMediaList(data).also { recentCache = it }
+        // 飞牛服务端单页最多 500 条：以前一次性传 limit=20000，只拿回最新 500 张，
+        // 于是「图库」只显示最近几年。这里按 offset 逐页拉全（实测全库 5294 张，11 页）。
+        val out = ArrayList<MediaItem>(minOf(limit, 8_000))
+        var offset = 0
+        while (out.size < limit && offset < MAX_GALLERY_ITEMS) {
+            val data = api.getJson(
+                path = GALLERY_LIST,
+                params = listOf(
+                    "start_time" to "1970:01:01 00:00:00",
+                    "end_time" to "2099:12:31 23:59:59",
+                    "limit" to GALLERY_PAGE_SIZE.toString(),
+                    "offset" to offset.toString(),
+                    "mode" to "index",
+                ),
+            )
+            val page = parseMediaList(data)
+            if (page.isEmpty()) break
+            out += page
+            offset += page.size
+            val hasNext = data.optBoolean("hasNext", page.size >= GALLERY_PAGE_SIZE)
+            if (!hasNext || page.size < GALLERY_PAGE_SIZE) break
+        }
+        val result = out.take(limit)
+        recentCache = result
+        return result
     }
 
     override suspend fun getAlbums(): List<Album> {
@@ -236,29 +251,13 @@ class FnOsMediaRepository(
     }
 
     /**
-     * 某个人的照片：先拿他/她的时间线（按天聚合），再逐日拉取。
-     *
-     * 性能约束（实机踩过）：这里是**串行**请求，每天一次。早先写死「60 天 × 每天 200 张」，
-     * 结果一个只有 16 张照片的人也要发满 60 次请求——电视端要等十几秒，模拟器直接 OOM。
-     * 现在改成：逐日拉取，凑够 [limit] 就停；再留一个 30 天的硬上限兜底，
-     * 保证「照片少的人很快返回、照片多的人拿到足够填满网格的量」。
-     */
-    override suspend fun getPersonPhotos(personId: String, limit: Int): List<MediaItem> {
-        val all = fetchPersonPhotos(personId, maxDays = 30, perDay = 200, stopAt = limit)
-        return all.sortedByDescending { it.dateTaken }.take(limit)
-    }
-
-    /**
-     * 逐日拉取某个人的照片。
-     *
-     * @param maxDays 最多看时间线里的前 N 天（时间线是倒序的，从最近一天开始）
-     * @param perDay  每天最多取多少张
+     * 轻量版：只取时间线前 [maxDays] 天、每天最多 [perDay] 张，用于人物卡片封面聚合。
+     * 详情页请用 [getPersonPhotos]（它会遍历完整时间线并翻页）。
      */
     private suspend fun fetchPersonPhotos(
         personId: String,
         maxDays: Int,
         perDay: Int,
-        /** 收满这么多就提前结束（<=0 表示不设限）；人物 Tab 拉多人口径时传大值 */
         stopAt: Int = 0,
     ): List<MediaItem> {
         val timeline = runCatching {
@@ -269,11 +268,10 @@ class FnOsMediaRepository(
         for (i in 0 until minOf(days.length(), maxDays)) {
             if (stopAt > 0 && out.size >= stopAt) break
             val day = days.optJSONObject(i) ?: continue
-            val year = day.optInt("year", 0)
-            val month = day.optInt("month", 0)
-            val date = day.optInt("day", 0)
-            if (year <= 0 || month <= 0 || date <= 0) continue
-            val ymd = "%04d:%02d:%02d".format(year, month, date)
+            val ymd = "%04d:%02d:%02d".format(
+                day.optInt("year", 0), day.optInt("month", 0), day.optInt("day", 0),
+            )
+            if (ymd.startsWith("0000")) continue
             val photos = runCatching {
                 api.getJson(
                     path = PERSON_PHOTOS,
@@ -292,6 +290,115 @@ class FnOsMediaRepository(
             out += parseMediaList(photos).filter { it.type == MediaType.PHOTO }
         }
         return out
+    }
+
+    /**
+     * 某个人的照片：先拿他/她的时间线（按天聚合），再逐日拉取。
+     *
+     * 性能约束（实机踩过）：这里是**串行**请求，每天一次。早先写死「60 天 × 每天 200 张」，
+     * 结果一个只有 16 张照片的人也要发满 60 次请求——电视端要等十几秒，模拟器直接 OOM。
+     * 现在改成：逐日拉取，凑够 [limit] 就停；再留一个 30 天的硬上限兜底，
+     * 保证「照片少的人很快返回、照片多的人拿到足够填满网格的量」。
+     */
+    override suspend fun getPersonPhotos(personId: String, limit: Int): List<MediaItem> {
+        // 旧实现只看时间线前 30 天、每天最多 200 张，所以几千张的人物只显示出一两百张。
+        // 现在遍历完整时间线，并在单日内按 offset 继续翻页，直到该天取完或达到上限。
+        val timeline = runCatching {
+            api.getJson(PERSON_TIMELINE, listOf("id" to personId))
+        }.getOrNull() ?: return emptyList()
+        val days = timeline.optJSONArray("list") ?: return emptyList()
+        val out = ArrayList<MediaItem>()
+        for (i in 0 until days.length()) {
+            if (out.size >= limit) break
+            val day = days.optJSONObject(i) ?: continue
+            val year = day.optInt("year", 0)
+            val month = day.optInt("month", 0)
+            val date = day.optInt("day", 0)
+            if (year <= 0 || month <= 0 || date <= 0) continue
+            // 服务端只接受冒号格式（"2026:10:24 00:00:00"）；用短横线会报 invalid params。
+            val ymd = "%04d:%02d:%02d".format(year, month, date)
+            val dayCount = day.optInt("itemCount", 0)
+            var offset = 0
+            var gotInDay = 0
+            while (out.size < limit && (dayCount <= 0 || gotInDay < dayCount)) {
+                val photos = runCatching {
+                    api.getJson(
+                        path = PERSON_PHOTOS,
+                        params = listOf(
+                            "album_id" to personId,
+                            "endTime" to "$ymd 23:59:59",
+                            "end_time" to "$ymd 23:59:59",
+                            "limit" to PERSON_PAGE_SIZE.toString(),
+                            "offset" to offset.toString(),
+                            "personId" to personId,
+                            "startTime" to "$ymd 00:00:00",
+                            "start_time" to "$ymd 00:00:00",
+                        ),
+                    )
+                }.getOrNull() ?: break
+                val page = parseMediaList(photos).filter { it.type == MediaType.PHOTO }
+                if (page.isEmpty()) break
+                out += page
+                offset += page.size
+                gotInDay += page.size
+                if (page.size < PERSON_PAGE_SIZE) break
+            }
+        }
+        return out.sortedByDescending { it.dateTaken }
+    }
+
+    // ------------------------------------------------------------------ 文件夹视图
+
+    @Volatile
+    private var folderCache: List<NasFolder> = emptyList()
+
+    override suspend fun getFolders(): List<NasFolder> {
+        // photo/folder/list 带真实的 photoCount/videoCount（folder/view 里这两个字段恒为 0），
+        // 卡片上的「N 项」需要它；失败再退回 folder/view 只取目录结构。
+        val arr = runCatching {
+            api.getJson(FOLDER_LIST, emptyList()).optJSONArray("list")
+        }.getOrNull() ?: runCatching {
+            api.getJson(FOLDER_VIEW, emptyList()).optJSONArray("myFile")
+        }.getOrNull() ?: return emptyList()
+        val list = (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val path = o.optString("folderPath")
+            NasFolder(
+                id = o.optString("folderId"),
+                path = path,
+                name = path.trimEnd('/').substringAfterLast('/').ifBlank { path },
+                photoCount = o.optInt("photoCount", 0),
+                videoCount = o.optInt("videoCount", 0),
+            )
+        }
+        folderCache = list
+        return list
+    }
+
+    override suspend fun getFolderMedia(folderId: String, limit: Int): List<MediaItem> {
+        val path = folderCache.firstOrNull { it.id == folderId }?.path
+            ?: getFolders().firstOrNull { it.id == folderId }?.path
+            ?: return emptyList()
+        val out = ArrayList<MediaItem>()
+        var offset = 0
+        while (out.size < limit) {
+            val data = api.getJson(
+                FOLDER_FILES,
+                listOf(
+                    "folderId" to folderId,
+                    "folderPath" to path,
+                    "offset" to offset.toString(),
+                    "limit" to FOLDER_PAGE_SIZE.toString(),
+                ),
+            )
+            val page = parseMediaList(data)
+            if (page.isEmpty()) break
+            out += page
+            offset += page.size
+            val hasNext = data.optBoolean("hasNext", page.size >= FOLDER_PAGE_SIZE)
+            if (!hasNext || page.size < FOLDER_PAGE_SIZE) break
+        }
+        return out.sortedByDescending { it.dateTaken }
     }
 
     override suspend fun getMediaItem(id: String): MediaItem? =
@@ -402,6 +509,14 @@ class FnOsMediaRepository(
 
         /** 单个相册的分页兜底上限，防止服务端异常（如 total 缺失且永不返回空页）时无限拉取。 */
         const val MAX_ALBUM_ITEMS = 20_000
+
+        const val GALLERY_PAGE_SIZE = 500
+        const val MAX_GALLERY_ITEMS = 50_000
+        const val PERSON_PAGE_SIZE = 200
+        const val FOLDER_PAGE_SIZE = 200
+        const val FOLDER_LIST = "/p/api/v1/photo/folder/list"
+        const val FOLDER_VIEW = "/p/api/v1/photo/folder/view"
+        const val FOLDER_FILES = "/p/api/v1/folder_view/getFileList"
 
         const val GALLERY_LIST = "/p/api/v1/gallery/getList"
         const val ALBUM_LIST = "/p/api/v1/album/list"

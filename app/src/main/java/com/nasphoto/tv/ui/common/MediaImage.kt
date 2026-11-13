@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import coil.ImageLoader
 import coil.annotation.ExperimentalCoilApi
@@ -134,10 +135,20 @@ fun MediaImage(
     }
 
     val context = LocalContext.current
+    // targetWidth 是按 1080p（density 2）调的像素值。4K 面板上密度会到 4，
+    // 同样的卡片物理像素翻倍，还用原值就会发虚。这里只对「缩略图」按密度等比放大，
+    // 封顶 1920 防止低内存电视解码过大位图；本来就是全屏/全景的大图（>=1920）保持原值，
+    // 避免把 4096 的全景图反而压小。
+    val density = LocalDensity.current.density
+    val effectiveWidth = if (targetWidth >= 1920) {
+        targetWidth
+    } else {
+        (targetWidth * (density / 2f)).toInt().coerceIn(targetWidth, 1920)
+    }
     SubcomposeAsyncImage(
         model = ImageRequest.Builder(context)
             .data(url)
-            .size(targetWidth)
+            .size(effectiveWidth)
             .crossfade(true)
             .build(),
         imageLoader = NasImageLoader.get(context),

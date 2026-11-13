@@ -242,6 +242,16 @@ fun rowValueText(key: SettingsKey, store: SettingsStore, feedback: SettingsFeedb
         SettingsKey.SS_INTERVAL -> SettingsStore.formatInterval(s.photoIntervalSec)
         SettingsKey.SS_CLOCK -> s.clockStyle.label
         SettingsKey.SS_BACKGROUND -> s.background.label
+        SettingsKey.SS_MUSIC -> {
+            val st = SettingsStore.screensaver
+            if (!st.musicEnabled) "已关闭"
+            else {
+                val ctx = com.nasphoto.tv.data.AppContextHolder.context
+                val latest = ctx?.let { com.nasphoto.tv.data.SlideshowMusic.latest(it) }
+                latest?.name?.ifBlank { null } ?: "未上传"
+            }
+        }
+
         SettingsKey.SS_DATE,
         SettingsKey.SS_NIGHT_DIM,
         SettingsKey.SS_KEN_BURNS,
@@ -283,6 +293,7 @@ fun isActionRow(key: SettingsKey): Boolean = key in ACTION_KEYS
 
 private val ACTION_KEYS = setOf(
     SettingsKey.SS_DISPLAY_ALBUMS,
+    SettingsKey.SS_MUSIC,
     SettingsKey.NAS_TEST,
     SettingsKey.NAS_REFRESH,
     SettingsKey.SS_PREVIEW,

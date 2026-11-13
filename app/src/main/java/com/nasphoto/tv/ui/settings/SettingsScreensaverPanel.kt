@@ -1,11 +1,6 @@
 package com.nasphoto.tv.ui.settings
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -33,7 +28,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,12 +81,11 @@ fun SettingsScreensaverPanel(
     val photo = if (store.displayAlbumIds.isEmpty()) null else screensaverPhotos.firstOrNull()
     val displayAlbums = currentDisplayAlbums(store).filter { it.id in store.displayAlbumIds }
     val now = remember { LocalDateTime.now() }
-    val kenBurnsScale by rememberInfiniteTransition(label = "kb").animateFloat(
-        initialValue = 1.0f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "kbScale",
-    )
+    // 预览是「静态快照」，不做每帧动画。
+    // 原因：设置页默认就停在这一组，之前的 rememberInfiniteTransition(Ken Burns) +
+    // 极光动画会让画面 60fps 持续重绘，弱 GPU 的电视/4K 面板上 CPU/GPU 被打满，
+    // 于是「进入设置后要等一会儿方向键才有反应」。真机实测这是设置页卡顿的主因。
+    val kenBurnsScale = KEN_BURNS_PREVIEW_SCALE
 
     // 预览很高：聚焦到「时钟样式 / 背景」时把选择条滚进视野（最小滚动，尽量保留预览）
     val panelScroll = rememberScrollState()
@@ -619,12 +612,8 @@ private fun MiniMonth(year: Int, month: Int, today: Int, modifier: Modifier = Mo
 /** 极光背景：几条缓慢漂移的渐变光带 */
 @Composable
 private fun AuroraPreview(modifier: Modifier = Modifier) {
-    val t by rememberInfiniteTransition(label = "aurora").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Restart),
-        label = "auroraPhase",
-    )
+    // 静态极光：预览不需要每帧漂移，避免设置页持续重绘
+    val t = 0.5f
     Box(
         modifier
             .background(
@@ -769,3 +758,6 @@ private fun two(n: Int): String = if (n < 10) "0$n" else n.toString()
 
 private fun weekdayCn(now: LocalDateTime): String =
     listOf("一", "二", "三", "四", "五", "六", "日")[now.dayOfWeek.value - 1]
+
+/** 屏保预览里 Ken Burns 的固定缩放（只做静态构图，不做动画） */
+private const val KEN_BURNS_PREVIEW_SCALE = 1.05f

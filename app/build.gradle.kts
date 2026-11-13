@@ -11,10 +11,10 @@ android {
 
     defaultConfig {
         applicationId = "com.nasphoto.tv"
-        minSdk = 26
+        minSdk = 24
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.2.1"
+        versionCode = 9
+        versionName = "1.2.3"
     }
 
     buildTypes {
@@ -26,6 +26,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // 支持 Android 7.x（API 24/25）：java.time 等 API 26 才有的类通过脱糖提供
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -66,6 +68,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     // 动图（GIF / 动态 WebP / HEIF 序列）解码
     implementation("io.coil-kt:coil-gif:2.7.0")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     debugImplementation("androidx.compose.ui:ui-tooling")

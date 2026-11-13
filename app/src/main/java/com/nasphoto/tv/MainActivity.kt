@@ -12,6 +12,7 @@ import com.nasphoto.tv.data.FavoritesStore
 import com.nasphoto.tv.data.SettingsStore
 import com.nasphoto.tv.data.AppContextHolder
 import com.nasphoto.tv.ui.NasPhotoTvApp
+import com.nasphoto.tv.ui.theme.ProvideTvDesignDensity
 
 /**
  * 电视端单 Activity。
@@ -37,7 +38,10 @@ class MainActivity : ComponentActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         setContent {
-            NasPhotoTvApp()
+            // 统一到 960x540dp 设计画布：修掉 4K/高密度电视上「图标巨大、信息密度低」
+            ProvideTvDesignDensity {
+                NasPhotoTvApp()
+            }
         }
     }
 

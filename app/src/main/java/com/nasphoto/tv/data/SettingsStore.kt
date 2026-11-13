@@ -316,6 +316,8 @@ object SettingsStore {
         e.putBoolean("ss_date", screensaver.showDate)
         e.putBoolean("ss_dim", screensaver.nightDim)
         e.putBoolean("ss_kenburns", screensaver.kenBurns)
+        e.putBoolean("ss_music", screensaver.musicEnabled)
+        e.putFloat("ss_music_vol", screensaver.musicVolume)
         e.putString("display_owner_account", screensaver.displayOwnerAccountId)
         e.putStringSet("display_album_ids", screensaver.displayAlbumIds.toSet())
         e.putBoolean("pb_next", playback.autoPlayNext)
@@ -354,6 +356,8 @@ object SettingsStore {
             showDate = p.getBoolean("ss_date", true),
             nightDim = p.getBoolean("ss_dim", true),
             kenBurns = p.getBoolean("ss_kenburns", true),
+            musicEnabled = p.getBoolean("ss_music", true),
+            musicVolume = p.getFloat("ss_music_vol", 0.7f),
             // 老版本未保存展示白名单：升级后先不授权，等用户逐相册选择。
             displayOwnerAccountId = p.getString("display_owner_account", "").orEmpty(),
             displayAlbumIds = p.getStringSet("display_album_ids", emptySet())?.toSet().orEmpty(),

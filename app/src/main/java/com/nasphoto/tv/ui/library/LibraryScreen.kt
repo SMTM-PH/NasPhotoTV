@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -24,6 +25,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Album
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Place
@@ -122,7 +124,9 @@ fun LibraryScreen(
     val featuredIndex = collections.indexOfFirst { it.id == featuredMediaId }.coerceAtLeast(0)
     val featuredItem = collections.getOrNull(featuredIndex)?.cover
     val favorites = remember(state, FavoritesStore.ids) { favoriteItems(state) }
-    val openedAlbum = openedAlbumId?.let { id -> state.albums.firstOrNull { it.id == id } }
+    val openedAlbum = openedAlbumId?.let { id ->
+        state.albums.firstOrNull { it.id == id } ?: state.folders.firstOrNull { it.id == id }
+    }
     val openedPerson = openedPersonId?.let { id -> state.people.firstOrNull { it.id == id } }
     val openedSmartAlbum = openedSmartAlbumId?.let { id -> state.smartAlbums.firstOrNull { it.id == id } }
 
@@ -130,7 +134,7 @@ fun LibraryScreen(
     val tabRequesters = remember { TOP_LEVEL_TABS.map { FocusRequester() } }
     val actionRequesters = remember { List(TOP_ACTION_COUNT) { FocusRequester() } }
     val accountRequester = remember { FocusRequester() }
-    val categoryRequesters = remember { List(3) { FocusRequester() } }
+    val categoryRequesters = remember { List(4) { FocusRequester() } }
     val topFocus = remember { PendingFocus() }   // 顶栏精确落点
     val contentFocus = remember { PendingFocus() } // 主内容精确落点
     var lastTab by remember { mutableIntStateOf(topLevelTab(selectedTab).ordinal) }
@@ -206,7 +210,7 @@ fun LibraryScreen(
             onSettings = { onNavigate(AppRoute.Settings) },
             onTabDown = {
                 if (topLevelTab(selectedTab) == LibraryTab.ALBUMS && openedAlbum == null && openedPerson == null) {
-                    val index = listOf(LibraryTab.ALBUMS, LibraryTab.PEOPLE, LibraryTab.SMART).indexOf(selectedTab).coerceAtLeast(0)
+                    val index = listOf(LibraryTab.ALBUMS, LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.SMART).indexOf(selectedTab).coerceAtLeast(0)
                     categoryRequesters[index].requestFocus()
                 } else contentFocus.requestBlock(BLOCK_CONTENT)
             },
@@ -214,7 +218,7 @@ fun LibraryScreen(
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
         Column(Modifier.fillMaxSize()) {
-        if (selectedTab in listOf(LibraryTab.ALBUMS, LibraryTab.PEOPLE, LibraryTab.SMART) && openedAlbum == null && openedPerson == null) {
+        if (selectedTab in listOf(LibraryTab.ALBUMS, LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.SMART) && openedAlbum == null && openedPerson == null) {
             AlbumCategoryBar(selectedTab, categoryRequesters,
                 onUp = { tabRequesters[LibraryTab.ALBUMS.ordinal].requestFocus() }, onSelect = {
                 selectedTab = it
@@ -310,6 +314,16 @@ fun LibraryScreen(
                     onFirstRowUp = { categoryRequesters[0].requestFocus() },
                 )
 
+                LibraryTab.FOLDER -> FoldersTab(
+                    folders = state.folders,
+                    loaded = state.foldersLoaded,
+                    onOpenAlbum = { openedAlbumId = it.id },
+                    contentFocus = contentFocus,
+                    restoreIndex = albumsFocusIndex,
+                    onFocusAlbum = { albumsFocusIndex = it },
+                    onFirstRowUp = { categoryRequesters[1].requestFocus() },
+                )
+
                 LibraryTab.PEOPLE -> PeopleTab(
                     people = state.people,
                     peopleLoaded = state.peopleLoaded,
@@ -317,7 +331,7 @@ fun LibraryScreen(
                     contentFocus = contentFocus,
                     restoreIndex = peopleFocusIndex,
                     onFocusPerson = { peopleFocusIndex = it },
-                    onUpToTopBar = { categoryRequesters[1].requestFocus() },
+                    onUpToTopBar = { categoryRequesters[2].requestFocus() },
                 )
 
                 LibraryTab.RECENT -> RecentTab(
@@ -335,7 +349,7 @@ fun LibraryScreen(
                     onOpenPhoto = onOpenPhoto,
                     onOpenVideo = onOpenVideo,
                     contentFocus = contentFocus,
-                    onFirstRowUp = { categoryRequesters[2].requestFocus() },
+                    onFirstRowUp = { categoryRequesters[3].requestFocus() },
                 )
             }
         }
@@ -719,6 +733,77 @@ private fun AlbumsTab(
     }
 }
 
+// ============================== Tab：文件夹（按磁盘目录浏览） ==============================
+
+@Composable
+private fun FoldersTab(
+    folders: List<Album>,
+    loaded: Boolean,
+    onOpenAlbum: (Album) -> Unit,
+    contentFocus: PendingFocus,
+    restoreIndex: Int = 0,
+    onFocusAlbum: (Int) -> Unit = {},
+    onFirstRowUp: () -> Unit,
+) {
+    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 3 else ALBUM_GRID_COLUMNS
+    val safeRestore = restoreIndex.coerceIn(0, folders.lastIndex.coerceAtLeast(0))
+    val gridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = (safeRestore / columns) * columns,
+    )
+    val requesters = remember { mutableListOf<FocusRequester>() }
+    var focusedIndex by remember { mutableIntStateOf(safeRestore) }
+
+    ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = {
+        folders.getOrNull(focusedIndex)?.let { requesterAt(requesters, focusedIndex) }
+    })
+    val gridBottomInset = with(LocalDensity.current) { 56.dp.roundToPx() }
+    LaunchedEffect(focusedIndex) { scrollGridTo(gridState, focusedIndex, columns, gridBottomInset) }
+
+    Column(Modifier.fillMaxSize()) {
+        SectionHeader(
+            title = "文件夹",
+            trailing = if (loaded) "${folders.size} 个目录" else "正在读取…",
+            modifier = Modifier.padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceM),
+        )
+        if (folders.isEmpty()) {
+            EmptyState(
+                title = if (loaded) "没有可浏览的文件夹" else "正在读取文件夹…",
+                subtitle = "在飞牛「相册」设置里添加要扫描的照片目录后会显示在这里",
+                modifier = Modifier.fillMaxSize(),
+                icon = Icons.Outlined.Folder,
+            )
+        } else {
+            LazyVerticalGrid(
+                state = gridState,
+                columns = GridCells.Fixed(columns),
+                contentPadding = GridContentPadding,
+                horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM),
+                verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceM),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                itemsIndexed(folders, key = { _, it -> it.id }) { index, folder ->
+                    AlbumCard(
+                        album = folder,
+                        coverUrl = folder.coverUrl,
+                        width = ALBUM_CELL_W,
+                        height = ALBUM_CELL_H,
+                        focusRequester = requesterAt(requesters, index),
+                        onClick = { onOpenAlbum(folder) },
+                        onFocusChanged = { focused ->
+                            if (focused) {
+                                focusedIndex = index
+                                onFocusAlbum(index)
+                            }
+                        },
+                        onUp = if (index < columns) onFirstRowUp else null,
+                        onDown = null,
+                    )
+                }
+            }
+        }
+    }
+}
+
 // ============================== Tab 4：最近添加（6 列网格） ==============================
 
 @Composable
@@ -1029,6 +1114,7 @@ private fun RemoteMediaDetailPane(
             is DetailMedia.Ready -> MediaGrid(
                 items = readyItems,
                 columns = columns,
+                groupByYear = readyItems.map { it.dateTaken.year }.distinct().size > 1,
                 gridState = gridState,
                 requesters = requesters,
                 focusedIndex = focusedIndex,
@@ -1162,6 +1248,7 @@ private fun PersonDetailPane(
             is PersonPhotos.Ready -> MediaGrid(
                 items = readyItems,
                 columns = columns,
+                groupByYear = readyItems.map { it.dateTaken.year }.distinct().size > 1,
                 gridState = gridState,
                 requesters = requesters,
                 focusedIndex = focusedIndex,
@@ -1203,10 +1290,34 @@ private fun MediaGrid(
     focusedIndex: Int,
     onFocused: (Int) -> Unit,
     onFirstRowUp: (() -> Unit)? = null,
+    /** 多张照片跨年份时，在网格中插入「YYYY 年」分隔行，方便按年份浏览。 */
+    groupByYear: Boolean = false,
     onClick: (index: Int, item: MediaItem) -> Unit,
 ) {
     val gridBottomInset = with(LocalDensity.current) { 56.dp.roundToPx() }
-    LaunchedEffect(focusedIndex) { scrollGridTo(gridState, focusedIndex, columns, gridBottomInset) }
+
+    // 把「年份表头 + 媒体格」摊平成一维条目，同时记录每张照片在网格中的位置，
+    // 这样焦点滚动仍然按照片下标工作，而不受表头数量影响。
+    data class Entry(val year: Int?, val itemIndex: Int)
+    val entries: List<Entry> = remember(items, groupByYear) {
+        if (!groupByYear) {
+            items.indices.map { Entry(null, it) }
+        } else {
+            val byYear = items.indices.groupBy { items[it].dateTaken.year }
+            byYear.keys.sortedDescending().flatMap { y ->
+                listOf(Entry(y, -1)) + byYear.getValue(y).map { Entry(null, it) }
+            }
+        }
+    }
+    val gridIndexOfItem = remember(entries) {
+        IntArray(items.size) { 0 }.also { arr ->
+            entries.forEachIndexed { gi, e -> if (e.itemIndex >= 0) arr[e.itemIndex] = gi }
+        }
+    }
+    LaunchedEffect(focusedIndex, entries) {
+        scrollGridTo(gridState, gridIndexOfItem.getOrElse(focusedIndex) { 0 }, columns, gridBottomInset)
+    }
+
     LazyVerticalGrid(
         state = gridState,
         columns = GridCells.Fixed(columns),
@@ -1215,18 +1326,33 @@ private fun MediaGrid(
         verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
         modifier = Modifier.fillMaxSize(),
     ) {
-        itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
-            MediaCard(
-                item = item,
-                width = MEDIA_CELL_W,
-                height = MEDIA_CELL_H,
-                focusRequester = requesterAt(requesters, index),
-                onClick = { onClick(index, item) },
-                onFocusChanged = { focused ->
-                    if (focused) onFocused(index)
-                },
-                onUp = if (onFirstRowUp != null && index < columns) onFirstRowUp else null,
-            )
+        entries.forEachIndexed { gi, entry ->
+            if (entry.itemIndex < 0) {
+                item(key = "year-${entry.year}", span = { GridItemSpan(maxLineSpan) }) {
+                    Text(
+                        text = "${entry.year} 年",
+                        color = TvColor.TextSecondary,
+                        fontSize = TvType.CardTitle,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(top = TvDimen.SpaceM, bottom = TvDimen.SpaceXs),
+                    )
+                }
+            } else {
+                val index = entry.itemIndex
+                val item = items[index]
+                item(key = item.id) {
+                    MediaCard(
+                        item = item,
+                        width = MEDIA_CELL_W,
+                        height = MEDIA_CELL_H,
+                        focusRequester = requesterAt(requesters, index),
+                        onClick = { onClick(index, item) },
+                        onFocusChanged = { focused -> if (focused) onFocused(index) },
+                        // 首个年份表头之后的第一个媒体格算出「第一行」，按 UP 回顶栏
+                        onUp = if (onFirstRowUp != null && gi <= columns) onFirstRowUp else null,
+                    )
+                }
+            }
         }
     }
 }
@@ -1392,7 +1518,7 @@ private fun LibraryEmptyPreview() {
 
 private val TOP_LEVEL_TABS = listOf(LibraryTab.ALL, LibraryTab.CHRONO, LibraryTab.ALBUMS)
 private fun topLevelTab(tab: LibraryTab): LibraryTab = when (tab) {
-    LibraryTab.PEOPLE, LibraryTab.SMART -> LibraryTab.ALBUMS
+    LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.SMART -> LibraryTab.ALBUMS
     LibraryTab.RECENT -> LibraryTab.CHRONO
     else -> tab
 }
@@ -1401,7 +1527,7 @@ private fun topLevelTab(tab: LibraryTab): LibraryTab = when (tab) {
 private fun AlbumCategoryBar(selected: LibraryTab, requesters: List<FocusRequester>, onUp: () -> Unit, onSelect: (LibraryTab) -> Unit, onDown: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceXs),
         horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM)) {
-        listOf(LibraryTab.ALBUMS, LibraryTab.PEOPLE, LibraryTab.SMART).forEachIndexed { index, tab ->
+        listOf(LibraryTab.ALBUMS, LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.SMART).forEachIndexed { index, tab ->
             TvFocusBox(focusRequester = requesters[index], onUp = onUp,
                 onConfirm = { onSelect(tab) }, onDown = onDown,
                 modifier = Modifier.padding(horizontal = TvDimen.SpaceS, vertical = TvDimen.SpaceXs)) {

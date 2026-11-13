@@ -1,6 +1,7 @@
 package com.nasphoto.tv.ui.settings
 
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.nasphoto.tv.data.MediaCache
@@ -59,6 +60,7 @@ enum class SettingsKey(
     SS_DATE(SettingsGroup.SCREENSAVER, "显示日期", "显示星期与日期"),
     SS_NIGHT_DIM(SettingsGroup.SCREENSAVER, "夜间自动调暗", "降低亮度，保护面板"),
     SS_KEN_BURNS(SettingsGroup.SCREENSAVER, "Ken Burns 动效", "照片缓慢推拉，防烧屏"),
+    SS_MUSIC(SettingsGroup.SCREENSAVER, "背景音乐", "幻灯片/屏保时循环播放；可用手机上传音乐"),
     SS_PREVIEW(SettingsGroup.SCREENSAVER, "预览屏保", "仅全屏预览，不开启自动屏保"),
 
     PB_AUTOPLAY(SettingsGroup.PLAYBACK, "自动连播下一集", "播完自动播放列表里的下一个"),
@@ -267,6 +269,11 @@ class SettingsFeedback {
         private set
 
     /** 非 null = 账号开启了两步验证，等待用户输入 6 位动态码 */
+    /** 背景音乐面板是否打开（打开时启动手机上传服务） */
+    var musicPanel by mutableStateOf(false)
+    /** 上传/开关后强制刷新面板（文件名列表、状态） */
+    var musicVersion by mutableIntStateOf(0)
+
     var twoFactor by mutableStateOf<FnOsTwoFactorChallenge?>(null)
         private set
     var twoFactorBusy by mutableStateOf(false)

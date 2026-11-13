@@ -1,5 +1,7 @@
 package com.nasphoto.tv.ui.viewer
 
+import com.nasphoto.tv.ui.common.SlideshowMusicEffect
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.fadeIn
@@ -169,6 +171,8 @@ fun PhotoViewerScreen(
     }
 
     val state = rememberPhotoViewerState(items = items, initialIndex = initialIndex, startSlideshow = startSlideshow)
+    // 幻灯片播放时循环播放背景音乐（无音乐文件时自动静默）
+    SlideshowMusicEffect(active = state.slideshowPlaying)
     val filmState = rememberLazyListState()
     val imageFocus = remember { FocusRequester() }
     val tabFocus = remember { FocusRequester() }

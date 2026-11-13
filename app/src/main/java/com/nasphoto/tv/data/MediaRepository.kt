@@ -3,6 +3,7 @@ package com.nasphoto.tv.data
 import com.nasphoto.tv.data.model.Album
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.NasConnection
+import com.nasphoto.tv.data.model.NasFolder
 import com.nasphoto.tv.data.model.Person
 
 /**
@@ -36,6 +37,12 @@ interface MediaRepository {
     /** 某个相册下的媒体，按拍摄时间倒序 */
     suspend fun getMedia(albumId: String): List<MediaItem>
 
+    /** 飞牛「文件夹视图」的根目录列表（按磁盘目录浏览）。 */
+    suspend fun getFolders(): List<NasFolder> = emptyList()
+
+    /** 某个磁盘目录下的全部媒体（按拍摄时间倒序）。 */
+    suspend fun getFolderMedia(folderId: String, limit: Int = 20_000): List<MediaItem> = emptyList()
+
     /** 搜索媒体（按标题/日期） */
     suspend fun search(query: String): List<MediaItem>
 
@@ -55,7 +62,7 @@ interface MediaRepository {
      * 某个人的全部照片（按时间倒序）。[personId] 来自 [getPeople] 返回的 [Person.id]。
      * 服务端接口只能按「天」分页取，实现方负责聚合成一个列表。
      */
-    suspend fun getPersonPhotos(personId: String, limit: Int = 600): List<MediaItem> = emptyList()
+    suspend fun getPersonPhotos(personId: String, limit: Int = 20_000): List<MediaItem> = emptyList()
 
     /** 获取单张媒体详情（可能补充 EXIF 等信息） */
     suspend fun getMediaItem(id: String): MediaItem? = null

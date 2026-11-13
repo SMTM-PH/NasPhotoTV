@@ -1,5 +1,7 @@
 package com.nasphoto.tv.ui.screensaver
 
+import com.nasphoto.tv.ui.common.SlideshowMusicEffect
+
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -78,6 +80,9 @@ fun ScreensaverScreen(
     onCycleSource: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // 屏保展示期间循环播放背景音乐（无音乐文件时自动静默）
+    SlideshowMusicEffect(active = true)
+
     val now = rememberNowEverySecond()
     val parts = rememberClockParts(now)
 

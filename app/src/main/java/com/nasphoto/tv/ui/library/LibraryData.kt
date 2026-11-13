@@ -29,6 +29,7 @@ enum class LibraryTab(val label: String) {
     ALL("回忆"),
     CHRONO("图库"),
     ALBUMS("相册"),
+    FOLDER("文件夹"),
     PEOPLE("人物"),
     RECENT("最近添加"),
     SMART("收藏"),

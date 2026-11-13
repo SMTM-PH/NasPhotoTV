@@ -185,6 +185,21 @@ fun NasPhotoTvApp() {
                     val statsDeferred = async {
                         runCatching { repository.stats() }.getOrNull()
                     }
+                    val foldersDeferred = async {
+                        // 文件夹视图：把磁盘扫描目录映射成 Album，复用相册卡片/详情页
+                        runCatching {
+                            repository.getFolders().map { f ->
+                                com.nasphoto.tv.data.model.Album(
+                                    id = "folder:" + f.id,
+                                    name = f.name.ifBlank { f.path },
+                                    coverUrl = "",
+                                    itemCount = f.photoCount + f.videoCount,
+                                    type = com.nasphoto.tv.data.model.AlbumType.FOLDER,
+                                    subtitle = f.path,
+                                )
+                            }
+                        }.getOrDefault(emptyList())
+                    }
                     val approvedDeferred = async {
                         val ids = approvedAlbumIds.intersect(albums.map { it.id }.toSet())
                         ids.map { id ->
@@ -198,6 +213,7 @@ fun NasPhotoTvApp() {
                         people = peopleDeferred.await(),
                         smartAlbums = smartDeferred.await(),
                         stats = statsDeferred.await(),
+                        folders = foldersDeferred.await(),
                         approvedMedia = approvedDeferred.await(),
                     )
                 }
@@ -230,6 +246,7 @@ fun NasPhotoTvApp() {
                         accountName = nas.activeAccount?.displayName.orEmpty(),
                         accountCount = nas.accounts.size.coerceAtLeast(1),
                         people = optional.people,
+                        folders = optional.folders,
                         peopleLoaded = true,
                         smartAlbums = optional.smartAlbums,
                         smartAlbumsError = smartAlbumsError,
@@ -471,7 +488,11 @@ fun NasPhotoTvApp() {
                                     },
                                     onLoadAlbumMedia = { albumId ->
                                         try {
-                                            repository?.getMedia(albumId)
+                                            if (albumId.startsWith("folder:")) {
+                                                repository?.getFolderMedia(albumId.removePrefix("folder:"))
+                                            } else {
+                                                repository?.getMedia(albumId)
+                                            }
                                         } catch (cancelled: CancellationException) {
                                             throw cancelled
                                         } catch (_: Exception) {
@@ -603,6 +624,7 @@ private const val FULL_LIBRARY_LIMIT = 20_000
 private data class OptionalLibraryData(
     val screensaverPhotos: List<MediaItem>,
     val people: List<Person>,
+    val folders: List<Album>,
     val smartAlbums: List<Album>,
     val stats: com.nasphoto.tv.data.fn.FnOsStats?,
     val approvedMedia: Map<String, List<MediaItem>>,
