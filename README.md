@@ -5,9 +5,20 @@
 Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`，单 Activity、纯 Compose、无 TV 专用库；
 屏保待机显示对标 iPhone 的 StandBy —— 大号时钟 + 照片氛围 + 天气 + 防烧屏。
 
-- 版本：`1.2.3`（versionCode 9）
+- 版本：`1.2.4`（versionCode 10）
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
+
+---
+
+## 1.2.4 更新（2026-11-14）
+
+- **实况照片改为按需播放**：点开 Live 图默认是静态照片；按**确认键**才播放一次动态片段
+  （静音，播完自动停在最后一帧回到静态，再按再播），不再无限循环自动播放。
+  播放期间右上角短暂显示「实况播放中 · 播完自动回到静态」。
+- 普通照片的确认键行为不变（弹出/收起工具条）；视频、全景的按键逻辑不受影响。
+
+详见 [docs/releases/v1.2.4.md](docs/releases/v1.2.4.md)。
 
 ---
 

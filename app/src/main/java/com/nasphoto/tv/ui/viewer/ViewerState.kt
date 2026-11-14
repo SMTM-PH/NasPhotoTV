@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -59,6 +60,21 @@ class PhotoViewerState(
     /** 全景横向偏移：0 = 最左，1 = 最右；非全景照片恒为 0 */
     var panoramaOffset by mutableStateOf(0f)
         private set
+
+    /**
+     * 实况照片「请求播放一次」的信号（递增计数）。
+     * 点开照片默认是静态的；确认键触发一次播放，播完自动回静态，再按再播。
+     */
+    var livePlaybackRequest by mutableIntStateOf(0)
+        private set
+
+    /** 当前实况片段是否正在播放（由舞台回写，用于提示文案） */
+    var livePlaying by mutableStateOf(false)
+
+    /** 实况照片：请求播放一次动态片段 */
+    fun playLiveOnce() {
+        livePlaybackRequest++
+    }
 
     val current: MediaItem? get() = items.getOrNull(index)
     val hasPrev: Boolean get() = index > 0

@@ -49,6 +49,9 @@ fun LivePhotoVideo(
     active: Boolean,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
+    /** >0 = 用户请求播放；每递增一次播一遍后停在最后一帧（回到静态观感） */
+    playRequest: Int = 0,
+    onPlayingChanged: (Boolean) -> Unit = {},
 ) {
     if (url.isBlank()) return
     val context = LocalContext.current
@@ -63,15 +66,31 @@ fun LivePhotoVideo(
             .build()
             .apply {
                 volume = 0f
-                repeatMode = Player.REPEAT_MODE_ONE
+                // 播一遍就停（不用 REPEAT_MODE_ONE 无限循环）：用户确认键每按一次播一次
+                repeatMode = Player.REPEAT_MODE_OFF
                 setMediaItem(MediaItem.fromUri(resolveMediaUri(context, url)))
-                playWhenReady = active
+                playWhenReady = false
                 prepare()
             }
     }
 
-    LaunchedEffect(exoPlayer, active) {
-        if (active) exoPlayer.play() else exoPlayer.pause()
+    // 静态优先：active（进入看图）本身不再触发播放，只有明确的 playRequest 才播。
+    // 每次请求都从头播一遍；播到末尾自动停在最后一帧。
+    LaunchedEffect(exoPlayer, playRequest) {
+        if (playRequest <= 0) {
+            exoPlayer.pause()
+            exoPlayer.seekTo(0)
+            return@LaunchedEffect
+        }
+        exoPlayer.seekTo(0)
+        exoPlayer.play()
+    }
+
+    LaunchedEffect(exoPlayer) {
+        while (true) {
+            kotlinx.coroutines.delay(200)
+            onPlayingChanged(exoPlayer.isPlaying)
+        }
     }
 
     DisposableEffect(exoPlayer) {

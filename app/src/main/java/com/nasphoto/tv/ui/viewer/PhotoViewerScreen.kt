@@ -340,6 +340,16 @@ fun PhotoViewerScreen(
                     .align(Alignment.TopEnd)
                     .padding(end = TvDimen.ScreenPadding, top = TvDimen.SpaceM),
             )
+
+            // ================= 右上其下：实况播放提示 =================
+            if (state.livePlaying) Text(
+                text = "实况播放中 · 播完自动回到静态",
+                fontSize = TvType.Tiny,
+                color = TvColor.TextSecondary,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = TvDimen.ScreenPadding, top = TvDimen.SpaceL + TvDimen.SpaceL),
+            )
         }
 
         // ================= 底部浮层（按钮行 + 胶片条） =================
@@ -522,11 +532,14 @@ private fun StageContent(
                 }
 
                 Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
-                    if (zoomed && !panoramic) {
-                        state.toggleZoom()
-                        onEnterToolbar()
-                    } else {
-                        onToggleChrome()
+                    when {
+                        zoomed && !panoramic -> {
+                            state.toggleZoom()
+                            onEnterToolbar()
+                        }
+                        // 实况照片：确认键播放一次动态片段（播完自动回静态，再按再播）
+                        item.isLive && item.liveUrl.isNotBlank() -> state.playLiveOnce()
+                        else -> onToggleChrome()
                     }
                     true
                 }
@@ -550,6 +563,8 @@ private fun StageContent(
                 zoomed = zoomed,
                 panX = state.panX,
                 panY = state.panY,
+                playRequest = state.livePlaybackRequest,
+                onPlayingChanged = { state.livePlaying = it },
             )
 
             item.isPanoramaPhoto() -> PanoramaStage(
@@ -563,7 +578,7 @@ private fun StageContent(
 }
 
 /**
- * 实况照片：静图铺底 + 动态片段静音循环自动播放。
+ * 实况照片：静图铺底；确认键才播放一次动态片段（静音，播完停在最后一帧回到静态，再按再播）。
  * 两者共用同一个全屏 Fit 画框，尺寸天然对齐；放大到 2× 时暂停片段、只留静图（平移查看仍有效）。
  */
 @Composable
@@ -573,6 +588,8 @@ private fun LivePhotoStage(
     zoomed: Boolean,
     panX: Float,
     panY: Float,
+    playRequest: Int,
+    onPlayingChanged: (Boolean) -> Unit,
 ) {
     Box(Modifier.fillMaxSize()) {
         PhotoStage(item = item, zoomed = zoomed, panX = panX, panY = panY)
@@ -582,6 +599,8 @@ private fun LivePhotoStage(
                 active = active,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
+                playRequest = playRequest,
+                onPlayingChanged = onPlayingChanged,
             )
         }
     }
