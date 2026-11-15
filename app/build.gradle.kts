@@ -17,9 +17,30 @@ android {
         versionName = "1.2.4"
     }
 
+    signingConfigs {
+        create("release") {
+            // 正式签名：keystore 不进 git（见 .gitignore），密码在本机 keystore/pass.txt。
+            // 首次生成：keytool -genkeypair -keystore keystore/release.jks -alias nasphototv ...
+            val ksFile = rootProject.file("keystore/release.jks")
+            val passFile = rootProject.file("keystore/pass.txt")
+            if (ksFile.exists() && passFile.exists()) {
+                storeFile = ksFile
+                storePassword = passFile.readText().trim()
+                keyAlias = "nasphototv"
+                keyPassword = passFile.readText().trim()
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            // 有正式 keystore 时 release 用正式签名；没有则退回 debug 签名，保证 CI 可构建
+            signingConfig = if (rootProject.file("keystore/release.jks").exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

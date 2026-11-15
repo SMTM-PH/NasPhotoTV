@@ -20,6 +20,7 @@ local.properties
 # Signing material
 *.jks
 *.keystore
+keystore/
 
 # Python scratch
 __pycache__/
