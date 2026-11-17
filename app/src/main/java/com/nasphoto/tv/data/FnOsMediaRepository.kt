@@ -458,7 +458,7 @@ class FnOsMediaRepository(
             isLive = isLive,
             liveUrl = if (isLive) absolute(videoUrl) else "",
             dateTaken = parseDate(json.optString("dateTime").ifBlank { json.optString("photoDateTime") }),
-            durationMs = json.optLong("durationMs", json.optLong("duration", 0L)),
+            durationMs = MediaDuration.fromJson(json),
             sizeBytes = json.optLong("fileSize", 0L),
             resolution = if (width > 0 && height > 0) "${width}x$height" else "",
             albumId = "",

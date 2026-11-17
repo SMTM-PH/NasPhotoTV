@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -45,6 +46,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -53,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -63,7 +66,11 @@ import androidx.media3.ui.PlayerView
 import com.nasphoto.tv.BuildConfig
 import com.nasphoto.tv.data.fn.FnOsTransport
 import com.nasphoto.tv.data.model.MediaItem
+import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.data.model.PlaybackSettings
+import com.nasphoto.tv.data.model.PortraitFit
+import com.nasphoto.tv.data.model.isPortraitVideo
+import com.nasphoto.tv.ui.common.MediaImage
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
 import com.nasphoto.tv.ui.theme.TvType
@@ -84,18 +91,39 @@ fun VideoPlayerScreen(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (items.isEmpty()) {
+    // 只保留视频：调用方传进来的是「当天/当相册」的混排列表（图片 + 视频），
+    // 自动连播时下一条很可能是图片。实测这样会把一张 PNG 截图丢给 ExoPlayer，
+    // 得到 0:00 / 0:00 的永久黑屏 —— 用户看到的是「播完这个视频就卡死」。
+    val videos = remember(items) { items.filter { it.type == MediaType.VIDEO } }
+    if (videos.isEmpty()) {
         LaunchedEffect(Unit) { onClose() }
         return
     }
 
-    var index by remember { mutableIntStateOf(initialIndex.coerceIn(0, items.lastIndex)) }
+    // 原列表里的下标要映射到过滤后的列表，否则从第 N 张图进入会定位错素材
+    val startIndex = remember(items, initialIndex, videos) {
+        val target = items.getOrNull(initialIndex)
+        val mapped = target?.let { t -> videos.indexOfFirst { it.id == t.id } } ?: -1
+        (if (mapped >= 0) mapped else initialIndex).coerceIn(0, videos.lastIndex)
+    }
+
+    var index by remember { mutableIntStateOf(startIndex) }
     var controlsVisible by remember { mutableStateOf(true) }
     var isPlaying by remember { mutableStateOf(false) }
     var controlsInteraction by remember { mutableIntStateOf(0) }
     var buffering by remember { mutableStateOf(true) }
     /** 非空表示当前素材播放失败，舞台层需要显示可见的错误提示 */
     var playError by remember { mutableStateOf<String?>(null) }
+    /** 当前生效的竖屏适配方式（会话内可切换，默认取设置） */
+    var portraitFit by remember { mutableStateOf(settings.portraitFit) }
+    /**
+     * 解码器回报的真实画面尺寸（宽, 高，已含旋转）。
+     *
+     * NAS 的 width/height 并不可靠：有的素材元数据缺失宽高（实测混排列表里
+     * 出现过宽高为 0 的条目），只按 `MediaItem.resolution` 判断会漏掉竖屏视频，
+     * 于是它们仍然左右黑边。解码器给出的尺寸是权威值，作为 [isPortraitVideo] 的兜底。
+     */
+    var decodedSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     val context = LocalContext.current
     val focusRequester = remember { FocusRequester() }
@@ -105,30 +133,41 @@ fun VideoPlayerScreen(
         controlsInteraction += 1
     }
 
-    val player = remember {
-        // 飞牛直出的是 NAS 原片，4K 素材常见 60–80 Mbps。ExoPlayer 默认前向缓冲 50 秒
-        // 且不限字节数（media3 1.5 的 DEFAULT_MAX_BUFFER_MS = 50_000）——按 75 Mbps
-        // 算需要约 470 MB，远超本机 192 MB 的 Java 堆上限。缓冲区会一直“分配不完”，
-        // GC 每 1–2 秒抖动一次，画面就表现为周期性卡顿、控制层响应也发涩。
-        // 这里按字节封顶并缩短时长上限：千兆局域网 1 秒内就能填满 48 MB，
-        // 缓冲分配一次后稳定复用，GC 不再随播放持续抖动。
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                BUFFER_MIN_MS,
-                BUFFER_MAX_MS,
-                BUFFER_FOR_PLAYBACK_MS,
-                BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
-            )
-            .setTargetBufferBytes(BUFFER_TARGET_BYTES)
-            .setPrioritizeTimeOverSizeThresholds(false)
-            .build()
+    val current = videos.getOrNull(index)
+    val portrait = isPortraitPlayback(current, decodedSize)
+
+    // 缓冲预算跟着素材码率走：4K 60fps 原片 120–150 Mbps，用固定 48 MB 只能缓冲 3 秒，
+    // 播完就要重新等，表现成周期性卡顿。详见 PlaybackBufferPlanner 的注释。
+    val bufferPlan = remember(current?.id, current?.sizeBytes, current?.durationMs) {
+        PlaybackBufferPlanner.plan(
+            PlaybackBufferPlanner.estimateBitrateBps(
+                sizeBytes = current?.sizeBytes ?: 0L,
+                durationMs = current?.durationMs ?: 0L,
+            ),
+        )
+    }
+
+    // 缓冲参数在 DefaultLoadControl 里是 final，运行时改不了；所以按计划重建播放器。
+    // 同一档码率（如连续几条 4K60）算出的计划相同，不会来回重建。
+    val player = remember(bufferPlan) {
         // 只开「解码失败自动回退」。注意不要用 forceEnableMediaCodecAsynchronousQueueing()：
         // 本机（MTK Android 9）的 JMediaCodec 在异步回调里会直接 SIGABRT
         // （android_media_MediaCodec.cpp:874 "Should not be here"），实测必崩。
         val renderersFactory = DefaultRenderersFactory(context)
             .setEnableDecoderFallback(true)
         ExoPlayer.Builder(context, renderersFactory)
-            .setLoadControl(loadControl)
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        bufferPlan.minBufferMs,
+                        bufferPlan.maxBufferMs,
+                        bufferPlan.bufferForPlaybackMs,
+                        bufferPlan.bufferForPlaybackAfterRebufferMs,
+                    )
+                    .setTargetBufferBytes(bufferPlan.targetBufferBytes)
+                    .setPrioritizeTimeOverSizeThresholds(false)
+                    .build(),
+            )
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(FnOsTransport.mediaDataSourceFactory(context)),
             )
@@ -177,7 +216,7 @@ fun VideoPlayerScreen(
             override fun onPlaybackStateChanged(state: Int) {
                 buffering = state == Player.STATE_BUFFERING
                 if (state == Player.STATE_ENDED) {
-                    if (settings.autoPlayNext && index < items.lastIndex) {
+                    if (settings.autoPlayNext && index < videos.lastIndex) {
                         index += 1
                     } else {
                         isPlaying = false
@@ -188,6 +227,13 @@ fun VideoPlayerScreen(
 
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
+            }
+
+            /** 解码器给出的真实尺寸（含旋转），用作竖屏判定的兜底 */
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                val w = videoSize.width
+                val h = videoSize.height
+                decodedSize = if (w > 0 && h > 0) w to h else null
             }
 
             /**
@@ -206,9 +252,11 @@ fun VideoPlayerScreen(
         onDispose { player.removeListener(listener) }
     }
 
-    LaunchedEffect(index) {
-        val item = items.getOrNull(index) ?: return@LaunchedEffect
+    // 依赖 player：缓冲计划变化会重建播放器，新实例必须重新装载当前素材
+    LaunchedEffect(player, index) {
+        val item = videos.getOrNull(index) ?: return@LaunchedEffect
         playError = null
+        decodedSize = null
         player.setMediaItem(androidx.media3.common.MediaItem.fromUri(item.url))
         player.prepare()
         player.play()
@@ -270,10 +318,24 @@ fun VideoPlayerScreen(
                         true
                     }
 
+                    // 竖屏素材在 16:9 电视上只能三选一：左右留黑 / 用封面填两侧 / 裁切铺满。
+                    // 遥控器没有专门的「画面比例」键，MENU 键在电视上通常空着，用它循环切换。
+                    Key.Menu -> {
+                        if (portrait) {
+                            portraitFit = when (portraitFit) {
+                                PortraitFit.AUTO -> PortraitFit.FILL
+                                PortraitFit.FILL -> PortraitFit.FIT
+                                PortraitFit.FIT -> PortraitFit.AUTO
+                            }
+                            showControls()
+                        }
+                        true
+                    }
+
                     // 遥控器没有独立的「下一个」键时，播放失败后用户会被困在
                     // 同一个视频里；媒体键 NEXT/PREVIOUS 直接切相邻素材。
                     Key.MediaNext, Key.MediaSkipForward -> {
-                        if (index < items.lastIndex) {
+                        if (index < videos.lastIndex) {
                             index += 1
                             showControls()
                         }
@@ -292,6 +354,27 @@ fun VideoPlayerScreen(
                 }
             },
     ) {
+        // 竖屏素材：默认用「封面放大 + 压暗」铺满左右留黑，避免 2160×3840 的素材
+        // 在 1080p 电视上只占中间 607px、两侧各 656px 死黑带来的「不支持竖屏」观感。
+        if (portrait && portraitFit == PortraitFit.AUTO) {
+            val cover = current?.thumbnailUrl?.ifBlank { current?.url }.orEmpty()
+            if (cover.isNotBlank()) {
+                MediaImage(
+                    url = cover,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    targetWidth = 1920,
+                )
+                // 压到很暗：只作为画面外的环境色，不跟主体抢注意力
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.72f)),
+                )
+            }
+        }
+
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
@@ -304,7 +387,16 @@ fun VideoPlayerScreen(
                 }
             },
             modifier = Modifier.fillMaxSize(),
-            update = { it.player = player },
+            update = { view ->
+                view.player = player
+                // FILL：按高度铺满并裁掉左右（竖屏素材会切掉上下）；FIT/AUTO：完整画面
+                val mode = if (portrait && portraitFit == PortraitFit.FILL) {
+                    AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                } else {
+                    AspectRatioFrameLayout.RESIZE_MODE_FIT
+                }
+                if (view.resizeMode != mode) view.resizeMode = mode
+            },
         )
 
         val err = playError
@@ -331,10 +423,10 @@ fun VideoPlayerScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = if (index < items.lastIndex) {
-                        "按遥控器「下一曲」跳到下一个（第 ${index + 1} / ${items.size} 个）"
+                    text = if (index < videos.lastIndex) {
+                        "按遥控器「下一曲」跳到下一个（第 ${index + 1} / ${videos.size} 个）"
                     } else {
-                        "已经是最后一个（第 ${index + 1} / ${items.size} 个），按 BACK 返回"
+                        "已经是最后一个（第 ${index + 1} / ${videos.size} 个），按 BACK 返回"
                     },
                     color = TvColor.TextTertiary,
                     fontSize = 16.sp,
@@ -370,7 +462,7 @@ fun VideoPlayerScreen(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(
-                            text = items[index].title,
+                            text = videos[index].title,
                             fontSize = TvType.Section,
                             fontWeight = FontWeight.SemiBold,
                             color = TvColor.TextPrimary,
@@ -383,8 +475,20 @@ fun VideoPlayerScreen(
                             color = TvColor.TextTertiary,
                         )
                     }
+                    if (portrait) {
+                        Text(
+                            text = "竖屏 · ${portraitFit.label} · MENU 切换",
+                            fontSize = TvType.Tiny,
+                            color = TvColor.Accent,
+                            modifier = Modifier
+                                .padding(end = TvDimen.SpaceM)
+                                .clip(RoundedCornerShape(TvDimen.RadiusS))
+                                .background(TvColor.AccentDim)
+                                .padding(horizontal = TvDimen.SpaceXs, vertical = 2.dp),
+                        )
+                    }
                     Text(
-                        text = "${index + 1} / ${items.size}",
+                        text = "${index + 1} / ${videos.size}",
                         fontSize = TvType.Caption,
                         color = TvColor.TextSecondary,
                     )
@@ -474,14 +578,26 @@ private fun ProgressTrack(positionMs: Long, durationMs: Long) {
 private const val TAG = "NasPhotoTV.Video"
 
 /**
- * 缓冲参数：够在千兆局域网里吸收解码抖动，又不会把低内存电视的 Java 堆打满。
- * 48 MB 在 75 Mbps 素材上约 5 秒，在 20 Mbps 素材上约 19 秒。
+ * 这段素材是否按竖屏处理。
+ *
+ * **解码器回报的尺寸优先**：它是真正渲染出来的画面，且 media3 已经把
+ * `rotationDegrees` 折算进宽高（90/270 度会交换宽高），所以它比 NAS 元数据更权威。
+ * 实测有素材在 NAS 里 width/height 为 0，只按元数据判断会漏掉整批竖屏视频，
+ * 它们仍然左右黑边 —— 用户看到的依旧是「不支持竖屏」。
+ *
+ * 解码尺寸还没回报时（起播瞬间）先用 NAS 元数据兜住，避免先按横屏渲染一帧
+ * 再跳变。两个来源都没有时按横屏处理：横屏素材占绝大多数，宁可漏判，
+ * 也不要把一条普通视频错当成竖屏去做背景填充。
  */
-private const val BUFFER_MIN_MS = 8_000
-private const val BUFFER_MAX_MS = 20_000
-private const val BUFFER_FOR_PLAYBACK_MS = 1_500
-private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 4_000
-private const val BUFFER_TARGET_BYTES = 48 * 1024 * 1024
+internal fun isPortraitPlayback(item: MediaItem?, decoded: Pair<Int, Int>?): Boolean {
+    // 没有条目 = 没有在播任何东西，方向无从谈起
+    if (item == null) return false
+    if (decoded != null) {
+        val (w, h) = decoded
+        if (w > 0 && h > 0) return h > w
+    }
+    return item.isPortraitVideo()
+}
 
 private fun formatTime(ms: Long): String {
     val total = (ms / 1000).coerceAtLeast(0)

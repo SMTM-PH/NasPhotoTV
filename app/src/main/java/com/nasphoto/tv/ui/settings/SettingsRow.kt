@@ -260,6 +260,8 @@ fun rowValueText(key: SettingsKey, store: SettingsStore, feedback: SettingsFeedb
         SettingsKey.PB_LOOP,
         -> if (toggleState(key, store) == true) "开" else "关"
 
+        SettingsKey.PB_PORTRAIT_FIT -> p.portraitFit.label
+
         SettingsKey.ABOUT_VERSION -> com.nasphoto.tv.BuildConfig.VERSION_NAME
         SettingsKey.ABOUT_ENGINE -> "Compose"
         SettingsKey.ABOUT_DEVICE -> "Android TV"

@@ -322,6 +322,7 @@ object SettingsStore {
         e.putStringSet("display_album_ids", screensaver.displayAlbumIds.toSet())
         e.putBoolean("pb_next", playback.autoPlayNext)
         e.putBoolean("pb_loop", playback.loopMode)
+        e.putString("pb_portrait_fit", playback.portraitFit.name)
         e.apply()
     }
 
@@ -365,6 +366,10 @@ object SettingsStore {
         playback = defaultPlayback.copy(
             autoPlayNext = p.getBoolean("pb_next", true),
             loopMode = p.getBoolean("pb_loop", false),
+            portraitFit = enumOrDefault(
+                p.getString("pb_portrait_fit", null),
+                defaultPlayback.portraitFit,
+            ),
         )
     }
 

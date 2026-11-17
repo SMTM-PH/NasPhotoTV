@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import com.nasphoto.tv.data.MediaCache
 import com.nasphoto.tv.data.SettingsStore
 import com.nasphoto.tv.data.model.NasAccount
+import com.nasphoto.tv.data.model.PortraitFit
 import com.nasphoto.tv.data.model.ScreensaverSettings
 import com.nasphoto.tv.data.fn.FnOsApi
 import com.nasphoto.tv.data.fn.FnOsTwoFactorChallenge
@@ -65,6 +66,7 @@ enum class SettingsKey(
 
     PB_AUTOPLAY(SettingsGroup.PLAYBACK, "自动连播下一集", "播完自动播放列表里的下一个"),
     PB_LOOP(SettingsGroup.PLAYBACK, "循环播放", "单个视频播完从头再放"),
+    PB_PORTRAIT_FIT(SettingsGroup.PLAYBACK, "竖屏画面", "手机/无人机竖拍视频在电视上的适配方式，播放中可按 MENU 切换"),
 
     ABOUT_VERSION(SettingsGroup.ABOUT, "版本", "当前版本"),
     ABOUT_ENGINE(SettingsGroup.ABOUT, "引擎", "渲染与状态框架"),
@@ -225,6 +227,16 @@ class SettingsActions(
     // ---------------- 播放 ----------------
     fun toggleAutoPlayNext() = store.updatePlayback { it.copy(autoPlayNext = !it.autoPlayNext) }
     fun toggleLoop() = store.updatePlayback { it.copy(loopMode = !it.loopMode) }
+
+    /** 竖屏画面：自动填充 → 铺满屏幕 → 完整画面 循环 */
+    fun cyclePortraitFit(reverse: Boolean = false) {
+        val order = PortraitFit.entries
+        store.updatePlayback {
+            val i = order.indexOf(it.portraitFit).coerceAtLeast(0)
+            val next = order[((i + if (reverse) -1 else 1) + order.size) % order.size]
+            it.copy(portraitFit = next)
+        }
+    }
 
     // ---------------- 关于 ----------------
     fun toggleDesign() {

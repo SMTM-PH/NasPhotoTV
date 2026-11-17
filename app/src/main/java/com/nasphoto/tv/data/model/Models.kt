@@ -70,6 +70,20 @@ fun MediaItem.isPanoramaPhoto(): Boolean {
 }
 
 /**
+ * 竖屏视频：NAS 返回的 width×height 已经是**显示方向**的尺寸。
+ *
+ * fnOS 的 `gallery` 接口把旋转写进了 width/height（实测 2160×3840 的竖拍无人机素材
+ * 在 `rotation` 字段里是 0，靠宽高比即可判断），所以这里只比宽高，不再看 rotation，
+ * 避免同一段素材被两套口径互相抵消。手机竖拍（1080×1920）与无人机竖拍（2160×3840）
+ * 都命中，横屏 16:9（3840×2160）不会误判。
+ */
+fun MediaItem.isPortraitVideo(): Boolean {
+    if (type != MediaType.VIDEO) return false
+    val (w, h) = pixelSize() ?: return false
+    return h > w
+}
+
+/**
  * 相册（对应 NAS 上的一个文件夹，或按日期/地点聚合的虚拟相册）。
  */data class Album(
     val id: String,
@@ -336,4 +350,23 @@ data class PlaybackSettings(
     val autoPlayNext: Boolean = true,
     /** 默认播放模式 */
     val loopMode: Boolean = false,
+    /** 竖屏视频（手机/无人机竖拍）在 16:9 电视上的画面适配方式 */
+    val portraitFit: PortraitFit = PortraitFit.AUTO,
 )
+
+/**
+ * 竖屏视频的画面适配方式。
+ *
+ * 手机与无人机竖拍素材在电视上的痛点：画面按比例完整显示时只占屏幕中间一条
+ * （2160×3840 的素材在 1080p 电视上只有 607px 宽），左右各留 656px 死黑，
+ * 观感上像是「播放器不支持竖屏」。三种模式：
+ *
+ *  - [AUTO]：保持完整画面，左右黑边用该视频自己的封面放大压暗填充（默认，不丢画面）；
+ *  - [FIT]：保持完整画面，左右纯黑（传统 letterbox）；
+ *  - [FILL]：按高度铺满并左右裁切上下留白（会裁掉画面上下的一部分）。
+ */
+enum class PortraitFit(val label: String) {
+    AUTO("自动填充"),
+    FIT("完整画面"),
+    FILL("铺满屏幕"),
+}

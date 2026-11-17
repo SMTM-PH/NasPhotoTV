@@ -613,6 +613,7 @@ private fun stepAction(key: SettingsKey, actions: SettingsActions): ((Boolean) -
     SettingsKey.ACC_CURRENT -> { isLeft -> actions.cycleAccount(reverse = isLeft) }
     SettingsKey.PB_AUTOPLAY -> { _ -> actions.toggleAutoPlayNext() }
     SettingsKey.PB_LOOP -> { _ -> actions.toggleLoop() }
+    SettingsKey.PB_PORTRAIT_FIT -> { isLeft -> actions.cyclePortraitFit(reverse = isLeft) }
     else -> null
 }
 
