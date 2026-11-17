@@ -79,7 +79,7 @@ fun SettingsNasPanel(store: SettingsStore, feedback: SettingsFeedback, modifier:
         PanelTitle(
             "连接状态",
             if (nas.isConfigured) {
-                "飞牛相册 · ${nas.host}:${nas.port}"
+                "飞牛相册 · ${nas.displayAddress}"
             } else {
                 "尚未配置：在左侧填写地址、账号与密码"
             },
@@ -156,7 +156,7 @@ fun SettingsNasPanel(store: SettingsStore, feedback: SettingsFeedback, modifier:
                             )
                         },
                         title = nas.name.ifBlank { "Home-NAS" },
-                        subtitle = "${nas.host.ifBlank { "未设置" }}:${nas.port} · 飞牛相册",
+                        subtitle = if (nas.host.isBlank()) "未设置" else "${nas.displayAddress} · 飞牛相册",
                         accent = if (failed) TvColor.Danger else TvColor.Accent,
                         active = nas.isConfigured && !failed,
                     )

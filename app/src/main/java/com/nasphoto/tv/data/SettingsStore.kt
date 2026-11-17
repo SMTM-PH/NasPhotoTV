@@ -3,6 +3,7 @@ package com.nasphoto.tv.data
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.nasphoto.tv.data.fn.NasAddressParser
 import com.nasphoto.tv.data.model.Album
 import com.nasphoto.tv.data.model.NasAccount
 import com.nasphoto.tv.data.model.NasConnection
@@ -104,7 +105,10 @@ object SettingsStore {
         if (owner.isBlank()) return
         val previousAccount = previous.account(owner)
         val nextAccount = next.account(owner)
-        val endpointChanged = previous.host.trim().lowercase() != next.host.trim().lowercase() || previous.port != next.port
+        val endpointChanged = previous.host.trim().lowercase() != next.host.trim().lowercase() ||
+            previous.port != next.port ||
+            previous.scheme.lowercase() != next.scheme.lowercase() ||
+            previous.basePath.trimEnd('/') != next.basePath.trimEnd('/')
         if (endpointChanged || nextAccount == null || previousAccount?.username != nextAccount.username) {
             updateScreensaver { it.copy(displayOwnerAccountId = "", displayAlbumIds = emptySet()) }
         }
@@ -290,6 +294,8 @@ object SettingsStore {
         e.putString("nas_name", nas.name)
         e.putString("nas_host", nas.host)
         e.putInt("nas_port", nas.port)
+        e.putString("nas_scheme", nas.scheme)
+        e.putString("nas_base_path", nas.basePath)
         e.putString("nas_active", nas.activeAccountId)
         // 账号列表：按序展开成 count + 下标字段（SharedPreferences 不适合存 JSON/对象）
         e.putInt("nas_account_count", nas.accounts.size)
@@ -332,10 +338,24 @@ object SettingsStore {
         if (!p.contains("ss_idle") && !p.contains("nas_host")) return
         val restoredAccounts = restoreAccounts(p)
         val storedActive = p.getString("nas_active", "") ?: ""
+        val storedHost = p.getString("nas_host", defaultNas.host) ?: defaultNas.host
+        val storedPort = p.getInt("nas_port", defaultNas.port)
+        val storedScheme = p.getString("nas_scheme", null) ?: defaultNas.scheme
+        val storedBasePath = p.getString("nas_base_path", null) ?: defaultNas.basePath
+        // 旧版本可能把完整 URL 直接写进 nas_host，这里拆回 host / scheme / 端口 / 子路径
+        val parsed = NasAddressParser.parse(
+            raw = storedHost,
+            defaultScheme = storedScheme,
+            defaultPort = storedPort,
+            defaultBasePath = storedBasePath,
+        )
         nas = defaultNas.copy(
             name = p.getString("nas_name", defaultNas.name) ?: defaultNas.name,
-            host = p.getString("nas_host", defaultNas.host) ?: defaultNas.host,
-            port = p.getInt("nas_port", defaultNas.port),
+            // 解析失败时保留原文，让用户能在设置页看到并改掉
+            host = if (parsed.valid) parsed.host else storedHost,
+            port = parsed.port ?: storedPort,
+            scheme = if (parsed.valid) parsed.scheme else storedScheme,
+            basePath = if (parsed.valid) parsed.basePath else storedBasePath,
             accounts = restoredAccounts,
             // 存档里的 active id 可能已被删：退回第一个账号
             activeAccountId = restoredAccounts.firstOrNull { it.id == storedActive }?.id

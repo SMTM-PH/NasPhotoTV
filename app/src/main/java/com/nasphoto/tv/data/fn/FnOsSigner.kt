@@ -7,7 +7,8 @@ import java.security.SecureRandom
  * `/p` 业务接口的 `authx` 头。
  *
  * sign = md5(SALT_path_nonce_timestamp_md5(参数串)_SECRET)
- *  - path 必须带 `/p` 前缀；
+ *  - path 必须是飞牛内部的 `/p/api/...` 原路径；反向代理的子路径前缀只出现在
+ *    传输 URL 上，不参与签名（反代会把前缀剥掉，后端看到的仍是原路径）。
  *  - timestamp 是**毫秒**；
  *  - GET 参数按 key 排序。
  *

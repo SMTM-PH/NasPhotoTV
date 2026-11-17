@@ -10,8 +10,14 @@ import java.util.Locale
  * The key contains a digest, never the credentials themselves, and is not persisted.
  */
 fun NasConnection.mediaIdentityKey(): String {
-    val fields = listOf(host.trim().lowercase(Locale.ROOT), port.toString(), activeAccountId,
-        username, password, accessCode)
+    val fields = listOf(
+        scheme.trim().lowercase(Locale.ROOT),
+        host.trim().lowercase(Locale.ROOT),
+        port.toString(),
+        basePath.trim().lowercase(Locale.ROOT),
+        activeAccountId,
+        username, password, accessCode,
+    )
     val source = buildString { fields.forEach { append(it.length).append(':').append(it) } }
     val digest = MessageDigest.getInstance("SHA-256").digest(source.toByteArray(Charsets.UTF_8))
     val hex = "0123456789abcdef"

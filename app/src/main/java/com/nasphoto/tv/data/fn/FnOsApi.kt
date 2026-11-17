@@ -29,16 +29,31 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import javax.net.ssl.SSLException
 
-/** 一次连接所需的配置（端口是飞牛的 Web HTTPS 端口，默认 5667） */
+/**
+ * 一次连接所需的配置（端口是飞牛的 Web 端口，默认 5667；直连为 HTTPS，反代可为 HTTP）。
+ *
+ * [basePath] 是反向代理的子路径前缀（如 "/fnos"），只影响实际请求 URL；
+ * `authx` 签名依旧针对原始的 `/p/api/...` 路径 —— 反代应当把前缀剥掉再转给飞牛，
+ * 后端看到的还是原路径，签名才对得上。
+ */
 data class FnOsAccess(
     val host: String,
     val port: Int,
     val username: String,
     val password: String,
     val accessCode: String = "",
+    val scheme: String = "https",
+    val basePath: String = "",
 ) {
-    val baseUrl: String get() = "https://$host:$port"
-    val wsUrl: String get() = "wss://$host:$port/websocket?type=main"
+    val wsScheme: String get() = if (scheme.equals("http", true)) "ws" else "wss"
+    val normalizedBasePath: String get() = NasAddressParser.normalizeBasePath(basePath)
+    val origin: String get() = "$scheme://$host:$port"
+    /** API / 图片根路径：反代子路径已包含在内 */
+    val baseUrl: String get() = origin + normalizedBasePath
+    val wsUrl: String get() = "$wsScheme://$host:$port$normalizedBasePath/websocket?type=main"
+
+    /** 把以 / 开头的业务路径挂到反代前缀下 */
+    fun url(path: String): String = baseUrl + if (path.startsWith("/")) path else "/$path"
 }
 
 data class FnOsSession(val token: String, val secret: String)
@@ -68,16 +83,24 @@ data class FnOsTwoFactorChallenge(
 class FnOsTwoFactorRequired(val challenge: FnOsTwoFactorChallenge) :
     Exception("该账号已开启两步验证")
 
-fun NasConnection.toFnOsAccess(): FnOsAccess = FnOsAccess(
-    host = host.trim()
-        .removePrefix("https://")
-        .removePrefix("http://")
-        .trimEnd('/'),
-    port = port,
-    username = username.trim(),
-    password = password,
-    accessCode = accessCode.trim(),
-)
+fun NasConnection.toFnOsAccess(): FnOsAccess {
+    // host 里可能残留旧版本写入的完整 URL / 子路径，再解析一次做兼容
+    val parsed = NasAddressParser.parse(
+        raw = host,
+        defaultScheme = scheme,
+        defaultPort = port,
+        defaultBasePath = basePath,
+    )
+    return FnOsAccess(
+        host = parsed.host.ifBlank { host.trim() },
+        port = parsed.port ?: port,
+        username = username.trim(),
+        password = password,
+        accessCode = accessCode.trim(),
+        scheme = parsed.scheme,
+        basePath = parsed.basePath,
+    )
+}
 
 internal class FnOsException(
     message: String,
@@ -224,7 +247,8 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
         @Suppress("UNUSED_EXPRESSION")
         session
         val query = FnOsSigner.payload(params, SignMode.ENCODED)
-        val url = access.baseUrl + path + if (query.isEmpty()) "" else "?$query"
+        // basePath 只在传输层拼接；签名仍用原始业务路径（见 FnOsAccess 注释）
+        val url = access.url(path) + if (query.isEmpty()) "" else "?$query"
         val builder = Request.Builder()
             .url(url)
             .header("AccessToken", session.token)
@@ -497,7 +521,7 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
     private suspend fun verifyAccessCode() = withContext(Dispatchers.IO) {
         val code = Base64.encodeToString(access.accessCode.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
         val request = Request.Builder()
-            .url(access.baseUrl + "/access_code_verify")
+            .url(access.url("/access_code_verify"))
             .header("x-access-code", code)
             .header("x-access-source", "web")
             .get()
@@ -531,8 +555,8 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
     private fun describe(t: Throwable): String = when (t) {
         is FnOsException -> t.message ?: "连接失败"
         is UnknownHostException -> "找不到主机 ${access.host}"
-        is SocketTimeoutException -> "连接超时，检查地址与端口"
-        is ConnectException -> "无法连接 ${access.host}:${access.port}（确认是 HTTPS 端口）"
+        is SocketTimeoutException -> "连接超时，检查地址、端口与路径"
+        is ConnectException -> "无法连接 ${access.origin}（检查协议、端口与反代路径）"
         is SSLException -> if (FnOsTransport.tofu.pinMismatch) {
             "NAS 证书指纹已变化，已清除旧指纹，请再试一次新证书"
         } else {

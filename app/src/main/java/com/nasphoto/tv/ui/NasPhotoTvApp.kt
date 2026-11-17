@@ -80,7 +80,10 @@ fun NasPhotoTvApp() {
         val screensaverSettings = SettingsStore.screensaver
         val playbackSettings = SettingsStore.playback
         val nas = SettingsStore.nas
-        val identityKey = remember(nas.host, nas.port, nas.activeAccountId, nas.username, nas.password, nas.accessCode) {
+        val identityKey = remember(
+            nas.host, nas.port, nas.scheme, nas.basePath,
+            nas.activeAccountId, nas.username, nas.password, nas.accessCode,
+        ) {
             nas.mediaIdentityKey()
         }
 
@@ -105,6 +108,8 @@ fun NasPhotoTvApp() {
             nas.name,
             nas.host,
             nas.port,
+            nas.scheme,
+            nas.basePath,
             nas.activeAccountId,
             nas.username,
             nas.password,
@@ -321,7 +326,14 @@ fun NasPhotoTvApp() {
 
         // 首次连接页搜到 NAS：先填地址和端口，再进设置补账号密码
         val selectDiscoveredNas: (LanNasDevice) -> Unit = { device ->
-            SettingsStore.updateNas { it.copy(host = device.host, port = device.port) }
+            SettingsStore.updateNas {
+                it.copy(
+                    host = device.host,
+                    port = device.port,
+                    scheme = "https",
+                    basePath = "",
+                )
+            }
             route = AppRoute.Settings
         }
 
@@ -513,7 +525,7 @@ fun NasPhotoTvApp() {
 
                             is LibraryLoad.NeedsSetup -> ConnectionScreen(
                                 mode = ConnectionMode.NeedsSetup,
-                                host = nas.host,
+                                host = nas.displayAddress,
                                 onOpenSettings = { route = AppRoute.Settings },
                                 onRetry = { refreshToken += 1 },
                                 onSelectNas = selectDiscoveredNas,
@@ -522,7 +534,7 @@ fun NasPhotoTvApp() {
 
                             is LibraryLoad.Loading -> ConnectionScreen(
                                 mode = ConnectionMode.Loading,
-                                host = nas.host,
+                                host = nas.displayAddress,
                                 onOpenSettings = { route = AppRoute.Settings },
                                 onRetry = { refreshToken += 1 },
                                 onSelectNas = selectDiscoveredNas,
@@ -531,7 +543,7 @@ fun NasPhotoTvApp() {
 
                             is LibraryLoad.Error -> ConnectionScreen(
                                 mode = ConnectionMode.Error(state.message),
-                                host = nas.host,
+                                host = nas.displayAddress,
                                 onOpenSettings = { route = AppRoute.Settings },
                                 onRetry = { refreshToken += 1 },
                                 onSelectNas = selectDiscoveredNas,

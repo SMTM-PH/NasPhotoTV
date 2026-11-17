@@ -153,7 +153,7 @@ fun ConnectionScreen(
                     )
                     Spacer(Modifier.height(TvDimen.SpaceXs))
                     Text(
-                        text = "保持电视和 NAS 在同一局域网，下面会自动搜索；也可以手动填写地址。",
+                        text = "保持电视和 NAS 在同一局域网会自动搜索；外网可填反代/中转地址（设置里填完整 URL）。",
                         fontSize = TvType.Caption,
                         color = TvColor.TextTertiary,
                     )
@@ -277,7 +277,7 @@ private fun LanDiscoverySection(
             )
             Spacer(Modifier.height(TvDimen.SpaceXs))
             Text(
-                text = "确认电视和 NAS 在同一网络，或打开设置手动填写地址。",
+                text = "确认电视和 NAS 在同一网络；外网访问请在设置里填完整的中转 URL（含协议与子路径）。",
                 fontSize = TvType.Tiny,
                 color = TvColor.TextTertiary,
             )

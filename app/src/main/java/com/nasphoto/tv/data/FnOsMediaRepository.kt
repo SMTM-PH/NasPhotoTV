@@ -500,6 +500,7 @@ class FnOsMediaRepository(
     private fun absolute(relative: String): String {
         if (relative.isBlank()) return ""
         if (relative.startsWith("http://") || relative.startsWith("https://")) return relative
+        // baseUrl 已含反代子路径（如 https://relay.com/fnos），相对路径挂到它下面
         return baseUrl.trimEnd('/') + "/" + relative.trimStart('/')
     }
 

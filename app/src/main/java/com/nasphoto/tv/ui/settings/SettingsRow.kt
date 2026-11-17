@@ -217,7 +217,7 @@ fun rowValueText(key: SettingsKey, store: SettingsStore, feedback: SettingsFeedb
     return when (key) {
         SettingsKey.NAS_TEST -> "开始测试"
         SettingsKey.NAS_DEVICE -> store.nas.name
-        SettingsKey.NAS_HOST -> store.nas.host.ifBlank { "未设置" }
+        SettingsKey.NAS_HOST -> if (store.nas.host.isBlank()) "未设置" else store.nas.displayAddress
         SettingsKey.NAS_PORT -> store.nas.port.toString()
         SettingsKey.NAS_ACCOUNT -> store.nas.username.ifBlank { "未设置" }
         SettingsKey.NAS_PASSWORD -> if (store.nas.password.isBlank()) "未设置" else "已设置"

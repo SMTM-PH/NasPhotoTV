@@ -120,6 +120,26 @@ APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 23 MB，含 Media
 
 首次运行需要在设置页填 NAS 地址（默认 `5667`）+ 账号密码，或等局域网自动发现。
 
+### 外网访问 / 反向代理（中转地址）
+
+设置页的「地址」既接受纯 `IP` / `域名`，也接受**完整 URL**：
+
+```
+192.168.31.8                          # 局域网直连，HTTPS 5667
+https://nas.example.com               # DDNS 域名直连
+http://relay.example.com:8080/nas     # http 中转 + 子路径 /nas
+https://relay.example.com/nas/        # https 443 中转 + 子路径 /nas
+```
+
+解析后协议、主机、端口、子路径分别存储，API / 图片 / WebSocket 请求都会挂到子路径下
+（如 `/nas/p/api/v1/...`、`/nas/websocket?type=main`）；协议为 `http` 时 WebSocket 自动降级为 `ws`。
+旧版本把完整 URL 直接写进 `nas_host` 的配置在启动恢复时会自动拆开，无需重填。
+
+> 反向代理需要把子路径前缀**剥掉**再转发到飞牛 Web 服务（例如 Nginx
+> `location /nas/ { proxy_pass https://NAS_IP:5667/; }`）。`authx` 签名针对的是飞牛内部的
+> `/p/api/...` 原路径，前缀不参与签名；如果代理把 `/nas` 一起转给后端，服务端会算错签名。
+> 局域网自动发现选中的设备会重置为「直连 / 根路径」模式。
+
 ---
 
 ## 1. 功能清单

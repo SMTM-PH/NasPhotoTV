@@ -167,6 +167,13 @@ data class NasConnection(
     val activeAccountId: String = "",
     val connected: Boolean = false,
     val latencyMs: Int = 0,
+    /** 连接协议：http / https。反向代理只暴露 http 时填 http（WebSocket 自动降级为 ws） */
+    val scheme: String = "https",
+    /**
+     * 反向代理的子路径前缀，如 "/fnos"。根路径留空。
+     * 传输层会把所有 API / 图片 / WebSocket 路径都挂到它下面。
+     */
+    val basePath: String = "",
 ) {
     /** 当前账号；没有账号时为 null */
     val activeAccount: NasAccount?
@@ -189,9 +196,13 @@ data class NasConnection(
     val isConfigured: Boolean
         get() = host.isNotBlank() && activeAccount?.isConfigured == true
 
+    /** 设置页展示的连接串（含协议与反代子路径） */
+    val displayAddress: String
+        get() = "$scheme://${host.ifBlank { "NAS" }}:$port$basePath"
+
     /** 设置页展示的连接串 */
     val displayPath: String
-        get() = "https://${username.ifBlank { "user" }}@${host.ifBlank { "NAS" }}:$port/p"
+        get() = "$scheme://${username.ifBlank { "user" }}@${host.ifBlank { "NAS" }}:$port$basePath/p"
 
     fun account(id: String): NasAccount? = accounts.firstOrNull { it.id == id }
 

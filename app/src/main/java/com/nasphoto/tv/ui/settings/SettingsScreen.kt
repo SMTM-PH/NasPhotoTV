@@ -580,8 +580,13 @@ private data class TextEditSpec(
 
 private fun textEditSpec(key: SettingsKey, store: SettingsStore): TextEditSpec = when (key) {
     SettingsKey.NAS_DEVICE -> TextEditSpec("NAS 名称", "显示在顶栏与本机", store.nas.name, masked = false)
-    SettingsKey.NAS_HOST -> TextEditSpec("NAS 地址", "局域网 IP 或 DDNS 域名", store.nas.host, masked = false)
-    SettingsKey.NAS_PORT -> TextEditSpec("端口", "飞牛 Web HTTPS 端口，默认 5667", store.nas.port.toString(), masked = false)
+    SettingsKey.NAS_HOST -> TextEditSpec(
+        "NAS 地址",
+        "IP / 域名，或完整地址 http(s)://域名:端口/子路径",
+        store.nas.displayAddress,
+        masked = false,
+    )
+    SettingsKey.NAS_PORT -> TextEditSpec("端口", "直连 5667；反代填网关端口（如 443 / 80）", store.nas.port.toString(), masked = false)
     SettingsKey.NAS_ACCOUNT -> TextEditSpec("账号", "飞牛账号", store.nas.username, masked = false)
     SettingsKey.NAS_PASSWORD -> TextEditSpec("密码", "仅保存在这台电视上", store.nas.password, masked = true)
     SettingsKey.NAS_ACCESS_CODE -> TextEditSpec("访问码", "未启用访问码网关时留空", store.nas.accessCode, masked = false)

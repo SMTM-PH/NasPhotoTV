@@ -11,6 +11,7 @@ import com.nasphoto.tv.data.model.PortraitFit
 import com.nasphoto.tv.data.model.ScreensaverSettings
 import com.nasphoto.tv.data.fn.FnOsApi
 import com.nasphoto.tv.data.fn.FnOsTwoFactorChallenge
+import com.nasphoto.tv.data.fn.NasAddressParser
 import com.nasphoto.tv.data.fn.toFnOsAccess
 
 /**
@@ -36,8 +37,8 @@ enum class SettingsKey(
     val hint: String,
 ) {
     NAS_DEVICE(SettingsGroup.NAS, "名称", "显示在顶栏与本机的 NAS 名称"),
-    NAS_HOST(SettingsGroup.NAS, "地址", "NAS 的局域网 IP 或 DDNS 域名"),
-    NAS_PORT(SettingsGroup.NAS, "端口", "飞牛 Web HTTPS 端口，默认 5667"),
+    NAS_HOST(SettingsGroup.NAS, "地址", "IP / 域名，或完整地址 http(s)://域名:端口/子路径"),
+    NAS_PORT(SettingsGroup.NAS, "端口", "直连 5667；反代填网关端口（如 443 / 80）"),
     NAS_ACCOUNT(SettingsGroup.NAS, "账号", "当前账号的飞牛用户名"),
     NAS_PASSWORD(SettingsGroup.NAS, "密码", "账号密码，仅保存在这台电视上"),
     NAS_ACCESS_CODE(SettingsGroup.NAS, "访问码", "飞牛「访问码」网关，未启用可留空"),
@@ -92,8 +93,29 @@ class SettingsActions(
     // ---------------- NAS ----------------
     fun setName(value: String) = store.updateNas { it.copy(name = value.ifBlank { "Home-NAS" }) }
 
+    /**
+     * 地址栏接受纯主机或完整 URL。完整 URL 里的协议、端口、子路径会一并写入配置；
+     * 只填主机时按 https + 现有端口、根路径处理。
+     */
     fun setHost(value: String) {
-        store.updateNas { it.copy(host = value.trim()) }
+        val parsed = NasAddressParser.parse(
+            raw = value,
+            defaultScheme = "https",
+            defaultPort = store.nas.port,
+            defaultBasePath = "",
+        )
+        if (!parsed.valid) {
+            feedback.toast = parsed.error ?: "地址格式不正确"
+            return
+        }
+        store.updateNas {
+            it.copy(
+                host = parsed.host,
+                scheme = parsed.scheme,
+                basePath = parsed.basePath,
+                port = parsed.port ?: it.port,
+            )
+        }
         feedback.invalidateNasTest()
     }
 
