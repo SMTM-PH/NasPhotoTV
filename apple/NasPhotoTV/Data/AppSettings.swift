@@ -57,6 +57,10 @@ final class AppSettings: ObservableObject {
     @Published var username: String { didSet { defaults.set(username, forKey: "nas.username") } }
     @Published var password: String { didSet { defaults.set(password, forKey: "nas.password") } }
     @Published var accessCode: String { didSet { defaults.set(accessCode, forKey: "nas.accessCode") } }
+    /// 开机自动重连上次 NAS（默认关）
+    @Published var autoReconnect: Bool {
+        didSet { defaults.set(autoReconnect, forKey: "nas.autoReconnect") }
+    }
     @Published var screensaver: ScreensaverSettings {
         didSet {
             if let data = try? JSONEncoder().encode(screensaver) {
@@ -78,6 +82,7 @@ final class AppSettings: ObservableObject {
         username = defaults.string(forKey: "nas.username") ?? ""
         password = defaults.string(forKey: "nas.password") ?? ""
         accessCode = defaults.string(forKey: "nas.accessCode") ?? ""
+        autoReconnect = defaults.bool(forKey: "nas.autoReconnect")
         if let data = defaults.data(forKey: "screensaver.settings"),
            let saved = try? JSONDecoder().decode(ScreensaverSettings.self, from: data) {
             screensaver = saved

@@ -97,7 +97,14 @@ struct ConnectView: View {
         }
         .padding(Tv.Dimen.screenPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .task { await scan() }
+        .task {
+            await scan()
+            // 自动重连：配置完整时直接测试并进入（设置页可开关，默认关）
+            if UserDefaults.standard.bool(forKey: "nas.autoReconnect"), settings.isConfigured {
+                await test()
+                if !isError && !twoFactorActive { await connect() }
+            }
+        }
     }
 
     // MARK: - 局域网发现（对标 Android LanDiscoverySection）

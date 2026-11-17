@@ -5,7 +5,9 @@
 
 - 分支：`feature/apple-tv`（从 main 的 1.2.4 分出）
 - 工程：`apple/NasPhotoTV.xcodeproj`（SwiftUI，tvOS 17.0+，Bundle ID `com.nasphoto.tv.apple`）
-- 状态：✅ `xcodebuild -sdk appletvsimulator` 编译通过；✅ 已安装到 **Apple TV 4K (tvOS 27.2) 模拟器**启动验证、无崩溃；真机待实测
+- 状态：✅ `xcodebuild -sdk appletvsimulator` 编译通过；✅ 已安装到 **Apple TV 4K (tvOS 27.2) 模拟器**并**连通真实飞牛 NAS**（192.168.31.184:5667）跑完整链路；真机待实测
+
+> **真实 NAS 实测（2026-11-17）**：登录 200ms、`user_photo/stat` 照片 4550 / 视频 744、图库首屏/相册 34/人物 36（老婆 516 张、我 421 张）/文件夹 2（Photos 2943 项）/智能分类 80（「天空云彩」821 张）/人物详情/缩略图下载（251KB JPEG）全部通过。截图见 [simulator-live-connected.png](simulator-live-connected.png)。
 
 ---
 
@@ -103,6 +105,16 @@ Xcode 图形界面：打开 `apple/NasPhotoTV.xcodeproj`，选 Apple TV 4K 模�
 4. **自签证书**：TOFU —— 首连信任并按 host 记录叶子证书指纹，指纹变化时先清旧指纹并拒绝连接
    （下次连接重新确认），防静默降级。
 5. **图片鉴权**：缩略图/原图 URL 只需 `AccessToken` 头（+Cookie），无需 authx 签名，与 Android 端 Coil 行为一致。
+
+### 真实 NAS 实测中定位并修复的协议细节
+
+| 现象 | 根因 | 修复 |
+|---|---|---|
+| 刚发消息就报「连接已断开」 | `task.resume()` 后 TLS+WS 升级是异步的，`wsOpen` 还没置位 | `wsRequest` 先等 `didOpen`（12s 超时）再发 |
+| 发了握手但 NAS 永不回 | 飞牛只处理 **text frame**（opcode 0x1），`.data()` 发的 binary frame 被静默忽略 | 改用 `task.send(.string(...))` |
+| 登录响应 succ 却判失败 | 服务端推的 `{"sysNotify":"tokenExpired"}` 被当成响应消费；响应未按 reqid 匹配 | 丢弃 sysNotify，`wsRequest` 按 `reqid` 精确匹配 |
+| 每次 API 都重新登录（8 次握手） | `ensureSession` 没缓存返回的 session | 缓存 session，重登前关闭旧 WS |
+| 智能分类详情返回空 | magic-search 的 id 被当字符串写入，`int64` 读不到 | `Json.int/int64` 兼容数字字符串 |
 
 ## 5. 与 Android 版的已知差异
 

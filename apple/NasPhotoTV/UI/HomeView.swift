@@ -630,6 +630,7 @@ private struct SettingsTab: View {
                 section("NAS 连接") {
                     row("地址", value: "https://\(settings.host):\(settings.port)", action: {})
                     row("账号", value: settings.username, action: {})
+                    row("开机自动重连", value: settings.autoReconnect ? "开" : "关") { settings.autoReconnect.toggle() }
                     row("断开连接", value: "") { onDisconnect() }
                 }
 

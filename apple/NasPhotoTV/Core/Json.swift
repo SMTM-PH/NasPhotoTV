@@ -21,11 +21,15 @@ struct Json {
     }
 
     func int(_ key: String, _ def: Int = 0) -> Int {
-        (raw[key] as? NSNumber)?.intValue ?? def
+        if let n = raw[key] as? NSNumber { return n.intValue }
+        if let s = raw[key] as? String, let n = Int(s) { return n }
+        return def
     }
 
     func int64(_ key: String, _ def: Int64 = 0) -> Int64 {
-        (raw[key] as? NSNumber)?.int64Value ?? def
+        if let n = raw[key] as? NSNumber { return n.int64Value }
+        if let s = raw[key] as? String, let n = Int64(s) { return n }
+        return def
     }
 
     /// fnOS 的布尔字段并不总是 JSON 布尔：不同版本会回 true / "true" / 1。

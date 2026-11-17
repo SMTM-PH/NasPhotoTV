@@ -320,10 +320,18 @@ actor FnOsApi {
         }
         loginTask = task
         defer { loginTask = nil }
-        return try await task.value
+        let result = try await task.value
+        session = result
+        return result
     }
 
     private func performLogin() async throws -> FnOsSession {
+        // 重登前关掉上一条 WebSocket，避免连接和 25s 心跳任务泄漏。
+        pingTask?.cancel()
+        pingTask = nil
+        wsDelegate?.invalidate()
+        wsTask?.cancel(with: .goingAway, reason: nil)
+        wsTask = nil
         FnOsReqId.shared.reset()
         wsBuffer = []
         wsOpen = false
@@ -458,12 +466,34 @@ actor FnOsApi {
     /// 握手是严格串行的，这里用「发送 + 轮询缓冲」拿到响应，避免跨 actor
     /// 的 continuation 管理（超时/关闭/重登三方竞争时极易泄漏）。
     private func wsRequest(_ message: Json) async throws -> Json {
-        guard let task = wsTask, wsOpen else { throw FnOsError("登录连接已断开") }
+        guard wsTask != nil else { throw FnOsError("登录连接已断开") }
+        // task.resume() 之后 TLS 握手 + WS 升级是异步的：这里必须等 didOpen，
+        // 否则在本地 NAS 上会随机出现「刚发消息就报连接已断开」的竞态。
+        let openDeadline = Date().addingTimeInterval(12)
+        while !wsOpen {
+            guard wsTask != nil else { throw FnOsError("登录连接已断开") }
+            if Date() >= openDeadline { throw FnOsError("等待 NAS WebSocket 连接超时") }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        guard let task = wsTask else { throw FnOsError("登录连接已断开") }
         let data = try JSONSerialization.data(withJSONObject: message.raw)
-        try await task.send(.data(data))
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw FnOsError("WS 消息编码失败")
+        }
+        // 飞牛 NAS 只处理 text frame（opcode 0x1）；用 .data 发 binary frame 会被静默忽略。
+        try await task.send(.string(text))
+        // 用 reqid 精确匹配响应：NAS 会在同一连接上推心跳/通知，
+        // 简单 removeFirst() 会把别人的消息当成本请求的响应。
+        let requestReqid = message.string("reqid")
         let deadline = Date().addingTimeInterval(12)
         while true {
-            if !wsBuffer.isEmpty { return wsBuffer.removeFirst() }
+            if let index = wsBuffer.firstIndex(where: { reply in
+                let rid = reply.string("reqid")
+                if requestReqid.isEmpty { return true }
+                return rid.isEmpty || rid == requestReqid
+            }) {
+                return wsBuffer.remove(at: index)
+            }
             if !wsOpen { throw FnOsError("登录连接已断开") }
             if Date() >= deadline { throw FnOsError("等待 NAS 响应超时") }
             try await Task.sleep(nanoseconds: 50_000_000)
@@ -476,7 +506,11 @@ actor FnOsApi {
 
     private func handleWsMessage(_ text: String) {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(text.utf8)) else { return }
-        wsBuffer.append(Json(obj))
+        let json = Json(obj)
+        // 服务端主动推送（如 {"sysNotify":"tokenExpired"}）不是任何请求的响应，
+        // 进缓冲会被 wsRequest 误当响应消费。这里直接丢弃。
+        guard json.string("sysNotify").isEmpty else { return }
+        wsBuffer.append(json)
     }
 
     private func handleWsClosed() {
