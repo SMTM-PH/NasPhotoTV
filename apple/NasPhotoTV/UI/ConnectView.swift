@@ -16,6 +16,9 @@ struct ConnectView: View {
     @State private var twoFactorActive = false
     @State private var twoFactorCode = ""
     @State private var submittingCode = false
+    @State private var scanning = false
+    @State private var discovered: [LanNasDevice] = []
+    @FocusState private var focusedId: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tv.Dimen.spaceM) {
@@ -88,10 +91,93 @@ struct ConnectView: View {
                 .background(RoundedRectangle(cornerRadius: Tv.Dimen.radiusM).fill(Tv.Color.surfaceSoft))
             }
 
+            discoverySection
+
             Spacer()
         }
         .padding(Tv.Dimen.screenPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task { await scan() }
+    }
+
+    // MARK: - 局域网发现（对标 Android LanDiscoverySection）
+
+    private var discoverySection: some View {
+        VStack(alignment: .leading, spacing: Tv.Dimen.spaceS) {
+            HStack(spacing: Tv.Dimen.spaceM) {
+                Text("局域网设备")
+                    .font(.system(size: Tv.Font.cardTitle, weight: .semibold))
+                    .foregroundColor(Tv.Color.textPrimary)
+                if scanning {
+                    Text("正在搜索局域网内的飞牛 NAS…")
+                        .font(.system(size: Tv.Font.caption))
+                        .foregroundColor(Tv.Color.textSecondary)
+                } else if discovered.isEmpty {
+                    Text("没有自动发现设备")
+                        .font(.system(size: Tv.Font.caption))
+                        .foregroundColor(Tv.Color.textSecondary)
+                } else {
+                    Text("发现 \(discovered.count) 台设备 · 选择后自动填入地址")
+                        .font(.system(size: Tv.Font.caption))
+                        .foregroundColor(Tv.Color.textSecondary)
+                }
+                Spacer()
+                Button("重新搜索") { Task { await scan() } }
+                    .buttonStyle(.plain)
+                    .font(.system(size: Tv.Font.caption))
+                    .foregroundColor(Tv.Color.accent)
+                    .disabled(scanning)
+                    .focused($focusedId, equals: "rescan")
+                    .tvFocus(focusedId == "rescan")
+            }
+            if !discovered.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Tv.Dimen.spaceS) {
+                        ForEach(discovered) { device in
+                            Button {
+                                settings.host = device.host
+                                settings.port = device.port
+                            } label: {
+                                HStack(spacing: Tv.Dimen.spaceS) {
+                                    Image(systemName: "server.rack")
+                                        .font(.system(size: 22))
+                                        .foregroundColor(Tv.Color.accent)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(device.fnOsCertificate ? "飞牛 NAS" : "局域网设备")
+                                            .font(.system(size: Tv.Font.cardTitle))
+                                            .foregroundColor(Tv.Color.textPrimary)
+                                        Text("\(device.host):\(device.port)")
+                                            .font(.system(size: Tv.Font.tiny))
+                                            .foregroundColor(Tv.Color.textTertiary)
+                                    }
+                                    Text("选择")
+                                        .font(.system(size: Tv.Font.caption))
+                                        .foregroundColor(Tv.Color.accent)
+                                }
+                                .padding(.horizontal, Tv.Dimen.spaceM)
+                                .padding(.vertical, Tv.Dimen.spaceS)
+                                .background(RoundedRectangle(cornerRadius: Tv.Dimen.radiusM).fill(Tv.Color.surface))
+                            }
+                            .buttonStyle(.plain)
+                            .focused($focusedId, equals: "lan-\(device.id)")
+                            .tvFocus(focusedId == "lan-\(device.id)")
+                        }
+                    }
+                }
+            } else if !scanning {
+                Text("确认电视和 NAS 在同一网络，或手动填写地址。")
+                    .font(.system(size: Tv.Font.tiny))
+                    .foregroundColor(Tv.Color.textTertiary)
+            }
+        }
+        .padding(.top, Tv.Dimen.spaceS)
+    }
+
+    private func scan() async {
+        guard !scanning else { return }
+        scanning = true
+        defer { scanning = false }
+        discovered = await LanNasDiscovery.discover()
     }
 
     private var portText: Binding<String> {

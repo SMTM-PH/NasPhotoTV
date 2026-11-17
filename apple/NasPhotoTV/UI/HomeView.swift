@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// 首页：图库（全库按年份）/ 相册 / 设置 三项主导航，静置自动进入屏保。
-/// 对齐 Android 端沉浸式首页的信息层级，首期不包含人物与智能分类（见 apple/README.md 路线图）。
+/// 首页：对标 Android 媒体库的信息架构 —— 图库（按年份）/ 相册 / 文件夹 /
+/// 人物 / 智能分类 / 收藏 / 设置，静置自动进入屏保。
 struct HomeView: View {
 
     let repository: FnOsRepository
@@ -10,6 +10,10 @@ struct HomeView: View {
     enum Tab: String, CaseIterable, Identifiable {
         case gallery = "图库"
         case albums = "相册"
+        case folders = "文件夹"
+        case people = "人物"
+        case smart = "智能分类"
+        case favorites = "收藏"
         case settings = "设置"
         var id: String { rawValue }
     }
@@ -21,16 +25,39 @@ struct HomeView: View {
         var index: Int
     }
 
+    /// 统一的集合卡片（相册 / 文件夹 / 人物 / 智能分类）
+    struct Collection: Identifiable, Hashable {
+        enum Kind: String { case album, folder, person, smart }
+        let kind: Kind
+        let rawId: String
+        let name: String
+        let coverUrl: String
+        let itemCount: Int
+        let subtitle: String
+        let isPerson: Bool
+        var id: String { "\(kind.rawValue)-\(rawId)" }
+    }
+
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var favorites = FavoritesStore.shared
 
     @State private var tab: Tab = .gallery
     @State private var items: [MediaItem] = []
     @State private var yearGroups: [YearGroup] = []
     @State private var albums: [Album] = []
+    @State private var folders: [NasFolder] = []
+    @State private var people: [Person] = []
+    @State private var smartAlbums: [Album] = []
+    @State private var favoriteItems: [MediaItem] = []
+    @State private var screensaverPhotos: [MediaItem] = []
+    @State private var searchText = ""
+    @State private var searchResults: [MediaItem] = []
     @State private var loading = true
+    @State private var collectionLoading = false
     @State private var loadError: String?
+    @State private var collectionError: String?
     @State private var viewer: ViewerSession?
-    @State private var openAlbum: Album?
+    @State private var openCollection: Collection?
     @State private var screensaverActive = false
     @FocusState private var focusedId: String?
     @State private var lastInteraction = Date()
@@ -44,7 +71,6 @@ struct HomeView: View {
                 content
             }
             .padding(Tv.Dimen.screenPadding)
-
             idleTick
         }
         .fullScreenCover(item: $viewer) { session in
@@ -53,21 +79,24 @@ struct HomeView: View {
                 touch()
             }
         }
-        .fullScreenCover(item: $openAlbum) { album in
-            AlbumDetailView(repository: repository, album: album) { media, index in
-                openAlbum = nil
+        .fullScreenCover(item: $openCollection) { collection in
+            CollectionDetailView(repository: repository, collection: collection) { media, index, title in
+                openCollection = nil
                 viewer = ViewerSession(items: media, index: index)
+                _ = title
             }
         }
         .fullScreenCover(isPresented: $screensaverActive) {
-            ScreensaverView(photos: repository.screensaverPhotos, settings: settings.screensaver) {
+            ScreensaverView(photos: screensaverPhotos, settings: settings) {
                 screensaverActive = false
                 touch()
             }
         }
+        .onAppear { favorites.load(accountId: settings.username) }
         .onChange(of: focusedId) { _ in touch() }
         .onChange(of: tab) { _ in touch() }
         .task { await load() }
+        .task(id: tab) { await loadTab(tab) }
     }
 
     // MARK: - 头部与导航
@@ -87,20 +116,17 @@ struct HomeView: View {
     private var statusText: String {
         if loading { return "\(settings.host) · 加载中…" }
         if let loadError { return "\(settings.host) · \(loadError)" }
-        let photos = items.count
-        return "\(settings.host) · \(photos) 项"
+        return "\(settings.host) · \(items.count) 项"
     }
 
     private var navRow: some View {
         HStack(spacing: Tv.Dimen.spaceS) {
             ForEach(Tab.allCases) { candidate in
                 let isActive = tab == candidate
-                Button {
-                    tab = candidate
-                } label: {
+                Button { tab = candidate } label: {
                     Text(candidate.rawValue)
-                        .font(.system(size: Tv.Font.cardTitle, weight: .semibold))
-                        .padding(.horizontal, Tv.Dimen.spaceL)
+                        .font(.system(size: Tv.Font.caption, weight: .semibold))
+                        .padding(.horizontal, Tv.Dimen.spaceM)
                         .padding(.vertical, 10)
                         .background(Capsule().fill(isActive ? Tv.Color.accent : Tv.Color.surface))
                         .foregroundColor(isActive ? Tv.Color.bg : Tv.Color.textSecondary)
@@ -116,19 +142,7 @@ struct HomeView: View {
     @ViewBuilder
     private var content: some View {
         if loading {
-            VStack(spacing: Tv.Dimen.spaceM) {
-                Spacer()
-                Text("正在从 NAS 加载照片…")
-                    .font(.system(size: Tv.Font.body))
-                    .foregroundColor(Tv.Color.textSecondary)
-                if let loadError {
-                    Text(loadError)
-                        .font(.system(size: Tv.Font.caption))
-                        .foregroundColor(Tv.Color.danger)
-                }
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            centered(Text("正在从 NAS 加载照片…").font(.system(size: Tv.Font.body)).foregroundColor(Tv.Color.textSecondary))
         } else if let loadError, items.isEmpty {
             VStack(spacing: Tv.Dimen.spaceL) {
                 Spacer()
@@ -148,28 +162,91 @@ struct HomeView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             switch tab {
-            case .gallery: GalleryTab(groups: yearGroups, focusedId: $focusedId) { items, index in
-                    viewer = ViewerSession(items: items, index: index)
+            case .gallery:
+                GalleryTab(
+                    groups: yearGroups,
+                    searchText: $searchText,
+                    results: searchResults,
+                    focusedId: $focusedId,
+                ) { media, index in
+                    viewer = ViewerSession(items: media, index: index)
                 }
-            case .albums: AlbumsTab(albums: albums, focusedId: $focusedId) { album in
-                    openAlbum = album
+                .onChange(of: searchText) { query in
+                    Task { searchResults = (try? await repository.search(query)) ?? [] }
                 }
-            case .settings: SettingsTab(settings: settings, focusedId: $focusedId) {
-                    onDisconnect()
+            case .albums:
+                CollectionsTab(collections: albumCollections, focusedId: $focusedId, emptyText: "还没有相册") { openCollection = $0 }
+            case .folders:
+                collectionContent(collections: folderCollections, emptyText: "还没有文件夹")
+            case .people:
+                collectionContent(collections: personCollections, emptyText: "还没有人物分组")
+            case .smart:
+                collectionContent(collections: smartCollections, emptyText: "还没有智能分类")
+            case .favorites:
+                FavoritesTab(items: favoriteItems, focusedId: $focusedId) { media, index in
+                    viewer = ViewerSession(items: media, index: index)
                 }
+            case .settings:
+                SettingsTab(settings: settings, focusedId: $focusedId, onDisconnect: onDisconnect)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func collectionContent(collections: [Collection], emptyText: String) -> some View {
+        if collectionLoading {
+            centered(Text("加载中…").foregroundColor(Tv.Color.textSecondary))
+        } else if let collectionError {
+            centered(Text(collectionError).foregroundColor(Tv.Color.danger))
+        } else {
+            CollectionsTab(collections: collections, focusedId: $focusedId, emptyText: emptyText) { openCollection = $0 }
+        }
+    }
+
+    private func centered<Content: View>(_ content: Content) -> some View {
+        VStack { Spacer(); content; Spacer() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - 集合映射
+
+    private var albumCollections: [Collection] {
+        albums.map {
+            Collection(kind: .album, rawId: $0.id, name: $0.name, coverUrl: $0.coverUrl,
+                       itemCount: $0.itemCount, subtitle: $0.subtitle, isPerson: false)
+        }
+    }
+
+    private var folderCollections: [Collection] {
+        folders.map {
+            Collection(kind: .folder, rawId: $0.id, name: $0.name, coverUrl: "",
+                       itemCount: $0.photoCount + $0.videoCount,
+                       subtitle: $0.path, isPerson: false)
+        }
+    }
+
+    private var personCollections: [Collection] {
+        people.map {
+            Collection(kind: .person, rawId: $0.id, name: $0.displayName, coverUrl: $0.coverUrl,
+                       itemCount: $0.itemCount, subtitle: "", isPerson: true)
+        }
+    }
+
+    private var smartCollections: [Collection] {
+        smartAlbums.map {
+            Collection(kind: .smart, rawId: $0.id, name: $0.name, coverUrl: $0.coverUrl,
+                       itemCount: $0.itemCount, subtitle: $0.subtitle, isPerson: false)
         }
     }
 
     // MARK: - 屏保待机
 
-    /// 每秒检查一次静置时长；到点弹屏保（看图/看相册时不打扰）。
     private var idleTick: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             Color.clear
                 .frame(width: 0, height: 0)
                 .onChange(of: context.date) { date in
-                    guard !screensaverActive, viewer == nil, openAlbum == nil else { return }
+                    guard !screensaverActive, viewer == nil, openCollection == nil else { return }
                     guard settings.screensaver.enabled else { return }
                     let timeout = max(15, settings.screensaver.idleTimeoutSec)
                     if date.timeIntervalSince(lastInteraction) >= Double(timeout) {
@@ -179,9 +256,7 @@ struct HomeView: View {
         }
     }
 
-    private func touch() {
-        lastInteraction = Date()
-    }
+    private func touch() { lastInteraction = Date() }
 
     // MARK: - 数据
 
@@ -194,21 +269,36 @@ struct HomeView: View {
             items = try await recent
             yearGroups = makeYearGroups(items)
             albums = (try? await albumList) ?? []
+            // 屏保优先用人物照片池；失败回退最近照片
+            screensaverPhotos = (try? await repository.getPeoplePhotos()) ?? []
+            if screensaverPhotos.isEmpty { screensaverPhotos = repository.screensaverPhotos }
         } catch {
             loadError = FnOsApi.describe(error, access: repository.access)
-            // 两步验证中途失效等场景：给出可读提示
             let pending = await repository.hasPendingTwoFactor()
-            if pending {
-                loadError = "两步验证会话已过期，请断开后重新连接"
-            }
+            if pending { loadError = "两步验证会话已过期，请断开后重新连接" }
         }
         loading = false
     }
+
+    /// 按需加载集合（对齐 Android「点开才拉」的策略，避免启动拉全部 AI 分类）。
+    private func loadTab(_ tab: Tab) async {
+        collectionError = nil
+        collectionLoading = true
+        defer { collectionLoading = false }
+        do {
+            switch tab {
+            case .folders: folders = (try? await repository.getFolders()) ?? []
+            case .people: people = (try? await repository.getPeople()) ?? []
+            case .smart: smartAlbums = (try? await repository.getSmartAlbums()) ?? []
+            case .favorites: favoriteItems = (try? await repository.getFavorites(favorites)) ?? []
+            default: break
+            }
+        }
+    }
 }
 
-// MARK: - 图库（按年份分组）
+// MARK: - 图库（按年份分组 + 搜索）
 
-/// 按年份分组的结果（在数据加载时算一次，避免焦点移动时反复重排全库）。
 private struct YearGroup: Identifiable {
     let year: Int
     let items: [MediaItem]
@@ -224,39 +314,66 @@ private func makeYearGroups(_ items: [MediaItem]) -> [YearGroup] {
         if buckets[year] == nil { order.append(year) }
         buckets[year, default: []].append(item)
     }
-    return order
-        .sorted(by: >)
-        .map { YearGroup(year: $0, items: buckets[$0] ?? []) }
+    return order.sorted(by: >).map { YearGroup(year: $0, items: buckets[$0] ?? []) }
 }
 
 private struct GalleryTab: View {
 
     let groups: [YearGroup]
+    @Binding var searchText: String
+    let results: [MediaItem]
     var focusedId: FocusState<String?>.Binding
     var onOpen: ([MediaItem], Int) -> Void
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: Tv.Dimen.spaceL) {
-                ForEach(groups) { group in
-                    VStack(alignment: .leading, spacing: Tv.Dimen.spaceM) {
-                        Text(group.year == 0 ? "未知年份" : "\(String(group.year)) 年")
-                            .font(.system(size: Tv.Font.section, weight: .bold))
-                            .foregroundColor(Tv.Color.textPrimary)
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 240, maximum: 320), spacing: Tv.Dimen.spaceM)],
-                            spacing: Tv.Dimen.spaceM,
-                        ) {
-                            ForEach(group.items) { item in
-                                MediaCard(item: item, focusedId: focusedId) {
-                                    onOpen(group.items, group.items.firstIndex(where: { $0.id == item.id }) ?? 0)
-                                }
+        VStack(alignment: .leading, spacing: Tv.Dimen.spaceM) {
+            TextField("搜索文件名 / 日期 / 格式", text: $searchText)
+                .font(.system(size: Tv.Font.body))
+                .frame(width: 420)
+                .padding(.horizontal, Tv.Dimen.spaceM)
+                .padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: Tv.Dimen.radiusM).fill(Tv.Color.surface))
+                .foregroundColor(Tv.Color.textPrimary)
+
+            if !searchText.isEmpty {
+                Text("搜索结果 · \(results.count) 项")
+                    .font(.system(size: Tv.Font.section, weight: .bold))
+                    .foregroundColor(Tv.Color.textPrimary)
+                MediaGrid(items: results, focusedId: focusedId) { items, index in onOpen(items, index) }
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: Tv.Dimen.spaceL) {
+                        ForEach(groups) { group in
+                            VStack(alignment: .leading, spacing: Tv.Dimen.spaceM) {
+                                Text(group.year == 0 ? "未知年份" : "\(String(group.year)) 年")
+                                    .font(.system(size: Tv.Font.section, weight: .bold))
+                                    .foregroundColor(Tv.Color.textPrimary)
+                                MediaGrid(items: group.items, focusedId: focusedId) { items, index in onOpen(items, index) }
                             }
                         }
                     }
+                    .padding(.bottom, Tv.Dimen.spaceXl)
                 }
             }
-            .padding(.bottom, Tv.Dimen.spaceXl)
+        }
+    }
+}
+
+private struct MediaGrid: View {
+    let items: [MediaItem]
+    var focusedId: FocusState<String?>.Binding
+    var onOpen: ([MediaItem], Int) -> Void
+
+    var body: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 240, maximum: 320), spacing: Tv.Dimen.spaceM)],
+            spacing: Tv.Dimen.spaceM,
+        ) {
+            ForEach(items) { item in
+                MediaCard(item: item, focusedId: focusedId) {
+                    onOpen(items, items.firstIndex(where: { $0.id == item.id }) ?? 0)
+                }
+            }
         }
     }
 }
@@ -285,9 +402,7 @@ struct MediaCard: View {
                         .lineLimit(1)
                     Spacer()
                     if item.isVideo {
-                        Text("视频")
-                            .font(.system(size: Tv.Font.tiny))
-                            .foregroundColor(Tv.Color.accentAlt)
+                        Text("视频").font(.system(size: Tv.Font.tiny)).foregroundColor(Tv.Color.accentAlt)
                     }
                 }
             }
@@ -299,34 +414,27 @@ struct MediaCard: View {
     }
 }
 
-// MARK: - 相册
+// MARK: - 集合网格（相册 / 文件夹 / 人物 / 智能分类）
 
-private struct AlbumsTab: View {
+private struct CollectionsTab: View {
 
-    let albums: [Album]
+    let collections: [HomeView.Collection]
     var focusedId: FocusState<String?>.Binding
-    var onOpen: (Album) -> Void
+    let emptyText: String
+    var onOpen: (HomeView.Collection) -> Void
 
     var body: some View {
-        if albums.isEmpty {
-            VStack {
-                Spacer()
-                Text("还没有相册")
-                    .font(.system(size: Tv.Font.body))
-                    .foregroundColor(Tv.Color.textSecondary)
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        if collections.isEmpty {
+            VStack { Spacer(); Text(emptyText).font(.system(size: Tv.Font.body)).foregroundColor(Tv.Color.textSecondary); Spacer() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 320, maximum: 420), spacing: Tv.Dimen.spaceM)],
                     spacing: Tv.Dimen.spaceM,
                 ) {
-                    ForEach(albums) { album in
-                        AlbumCard(album: album, focusedId: focusedId) {
-                            onOpen(album)
-                        }
+                    ForEach(collections) { collection in
+                        CollectionCard(collection: collection, focusedId: focusedId) { onOpen(collection) }
                     }
                 }
                 .padding(.bottom, Tv.Dimen.spaceXl)
@@ -335,35 +443,55 @@ private struct AlbumsTab: View {
     }
 }
 
-private struct AlbumCard: View {
+private struct CollectionCard: View {
 
-    let album: Album
+    let collection: HomeView.Collection
     var focusedId: FocusState<String?>.Binding
     var onSelect: () -> Void
 
-    private var focusKey: String { "album-\(album.id)" }
+    private var focusKey: String { "collection-\(collection.id)" }
 
     var body: some View {
         Button(action: onSelect) {
             VStack(alignment: .leading, spacing: Tv.Dimen.spaceXs) {
-                RemoteImage(url: album.coverUrl)
-                    .frame(height: 180)
-                    .frame(maxWidth: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: Tv.Dimen.radiusM))
+                if collection.isPerson {
+                    HStack {
+                        Spacer()
+                        ZStack {
+                            Circle().fill(Tv.Color.surfaceHigh)
+                            if collection.coverUrl.isEmpty {
+                                Text(String(collection.name.prefix(1)))
+                                    .font(.system(size: 64, weight: .semibold))
+                                    .foregroundColor(Tv.Color.accent)
+                            } else {
+                                RemoteImage(url: collection.coverUrl)
+                                    .clipShape(Circle())
+                            }
+                        }
+                        .frame(width: 180, height: 180)
+                        Spacer()
+                    }
+                } else {
+                    RemoteImage(url: collection.coverUrl)
+                        .frame(height: 180)
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: Tv.Dimen.radiusM))
+                }
                 HStack {
-                    Text(album.name)
+                    Text(collection.name)
                         .font(.system(size: Tv.Font.cardTitle))
                         .foregroundColor(Tv.Color.textPrimary)
                         .lineLimit(1)
                     Spacer()
-                    Text("\(album.itemCount) 项")
+                    Text("\(collection.itemCount) 项")
                         .font(.system(size: Tv.Font.tiny))
                         .foregroundColor(Tv.Color.textTertiary)
                 }
-                if !album.subtitle.isEmpty {
-                    Text(album.subtitle)
+                if !collection.subtitle.isEmpty {
+                    Text(collection.subtitle)
                         .font(.system(size: Tv.Font.tiny))
                         .foregroundColor(Tv.Color.textTertiary)
+                        .lineLimit(1)
                 }
             }
             .padding(6)
@@ -374,12 +502,12 @@ private struct AlbumCard: View {
     }
 }
 
-/// 相册详情：进入时拉取该相册全部媒体（分页），网格展示，可进看图。
-struct AlbumDetailView: View {
+/// 集合详情：进入时按需拉取媒体（分页），按年份分组，可进看图。
+struct CollectionDetailView: View {
 
     let repository: FnOsRepository
-    let album: Album
-    var onOpenViewer: ([MediaItem], Int) -> Void
+    let collection: HomeView.Collection
+    var onOpenViewer: ([MediaItem], Int, String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var media: [MediaItem] = []
@@ -392,7 +520,7 @@ struct AlbumDetailView: View {
             Tv.Color.bg.ignoresSafeArea()
             VStack(alignment: .leading, spacing: Tv.Dimen.spaceM) {
                 HStack {
-                    Text("\(album.name) · \(media.count) 项")
+                    Text("\(collection.name) · \(media.count) 项")
                         .font(.system(size: Tv.Font.section, weight: .bold))
                         .foregroundColor(Tv.Color.textPrimary)
                     Spacer()
@@ -402,30 +530,29 @@ struct AlbumDetailView: View {
 
                 if loading {
                     Spacer()
-                    Text("加载相册媒体…")
-                        .font(.system(size: Tv.Font.body))
-                        .foregroundColor(Tv.Color.textSecondary)
+                    Text("加载媒体…").font(.system(size: Tv.Font.body)).foregroundColor(Tv.Color.textSecondary)
                         .frame(maxWidth: .infinity)
                     Spacer()
                 } else if let error {
                     Spacer()
-                    Text(error)
-                        .font(.system(size: Tv.Font.body))
-                        .foregroundColor(Tv.Color.danger)
+                    Text(error).font(.system(size: Tv.Font.body)).foregroundColor(Tv.Color.danger)
                         .frame(maxWidth: .infinity)
                     Spacer()
                 } else {
                     ScrollView {
-                        LazyVGrid(
-                            columns: [GridItem(.adaptive(minimum: 240, maximum: 320), spacing: Tv.Dimen.spaceM)],
-                            spacing: Tv.Dimen.spaceM,
-                        ) {
-                            ForEach(Array(media.enumerated()), id: \.element.id) { index, item in
-                                MediaCard(item: item, focusedId: $focusedId) {
-                                    onOpenViewer(media, index)
+                        LazyVStack(alignment: .leading, spacing: Tv.Dimen.spaceL) {
+                            ForEach(makeYearGroups(media)) { group in
+                                VStack(alignment: .leading, spacing: Tv.Dimen.spaceM) {
+                                    Text(group.year == 0 ? "未知年份" : "\(String(group.year)) 年")
+                                        .font(.system(size: Tv.Font.section, weight: .bold))
+                                        .foregroundColor(Tv.Color.textPrimary)
+                                    MediaGrid(items: group.items, focusedId: $focusedId) { items, index in
+                                        onOpenViewer(items, index, collection.name)
+                                    }
                                 }
                             }
-                        }                        .padding(.horizontal, Tv.Dimen.screenPadding)
+                        }
+                        .padding(.horizontal, Tv.Dimen.screenPadding)
                         .padding(.bottom, Tv.Dimen.spaceXl)
                     }
                 }
@@ -434,11 +561,34 @@ struct AlbumDetailView: View {
         .onExitCommand { dismiss() }
         .task {
             do {
-                media = try await repository.getAlbumMedia(albumId: album.id)
+                switch collection.kind {
+                case .album: media = try await repository.getAlbumMedia(albumId: collection.rawId)
+                case .folder: media = try await repository.getFolderMedia(folderId: collection.rawId)
+                case .person: media = try await repository.getPersonPhotos(personId: collection.rawId)
+                case .smart: media = try await repository.getSmartAlbumMedia(albumId: collection.rawId)
+                }
             } catch {
                 self.error = FnOsApi.describe(error, access: repository.access)
             }
             loading = false
+        }
+    }
+}
+
+// MARK: - 收藏
+
+private struct FavoritesTab: View {
+    let items: [MediaItem]
+    var focusedId: FocusState<String?>.Binding
+    var onOpen: ([MediaItem], Int) -> Void
+
+    var body: some View {
+        if items.isEmpty {
+            VStack { Spacer(); Text("还没有收藏 · 在看图页按「收藏」添加").font(.system(size: Tv.Font.body)).foregroundColor(Tv.Color.textSecondary); Spacer() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView { MediaGrid(items: items, focusedId: focusedId) { media, index in onOpen(media, index) }
+                .padding(.bottom, Tv.Dimen.spaceXl) }
         }
     }
 }
@@ -455,52 +605,61 @@ private struct SettingsTab: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Tv.Dimen.spaceL) {
                 section("屏保与待机") {
-                    row("自动进入屏保", value: settings.screensaver.enabled ? "开" : "关") {
-                        settings.screensaver.enabled.toggle()
+                    row("自动进入屏保", value: settings.screensaver.enabled ? "开" : "关") { settings.screensaver.enabled.toggle() }
+                    row("静止多久进入", value: settings.formatIdleTimeout()) { settings.cycleIdleTimeout() }
+                    row("单张照片停留", value: "\(settings.screensaver.photoIntervalSec) 秒") { settings.cyclePhotoInterval() }
+                    row("显示日期", value: settings.screensaver.showDate ? "开" : "关") { settings.screensaver.showDate.toggle() }
+                    row("夜间调暗", value: settings.screensaver.nightDim ? "开" : "关") { settings.screensaver.nightDim.toggle() }
+                    row("Ken Burns 防烧屏", value: settings.screensaver.kenBurns ? "开" : "关") { settings.screensaver.kenBurns.toggle() }
+                    row("时钟样式", value: Self.clockLabel(settings.screensaver.clockStyle)) { settings.screensaver.clockStyle = Self.nextClock(settings.screensaver.clockStyle) }
+                }
+
+                section("播放设置") {
+                    row("播完自动播下一个", value: settings.playback.autoPlayNext ? "开" : "关") { settings.playback.autoPlayNext.toggle() }
+                    row("单条循环", value: settings.playback.loopMode ? "开" : "关") { settings.playback.loopMode.toggle() }
+                }
+
+                section("背景音乐") {
+                    row("幻灯片 / 屏保时播放", value: settings.screensaver.musicEnabled ? "开" : "关") { settings.screensaver.musicEnabled.toggle() }
+                    row("音量", value: "\(Int(settings.screensaver.musicVolume * 100))%") {
+                        settings.screensaver.musicVolume = settings.screensaver.musicVolume >= 0.9 ? 0.3 : settings.screensaver.musicVolume + 0.2
                     }
-                    row("静止多久进入", value: "\(settings.screensaver.idleTimeoutSec / 60) 分钟") {
-                        settings.screensaver.idleTimeoutSec = nextIdle(settings.screensaver.idleTimeoutSec)
-                    }
-                    row("单张照片停留", value: "\(settings.screensaver.photoIntervalSec) 秒") {
-                        settings.screensaver.photoIntervalSec = nextInterval(settings.screensaver.photoIntervalSec)
-                    }
+                    row("上传背景音乐", value: MusicStore.shared.latestName ?? "未上传") { openMusicPanel = true }
                 }
 
                 section("NAS 连接") {
                     row("地址", value: "https://\(settings.host):\(settings.port)", action: {})
                     row("账号", value: settings.username, action: {})
-                    row("断开连接", value: "") {
-                        onDisconnect()
-                    }
+                    row("断开连接", value: "") { onDisconnect() }
+                }
+
+                section("关于") {
+                    row("版本", value: "1.0.0 (Apple TV)", action: {})
+                    row("数据来源", value: "飞牛 fnOS · 局域网直连原片", action: {})
                 }
             }
             .padding(.bottom, Tv.Dimen.spaceXl)
         }
+        .sheet(isPresented: $openMusicPanel) { MusicPanel() }
     }
+
+    @State private var openMusicPanel = false
 
     private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: Tv.Dimen.spaceM) {
-            Text(title)
-                .font(.system(size: Tv.Font.section, weight: .bold))
-                .foregroundColor(Tv.Color.textPrimary)
+            Text(title).font(.system(size: Tv.Font.section, weight: .bold)).foregroundColor(Tv.Color.textPrimary)
             content()
         }
     }
 
     private func row(_ title: String, value: String, action: @escaping () -> Void) -> some View {
         let key = "setting-\(title)"
-        return Button {
-            action()
-        } label: {
+        return Button(action: action) {
             HStack {
-                Text(title)
-                    .font(.system(size: Tv.Font.body))
-                    .foregroundColor(Tv.Color.textPrimary)
+                Text(title).font(.system(size: Tv.Font.body)).foregroundColor(Tv.Color.textPrimary)
                 Spacer()
                 if !value.isEmpty {
-                    Text(value)
-                        .font(.system(size: Tv.Font.caption))
-                        .foregroundColor(Tv.Color.textSecondary)
+                    Text(value).font(.system(size: Tv.Font.caption)).foregroundColor(Tv.Color.textSecondary)
                 }
             }
             .padding(.horizontal, Tv.Dimen.spaceM)
@@ -512,15 +671,16 @@ private struct SettingsTab: View {
         .tvFocus(focusedId.wrappedValue == key)
     }
 
-    private func nextIdle(_ current: Int) -> Int {
-        let options = [60, 300, 900]
-        guard let idx = options.firstIndex(of: current) else { return 60 }
-        return options[(idx + 1) % options.count]
+    private static let clockStyles = ["cinema", "flip", "thin", "minimal", "dateFocus"]
+    private static let clockLabels = ["影院", "翻页", "纤细", "极简", "日期"]
+
+    private static func clockLabel(_ style: String) -> String {
+        guard let idx = clockStyles.firstIndex(of: style) else { return clockLabels[0] }
+        return clockLabels[idx]
     }
 
-    private func nextInterval(_ current: Int) -> Int {
-        let options = [5, 10, 20]
-        guard let idx = options.firstIndex(of: current) else { return 10 }
-        return options[(idx + 1) % options.count]
+    private static func nextClock(_ style: String) -> String {
+        guard let idx = clockStyles.firstIndex(of: style) else { return clockStyles[0] }
+        return clockStyles[(idx + 1) % clockStyles.count]
     }
 }

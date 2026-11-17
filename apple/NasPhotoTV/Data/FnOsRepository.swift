@@ -13,15 +13,11 @@ final class FnOsRepository {
     private let api: FnOsApi
     private var recentCache: [MediaItem] = []
     private var albumCache: [String: [MediaItem]] = [:]
-    private var folderCache: [NasFolderInfo] = []
-
-    struct NasFolderInfo: Identifiable, Hashable {
-        let id: String
-        let path: String
-        let name: String
-        let photoCount: Int
-        let videoCount: Int
-    }
+    private var folderCache: [NasFolder] = []
+    private var personCache: [Person] = []
+    private var smartAlbumCache: [Album] = []
+    /// 非相册类集合（人物/文件夹/智能分类/收藏）的媒体缓存，key 为集合 id
+    private var collectionCache: [String: [MediaItem]] = [:]
 
     init(access: FnOsAccess) {
         self.access = access
@@ -287,5 +283,408 @@ final class FnOsRepository {
 private extension String {
     func dropPrefix(_ prefix: String) -> Substring {
         hasPrefix(prefix) ? dropFirst(prefix.count) : self[...]
+    }
+}
+
+// MARK: - 人物 / 文件夹 / 智能分类 / 搜索（对标 Android FnOsMediaRepository）
+
+extension FnOsRepository {
+
+    // MARK: 常量
+
+    private static let personList = "/p/api/v1/ai-person/list"
+    private static let personTimeline = "/p/api/v1/ai-person/photoLibrary/timeLine"
+    private static let personLibraryList = "/p/api/v1/ai-person/photoLibrary/list"
+    private static let folderList = "/p/api/v1/photo/folder/list"
+    private static let folderView = "/p/api/v1/photo/folder/view"
+    private static let folderFiles = "/p/api/v1/folder_view/getFileList"
+    private static let smartCategories = "/p/api/v1/ai-smart-rec/categories"
+    private static let magicSearch = "/p/api/v1/magic-search/do"
+    private static let galleryGetOne = "/p/api/v1/gallery/getOne"
+
+    private static let personPageSize = 200
+    private static let folderPageSize = 200
+    private static let maxPersonItems = 20_000
+
+    private static let listKeys = ["list", "items", "records", "rows", "data", "result"]
+
+    // MARK: 人物
+
+    /// 人物列表（一次全量；过滤隐藏项，按照片数降序）。
+    func getPeople() async throws -> [Person] {
+        let data = try await api.getJson(
+            Self.personList,
+            params: [
+                KeyValue("getAll", "true"),
+                KeyValue("limit", "-1"),
+                KeyValue("orderBy", "0"),
+            ],
+        )
+        let people = Self.responseList(data).compactMap { json -> Person? in
+            let id = json.int64("id")
+            guard id > 0, json.int("isHide") != 1 else { return nil }
+            let name = Self.firstString(json, "name", "personName", "tagName")
+            let faceId = json.int64("faceId")
+            var cover = Self.firstString(json, "coverUrl", "cover", "avatarUrl", "posterUrl")
+            if cover.isEmpty && faceId > 0 {
+                cover = "/p/api/v1/stream/face/\(faceId)"
+            }
+            return Person(
+                id: String(id),
+                name: name,
+                coverUrl: Self.absolute(cover, baseUrl: access.baseUrl),
+                itemCount: json.int("itemCount", json.int("photoCount")),
+            )
+        }.sorted { $0.itemCount > $1.itemCount }
+        personCache = people
+        return people
+    }
+
+    /// 人物详情：遍历服务端按天时间线，逐日翻页拉全（对齐 Android 1.2.3 修复）。
+    func getPersonPhotos(personId: String, limit: Int = 20_000) async throws -> [MediaItem] {
+        let key = "person:\(personId)"
+        if let cached = collectionCache[key] { return cached }
+        let timeline = (try? await api.getJson(Self.personTimeline, params: [KeyValue("id", personId)])) ?? Json([:])
+        var out: [MediaItem] = []
+        for day in Self.responseList(timeline) {
+            let y = day.int("year"), m = day.int("month"), d = day.int("day")
+            guard y > 0, m > 0, d > 0 else { continue }
+            let ymd = String(format: "%04d:%02d:%02d", y, m, d)
+            let dayCount = day.int("itemCount")
+            var offset = 0
+            var gotInDay = 0
+            while out.count < limit && (dayCount <= 0 || gotInDay < dayCount) {
+                guard let data = try? await api.getJson(Self.personLibraryList, params: Self.personDayParams(personId, ymd, offset: offset)) else { break }
+                let page = Self.parseMediaList(data, baseUrl: access.baseUrl).filter { $0.type == .photo }
+                if page.isEmpty { break }
+                out.append(contentsOf: page)
+                offset += page.count
+                gotInDay += page.count
+                if page.count < Self.personPageSize { break }
+            }
+            if out.count >= limit { break }
+        }
+        let result = Array(Self.dedup(out).sorted { Self.newer($0, $1) }.prefix(limit))
+        collectionCache[key] = result
+        return result
+    }
+
+    /// 屏保人物照片池：取前 8 个人物、每人最近 3 天、每天 60 张（轻量，不日内翻页）。
+    func getPeoplePhotos(limit: Int = 120) async throws -> [MediaItem] {
+        let people = personCache.isEmpty ? (try await getPeople()) : personCache
+        guard !people.isEmpty else { return [] }
+        var out: [MediaItem] = []
+        for person in people.prefix(8) {
+            let shots = (try? await fetchPersonCoverPhotos(personId: person.id, maxDays: 3, perDay: 60)) ?? []
+            out.append(contentsOf: shots)
+        }
+        return Array(Self.dedup(out).sorted { Self.newer($0, $1) }.prefix(limit))
+    }
+
+    private func fetchPersonCoverPhotos(personId: String, maxDays: Int, perDay: Int) async throws -> [MediaItem] {
+        let timeline = try await api.getJson(Self.personTimeline, params: [KeyValue("id", personId)])
+        var out: [MediaItem] = []
+        for day in Self.responseList(timeline).prefix(maxDays) {
+            let y = day.int("year"), m = day.int("month"), d = day.int("day")
+            guard y > 0, m > 0, d > 0 else { continue }
+            let ymd = String(format: "%04d:%02d:%02d", y, m, d)
+            guard !ymd.hasPrefix("0000") else { continue }
+            var params = Self.personDayParams(personId, ymd, offset: 0)
+            params = params.filter { $0.key != "limit" } + [KeyValue("limit", String(perDay))]
+            guard let data = try? await api.getJson(Self.personLibraryList, params: params) else { continue }
+            out.append(contentsOf: Self.parseMediaList(data, baseUrl: access.baseUrl).filter { $0.type == .photo })
+        }
+        return out
+    }
+
+    /// 人物单日查询：camelCase 与 snake_case 时间参数都要带，日期必须冒号格式。
+    private static func personDayParams(_ personId: String, _ ymd: String, offset: Int) -> [KeyValue] {
+        [
+            KeyValue("album_id", personId),
+            KeyValue("personId", personId),
+            KeyValue("startTime", "\(ymd) 00:00:00"),
+            KeyValue("start_time", "\(ymd) 00:00:00"),
+            KeyValue("endTime", "\(ymd) 23:59:59"),
+            KeyValue("end_time", "\(ymd) 23:59:59"),
+            KeyValue("limit", String(personPageSize)),
+            KeyValue("offset", String(offset)),
+        ]
+    }
+
+    // MARK: 文件夹
+
+    /// 磁盘文件夹列表：优先 folder/list（带真实计数），失败兜底 folder/view 的 myFile。
+    func getFolders() async throws -> [NasFolder] {
+        var arr = (try? await api.getJson(Self.folderList)).map(Self.responseList) ?? []
+        if arr.isEmpty {
+            arr = (try? await api.getJson(Self.folderView))?.array("myFile") ?? []
+        }
+        let folders = arr.compactMap { json -> NasFolder? in
+            let id = json.string("folderId")
+            let path = json.string("folderPath")
+            guard !id.isEmpty else { return nil }
+            let noTrailing = path.replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
+            let last = noTrailing.split(separator: "/").last.map(String.init) ?? ""
+            return NasFolder(
+                id: id,
+                path: path,
+                name: last.isEmpty ? path : last,
+                photoCount: json.int("photoCount"),
+                videoCount: json.int("videoCount"),
+            )
+        }
+        folderCache = folders
+        return folders
+    }
+
+    func getFolderMedia(folderId: String) async throws -> [MediaItem] {
+        let key = "folder:\(folderId)"
+        if let cached = collectionCache[key] { return cached }
+        let folders = folderCache.isEmpty ? (try await getFolders()) : folderCache
+        guard let folder = folders.first(where: { $0.id == folderId }) else { return [] }
+        var out: [MediaItem] = []
+        var offset = 0
+        while offset < Self.maxGalleryItems {
+            let data = try await api.getJson(
+                Self.folderFiles,
+                params: [
+                    KeyValue("folderId", folderId),
+                    KeyValue("folderPath", folder.path),
+                    KeyValue("offset", String(offset)),
+                    KeyValue("limit", String(Self.folderPageSize)),
+                ],
+            )
+            let page = Self.parseMediaList(data, baseUrl: access.baseUrl)
+            if page.isEmpty { break }
+            out.append(contentsOf: page)
+            offset += page.count
+            let hasNext = data.bool("hasNext") || page.count >= Self.folderPageSize
+            if !hasNext { break }
+        }
+        let result = Self.dedup(out).sorted { Self.newer($0, $1) }
+        collectionCache[key] = result
+        return result
+    }
+
+    // MARK: 智能分类（场景事物）
+
+    func getSmartAlbums() async throws -> [Album] {
+        let data = try await api.getJson(
+            Self.smartCategories,
+            params: [KeyValue("limit", "-1"), KeyValue("mainCategory", "scene")],
+        )
+        var seen = Set<String>()
+        var albums: [Album] = []
+        for json in Self.responseList(data) {
+            let name = Self.firstString(json, "name")
+            guard !name.isEmpty else { continue }
+            let id = "smart:scene:" + FnOsSigner.encode(name)
+            guard seen.insert(id).inserted else { continue }
+            albums.append(Album(
+                id: id,
+                name: name,
+                coverUrl: Self.categoryCover(json, baseUrl: access.baseUrl),
+                itemCount: Self.categoryCount(json),
+                subtitle: "场景事物",
+                type: .smartCategory,
+                isSmart: true,
+            ))
+        }
+        smartAlbumCache = albums
+        return albums
+    }
+
+    /// 语义搜索结果：旧版 fnOS 只回 id + session，需要补全媒体元数据。
+    func getSmartAlbumMedia(albumId: String) async throws -> [MediaItem] {
+        if let cached = collectionCache[albumId] { return cached }
+        let prefix = "smart:scene:"
+        guard albumId.hasPrefix(prefix) else { return [] }
+        let name = Self.javaURLDecode(String(albumId.dropFirst(prefix.count)))
+        guard !name.isEmpty else { return [] }
+        let body: [String: Any] = ["keyword": name, "antiFilters": []]
+        let data = try await api.postJson(Self.magicSearch, body: Json(body))
+        var seen = Set<String>()
+        var out: [MediaItem] = []
+        for json in Self.responseList(data) {
+            let id = Self.firstString(json, "id", "photoId")
+            guard let numeric = Int64(id), numeric > 0, seen.insert(id).inserted else { continue }
+            let normalized = try await normalizeSearchItem(json, id: id)
+            guard var item = Self.parseMedia(Json(normalized), baseUrl: access.baseUrl) else { continue }
+            item.albumId = albumId
+            out.append(item)
+        }
+        collectionCache[albumId] = out
+        return out
+    }
+
+    private func normalizeSearchItem(_ json: Json, id: String) async throws -> [String: Any] {
+        var obj = json.raw
+        obj["id"] = id
+        obj = Self.ensureThumbnail(obj)
+        if !Self.hasPlaybackMetadata(obj) {
+            if let detail = try? await api.getJson(Self.galleryGetOne, params: [KeyValue("id", id)]) {
+                obj = Self.ensureThumbnail(Self.mergeMissing(target: obj, fallback: detail.raw))
+            }
+        }
+        guard Self.hasPlaybackMetadata(obj) else {
+            throw FnOsError("飞牛未返回完整媒体信息（id \(id)）")
+        }
+        let uuid = Self.firstString(Json(obj), "uuid", "photoUUID", "session")
+        if !uuid.isEmpty {
+            var additional = (obj["additional"] as? [String: Any]) ?? [:]
+            var thumb = (additional["thumbnail"] as? [String: Any]) ?? [:]
+            for (key, size) in [("mUrl", "m"), ("sUrl", "s"), ("xsUrl", "s")] {
+                if Self.firstString(Json(thumb), key).isEmpty {
+                    thumb[key] = "/p/api/v1/stream/p/t/\(id)/\(size)/\(uuid)"
+                }
+            }
+            additional["thumbnail"] = thumb
+            obj["additional"] = additional
+        }
+        return obj
+    }
+
+    private static func ensureThumbnail(_ obj: [String: Any]) -> [String: Any] {
+        var out = obj
+        var additional = (out["additional"] as? [String: Any]) ?? [:]
+        var thumb = (additional["thumbnail"] as? [String: Any]) ?? (out["thumbnail"] as? [String: Any]) ?? [:]
+        additional["thumbnail"] = thumb
+        out["additional"] = additional
+        return out
+    }
+
+    private static func hasPlaybackMetadata(_ obj: [String: Any]) -> Bool {
+        let json = Json(obj)
+        let fileName = json.string("fileName")
+        guard !fileName.isEmpty else { return false }
+        let thumb = json.dict("additional").dict("thumbnail")
+        let category = json.string("category").lowercased()
+        let videoUrl = thumb.string("videoUrl")
+        let ext = (fileName.split(separator: ".").last.map(String.init) ?? "").uppercased()
+        switch category {
+        case "video":
+            return !videoUrl.isEmpty
+        case "photo":
+            let hasImage = !thumb.string("originalUrl").isEmpty
+                || (rawExtensions.contains(ext) && !thumb.string("mUrl").isEmpty)
+            let liveOk = json.int("isLive") != 1 || !videoUrl.isEmpty
+            return hasImage && liveOk
+        default:
+            return false
+        }
+    }
+
+    /// 递归合并：仅当 target 缺键 / NSNull / 空字符串时写入，已有值（含签名 URL）不动。
+    private static func mergeMissing(target: [String: Any], fallback: [String: Any]) -> [String: Any] {
+        var out = target
+        for (key, value) in fallback {
+            guard let existing = out[key] else { out[key] = value; continue }
+            if existing is NSNull { out[key] = value; continue }
+            if let s = existing as? String, s.isEmpty { out[key] = value; continue }
+            if let d = existing as? [String: Any], let f = value as? [String: Any] {
+                out[key] = mergeMissing(target: d, fallback: f)
+            }
+        }
+        return out
+    }
+
+    private static func categoryCover(_ json: Json, baseUrl: String) -> String {
+        let direct = firstString(json, "cover", "thumb", "posterUrl", "imageUrl")
+        if !direct.isEmpty { return absolute(direct, baseUrl: baseUrl) }
+        let poster = json.dict("poster")
+        let pid = firstString(poster, "photoId", "id")
+        let uuid = firstString(poster, "uuid", "photoUUID", "session")
+        if !pid.isEmpty && !uuid.isEmpty {
+            return absolute("/p/api/v1/stream/p/t/\(pid)/m/\(uuid)", baseUrl: baseUrl)
+        }
+        return ""
+    }
+
+    private static func categoryCount(_ json: Json) -> Int {
+        for key in ["itemCount", "item_count", "count", "total", "photoCount", "photo_count"] {
+            if let n = Int(json.string(key)), n >= 0 { return n }
+        }
+        return 0
+    }
+
+    /// 收藏页聚合：NAS isCollect ∪ 本地星标，按 id 去重（对齐 Android LibraryData）。
+    func getFavorites(_ favorites: FavoritesStore) async throws -> [MediaItem] {
+        let pool = recentCache.isEmpty ? (try await getRecent()) : recentCache
+        var seen = Set<String>()
+        return (pool + albumCache.values.flatMap { $0 } + collectionCache.values.flatMap { $0 })
+            .favoriteItems(favorites)
+            .filter { seen.insert($0.id).inserted }
+            .sorted { Self.newer($0, $1) }
+    }
+
+    // MARK: 搜索（纯客户端过滤）
+
+    func search(_ query: String) async throws -> [MediaItem] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return [] }
+        let pool = recentCache.isEmpty ? (try await getRecent(limit: 300)) : recentCache
+        return pool.filter { item in
+            item.title.lowercased().contains(q)
+                || Self.isoDate(item.dateTaken).contains(q)
+                || item.ext.lowercased() == q
+        }
+    }
+
+    // MARK: 小工具
+
+    private static func responseList(_ data: Json) -> [Json] {
+        for key in listKeys {
+            let arr = data.array(key)
+            if !arr.isEmpty { return arr }
+        }
+        return []
+    }
+
+    private static func firstString(_ json: Json, _ keys: String...) -> String {
+        for key in keys {
+            let value = json.string(key).trimmingCharacters(in: .whitespaces)
+            if !value.isEmpty && value != "null" { return value }
+        }
+        return ""
+    }
+
+    private static func javaURLDecode(_ value: String) -> String {
+        var out = ""
+        var bytes: [UInt8] = []
+        func flush() {
+            if !bytes.isEmpty { out += String(decoding: bytes, as: UTF8.self); bytes = [] }
+        }
+        let chars = Array(value)
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "+" {
+                flush(); out += " "; i += 1
+            } else if c == "%" && i + 2 < chars.count,
+                      let hex = UInt8(String(chars[(i + 1)...(i + 2)]), radix: 16) {
+                bytes.append(hex); i += 3
+            } else {
+                flush(); out.append(c); i += 1
+            }
+        }
+        flush()
+        return out
+    }
+
+    private static func dedup(_ items: [MediaItem]) -> [MediaItem] {
+        var seen = Set<String>()
+        return items.filter { seen.insert($0.id).inserted }
+    }
+
+    private static func newer(_ a: MediaItem, _ b: MediaItem) -> Bool {
+        (a.dateTaken ?? .distantPast) > (b.dateTaken ?? .distantPast)
+    }
+
+    private static func isoDate(_ date: Date?) -> String {
+        guard let date else { return "" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 }

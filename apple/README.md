@@ -3,28 +3,35 @@
 > Android TV 版的 **原生 tvOS 重写**（Swift + SwiftUI）。与 Android 端共用同一套飞牛 fnOS 私有协议，
 > 在 Apple TV 上直连 NAS 看照片，并把电视变成电子相框（屏保）。
 
-- 分支：`feature/apple-tv`（首期核心闭环，从 main 的 1.2.4 分出）
+- 分支：`feature/apple-tv`（从 main 的 1.2.4 分出）
 - 工程：`apple/NasPhotoTV.xcodeproj`（SwiftUI，tvOS 17.0+，Bundle ID `com.nasphoto.tv.apple`）
-- 状态：✅ 已通过 `xcodebuild -sdk appletvsimulator` 编译验证；真机（Apple TV 4K）待实测
+- 状态：✅ `xcodebuild -sdk appletvsimulator` 编译通过；✅ 已安装到 **Apple TV 4K (tvOS 27.2) 模拟器**启动验证、无崩溃；真机待实测
 
 ---
 
-## 1. 首期范围（核心闭环）
+## 1. 功能对照 Android 端（第二轮补齐）
 
 | 能力 | 状态 | 说明 |
 |---|---|---|
 | 加密登录（WSS + RSA + AES） | ✅ | 与 Android 端同一套握手，见下文协议要点 |
 | 两步验证（2FA 动态码） | ✅ | 同一 WebSocket 会话转正，不重新握手 |
 | 自签证书 TOFU | ✅ | 首次信任叶子证书 SHA-256，指纹按 host 存 UserDefaults |
-| 图库（全库按年份） | ✅ | `gallery/getList` 按 offset 逐页拉全（单页 500） |
+| 局域网自动发现 NAS | ✅ | /24 逐 IP 探测 TCP 5667（350ms 超时）+ TLS 证书主题含 `fnOS` 判定 |
+| 图库（全库按年份） | ✅ | `gallery/getList` 按 offset 逐页拉全（单页 500）+ 文件名/日期/格式搜索 |
 | 相册（自己的 + 分享给我的） | ✅ | `album/list` + `album_grant/list_to_me` 去重合并 |
-| 相册详情（按年份分组） | ✅ | `album/photos` 分页 + 去重 |
-| 全屏看图 | ✅ | 方向键/遥控滑动翻页、确认键信息条、实况/视频角标 |
-| 屏保（StandBy 风格） | ✅ | 大号时钟 + 照片氛围 + 防烧屏交替缩放，任意键只退出 |
+| 文件夹 | ✅ | `photo/folder/list`（兜底 `folder/view`）+ `folder_view/getFileList` 分页 |
+| 人物 | ✅ | `ai-person/list` + 按天时间线逐日翻页拉全（对齐 Android 1.2.3 修复）+ 屏保人物照片池 |
+| 智能分类（场景事物） | ✅ | `ai-smart-rec/categories` + `magic-search/do` 语义搜索，旧版响应走 `gallery/getOne` 补全 |
+| 收藏 | ✅ | NAS `isCollect` ∪ 本地 `FavoritesStore`（按账号分区 UserDefaults），看图页可切换 |
+| 视频播放 | ✅ | AVPlayer 自建控制条：←→ 快退/快进 10 秒、播放暂停切换、3.2s 自动隐藏、自动连播/单条循环、错误文案 |
+| 实况照片按需播放 | ✅ | 静音、播一次、角标 `LIVE · 实况`、提示 `实况播放中 · 播完自动回到静态` |
+| 全屏看图增强 | ✅ | 2× 放大 + ±0.5 平移、全景 0.33 步长巡览（贴边翻页）、5s 幻灯片跳过视频、工具条 5 chip、胶片条、信息 HUD |
+| 屏保 | ✅ | 5 种时钟样式（←→ 切换）、日期/夜间调暗/Ken Burns 开关、人物照片池、退出只按键 |
+| 屏保背景音乐 + 手机上传 | ✅ | 面板打开期间启动 8899–8908 本地 HTTP 服务（token 路径鉴权、`/upload?name=`、`/list`），AVAudioPlayer 单曲循环 |
 | 访问码（访问控制网关） | ✅ | `/access_code_verify` + `x-access-code`，HTTP 401 自动重试 |
-| 视频播放 | ⬜ 下一轮 | AVPlayer + HLS/直链探测 |
-| 人物 / 智能分类 / 文件夹 | ⬜ 下一轮 | 沿用 Android 端已验证的接口组合 |
-| 屏保背景音乐 / 图片上传 | ⬜ 远期 | |
+| 设置页 | ✅ | 待机档位 `[30,60,120,300,600,1800]`、停留档位 `[5,10,15,30,60]`、时钟样式、播放、音乐、关于 |
+| 年→月→日三级下钻 | ⬜ 未做 | tvOS 版用「按年份分组 + 搜索」替代，功能等价但层级不同 |
+| 多账号切换 / 客厅展示相册 / 极光背景 / 农历 | ⬜ 未做 | Android 端有；tvOS 版后续迭代 |
 
 ## 2. 目录结构
 
@@ -45,28 +52,39 @@ apple/
     │   ├── FnOsDeviceId.swift     # 设备 did（24 位 hex，UserDefaults 持久化）
     │   └── Json.swift             # 防御式 JSON 取值（对应 org.json 习惯）
     ├── Data/
-    │   ├── Models.swift           # MediaItem / Album / FnOsStats / 会话与挑战模型
-    │   ├── FnOsRepository.swift   # 图库/相册/屏保照片池/统计（分页拉全 + 去重）
-    │   └── AppSettings.swift      # 连接配置 + 屏保偏好（UserDefaults / JSON）
+    │   ├── Models.swift           # MediaItem / Album / Person / NasFolder / 会话与挑战模型
+    │   ├── FnOsRepository.swift   # 图库/相册/人物/文件夹/智能分类/收藏/搜索（分页拉全 + 去重）
+    │   ├── AppSettings.swift      # 连接配置 + 屏保/播放偏好（UserDefaults / JSON）
+    │   ├── FavoritesStore.swift   # 本地收藏（按账号分区）
+    │   ├── LanNasDiscovery.swift  # /24 TCP 5667 探测 + TLS 证书识别飞牛 NAS
+    │   └── MusicStore.swift       # 曲目目录 + 8899~8908 HTTP 上传服务 + AVAudioPlayer 循环播放
     ├── Media/
     │   └── RemoteImage.swift      # 带鉴权的远程图片（AccessToken 注入 + NSCache 256MB）
     └── UI/
         ├── Theme.swift            # 设计 token（对齐 Android Tokens.kt：深空黑 + 冰蓝）
-        ├── ConnectView.swift      # 连接页（测试连接 / 两步验证动态码）
-        ├── HomeView.swift         # 首页：图库 / 相册 / 设置 + 焦点规范 + 静置进屏保
-        ├── PhotoViewer.swift      # 全屏看图
-        └── ScreensaverView.swift  # 屏保
+        ├── ConnectView.swift      # 连接页（局域网发现 / 测试连接 / 两步验证动态码）
+        ├── HomeView.swift         # 首页 7 个 Tab + 集合详情 + 搜索 + 设置 + 静置进屏保
+        ├── PhotoViewer.swift      # 全屏看图（放大/全景/实况/幻灯片/收藏/胶片条）
+        ├── VideoPlayerView.swift  # AVPlayer 视频播放
+        ├── ScreensaverView.swift  # 屏保（5 种时钟样式）
+        └── MusicPanel.swift       # 背景音乐上传面板 + 播放效果桥
 ```
 
 ## 3. 构建与运行
 
 ```bash
-# 命令行编译（tvOS 模拟器 SDK；本仓库环境未装 tvOS 模拟器运行时，仅编译验证）
+# 命令行编译（tvOS 27.2 模拟器 SDK；已安装 tvOS 模拟器运行时）
 xcodebuild -project apple/NasPhotoTV.xcodeproj -target NasPhotoTV \
   -configuration Debug -sdk appletvsimulator \
   SYMROOT=apple/.build/SYM OBJROOT=apple/.build/OBJ \
   ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
 # 产物：apple/.build/SYM/Debug-appletvsimulator/NasPhotoTV.app
+
+# 装进 Apple TV 4K 模拟器（网络盘直接装会报 "Failed to create promise"，先拷到本地盘）
+rm -rf /tmp/NasPhotoTV.app && cp -R apple/.build/SYM/Debug-appletvsimulator/NasPhotoTV.app /tmp/
+xcrun simctl boot "Apple TV 4K (4th generation)"
+xcrun simctl install booted /tmp/NasPhotoTV.app
+xcrun simctl launch booted com.nasphoto.tv.apple
 ```
 
 Xcode 图形界面：打开 `apple/NasPhotoTV.xcodeproj`，选 Apple TV 4K 模拟器或真机直接 ⌘R。
@@ -88,14 +106,18 @@ Xcode 图形界面：打开 `apple/NasPhotoTV.xcodeproj`，选 Apple TV 4K 模�
 
 ## 5. 与 Android 版的已知差异
 
-- 屏保**天气为空**（Android 端也是本地假数据，tvOS 版暂未做天气占位）。
-- 不支持长按/双击/手势：遥控器方向键翻页，确认键弹信息条（同 Android 规范）。
+- **屏保天气为空**：Android 端仓库里也没有 `MockWeatherProvider` 实现（只有文档与注释），两端都不显示天气。
+- **年→月→日三级下钻**：Android 是三层下钻；tvOS 用「按年份分组 + 搜索」替代，信息等价但层级更浅。
+- **多账号切换 / 客厅展示相册 / 极光背景 / 农历文案**：Android 有，tvOS 未做。
+- **遥控器按键映射差异**：tvOS 的 SwiftUI 只暴露方向键 / 播放暂停 / 返回三个命令，
+  「确认」通过聚焦按钮触发；因此看图页把放大、收藏、信息、播放放到可聚焦工具条，
+  视频/实况同时支持「播放暂停键」快捷触发。
 - 设计画布按 1920×1080 逻辑尺寸（tvOS 1x），颜色/字号/焦点缩放与 Android `Tokens.kt` 一致。
-- 首版不含视频播放、人物、智能分类、文件夹、背景音乐上传（见上方范围表）。
 
 ## 6. 后续路线
 
-1. **视频播放**：`AVPlayer` + `videoUrl`/`originalUrl` 直链探测，全屏播放器与看图共用信息条。
-2. **人物 / 智能分类 / 文件夹**：接口组合已在 Android 端验证，照搬即可。
+1. **多账号与客厅展示相册**：账号分区缓存 + 图片缓存按账号清空（隐私）。
+2. **年→月→日下钻**：对齐 Android 的三级时间线。
 3. **性能**：看图页预加载前后各一张；图库网格分页加载。
-4. **发布**：个人开发者账号签名，TestFlight 分发。
+4. **真机验证**：Apple TV 4K 上实测 4K / HEVC 视频、自签证书、局域网发现。
+5. **发布**：个人开发者账号签名，TestFlight 分发。

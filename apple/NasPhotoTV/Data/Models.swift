@@ -51,6 +51,17 @@ struct MediaItem: Identifiable, Hashable {
     }
 }
 
+/// 相册类型（对齐 Android `AlbumType`）。真实数据源只产出 folder 与 smartCategory，
+/// 其余用于收藏/人物等虚拟分组的 UI 标识。
+enum AlbumType: String {
+    case folder
+    case smartPeople
+    case smartPlace
+    case memory
+    case favorites
+    case smartCategory
+}
+
 /// 相册（对应 NAS 上的一个文件夹，或按日期/地点聚合的虚拟相册）。
 struct Album: Identifiable, Hashable {
     var id: String
@@ -60,6 +71,28 @@ struct Album: Identifiable, Hashable {
     var itemCount: Int
     /// 「人像/地点/回忆」等智能相册在标题下显示的小字说明
     var subtitle: String
+    var type: AlbumType = .folder
+    var isSmart: Bool = false
+}
+
+/// AI 人物（对应 `ai-person/list` 一条）。
+struct Person: Identifiable, Hashable {
+    var id: String
+    var name: String
+    var coverUrl: String
+    var itemCount: Int
+
+    var displayName: String { name.isEmpty ? "未命名人物" : name }
+    var initial: String { String(displayName.prefix(1)) }
+}
+
+/// 磁盘文件夹视图条目（对应 `photo/folder/list` 一条）。
+struct NasFolder: Identifiable, Hashable {
+    var id: String
+    var path: String
+    var name: String
+    var photoCount: Int
+    var videoCount: Int
 }
 
 /// 飞牛登录会话（WebSocket 登录成功后的凭证）。

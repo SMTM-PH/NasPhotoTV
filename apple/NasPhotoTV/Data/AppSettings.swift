@@ -1,14 +1,48 @@
 import Foundation
 
-/// 屏保配置（Apple TV 版首期保留最常用的几项）。
+/// 屏保配置（对齐 Android `ScreensaverSettings` 的常用子集 + 时钟样式）。
 struct ScreensaverSettings: Equatable, Codable {
     var enabled: Bool = true
-    /// 静止多久后进入屏保（秒）
+    /// 静止多久后进入屏保（秒）：30 / 60 / 120 / 300 / 600 / 1800
     var idleTimeoutSec: Int = 60
-    /// 单张照片停留时长（秒）
+    /// 单张照片停留时长（秒）：5 / 10 / 15 / 30 / 60
     var photoIntervalSec: Int = 10
     /// 是否显示日期
     var showDate: Bool = true
+    /// 夜间调暖色遮罩
+    var nightDim: Bool = true
+    /// Ken Burns 缓慢推拉（防烧屏）
+    var kenBurns: Bool = true
+    /// 幻灯片/屏保背景音乐开关
+    var musicEnabled: Bool = true
+    /// 背景音乐音量 0...1
+    var musicVolume: Double = 0.7
+    /// 时钟样式：cinema / flip / thin / minimal / dateFocus
+    var clockStyle: String = "cinema"
+
+    /// 旧版本持久化数据没有新增字段：decodeIfPresent 保证平滑升级。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        idleTimeoutSec = try c.decodeIfPresent(Int.self, forKey: .idleTimeoutSec) ?? 60
+        photoIntervalSec = try c.decodeIfPresent(Int.self, forKey: .photoIntervalSec) ?? 10
+        showDate = try c.decodeIfPresent(Bool.self, forKey: .showDate) ?? true
+        nightDim = try c.decodeIfPresent(Bool.self, forKey: .nightDim) ?? true
+        kenBurns = try c.decodeIfPresent(Bool.self, forKey: .kenBurns) ?? true
+        musicEnabled = try c.decodeIfPresent(Bool.self, forKey: .musicEnabled) ?? true
+        musicVolume = try c.decodeIfPresent(Double.self, forKey: .musicVolume) ?? 0.7
+        clockStyle = try c.decodeIfPresent(String.self, forKey: .clockStyle) ?? "cinema"
+    }
+
+    init() {}
+}
+
+/// 播放设置（对齐 Android `PlaybackSettings`）。
+struct PlaybackSettings: Equatable, Codable {
+    /// 播完自动播下一个
+    var autoPlayNext: Bool = true
+    /// 单条循环
+    var loopMode: Bool = false
 }
 
 /// 连接配置持久化（单账号，迁移自 Android 端 SettingsStore 的最小子集）。
@@ -30,6 +64,13 @@ final class AppSettings: ObservableObject {
             }
         }
     }
+    @Published var playback: PlaybackSettings {
+        didSet {
+            if let data = try? JSONEncoder().encode(playback) {
+                defaults.set(data, forKey: "playback.settings")
+            }
+        }
+    }
 
     private init() {
         host = defaults.string(forKey: "nas.host") ?? ""
@@ -43,6 +84,12 @@ final class AppSettings: ObservableObject {
         } else {
             screensaver = ScreensaverSettings()
         }
+        if let data = defaults.data(forKey: "playback.settings"),
+           let saved = try? JSONDecoder().decode(PlaybackSettings.self, from: data) {
+            playback = saved
+        } else {
+            playback = PlaybackSettings()
+        }
     }
 
     var isConfigured: Bool {
@@ -51,5 +98,24 @@ final class AppSettings: ObservableObject {
 
     var access: FnOsAccess {
         FnOsAccess(host: host, port: port, username: username, password: password, accessCode: accessCode)
+    }
+
+    /// 待机进入时间下一档：30 秒 → 1/2/5/10/30 分钟循环（对齐 Android cycleIdleTimeout）。
+    func cycleIdleTimeout() {
+        let steps = [30, 60, 120, 300, 600, 1800]
+        screensaver.idleTimeoutSec = steps.first { $0 > screensaver.idleTimeoutSec } ?? steps[0]
+    }
+
+    /// 单张停留下一档：5 / 10 / 15 / 30 / 60 秒循环。
+    func cyclePhotoInterval() {
+        let steps = [5, 10, 15, 30, 60]
+        screensaver.photoIntervalSec = steps.first { $0 > screensaver.photoIntervalSec } ?? steps[0]
+    }
+
+    func formatIdleTimeout() -> String {
+        let sec = screensaver.idleTimeoutSec
+        if sec < 60 { return "\(sec) 秒" }
+        if sec % 60 == 0 { return "\(sec / 60) 分钟" }
+        return "\(sec / 60) 分 \(sec % 60) 秒"
     }
 }
