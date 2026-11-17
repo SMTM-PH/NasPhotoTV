@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
@@ -126,6 +127,11 @@ fun VideoPlayerScreen(
     var decodedSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     val context = LocalContext.current
+    /**
+     * 设备解码能力快照（进入播放器时查一次）。飞牛 API 只给原片、没有转码流可用，
+     * 所以播放失败时用这份能力 + 视频规格生成针对性诊断，而不是笼统地说「解不了」。
+     */
+    val deviceProfile = remember { VideoCapabilityProbe.query(context) }
     val focusRequester = remember { FocusRequester() }
 
     fun showControls() {
@@ -242,7 +248,16 @@ fun VideoPlayerScreen(
              * error，若不处理用户只能看到一块永久黑屏。
              */
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                playError = describePlayerError(error)
+                val fallback = describePlayerError(error)
+                // 解码类失败时，用设备能力 + 视频规格生成针对性诊断（见 VideoCapabilityProbe）
+                val assessment = videos.getOrNull(index)?.let {
+                    VideoCapabilityProbe.assess(it, deviceProfile)
+                }
+                playError = VideoCapabilityProbe.describeFailure(
+                    errorCode = error.errorCode,
+                    fallbackMessage = fallback,
+                    assessment = assessment ?: VideoCapabilityProbe.Assessment(false, null),
+                )
                 buffering = false
                 isPlaying = false
                 controlsVisible = true
@@ -401,37 +416,33 @@ fun VideoPlayerScreen(
 
         val err = playError
         if (err != null) {
-            // 解码失败时给出明确原因，避免用户面对一块永久黑屏
-            Column(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(horizontal = 64.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    text = "这个视频无法播放",
-                    color = TvColor.TextPrimary,
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.SemiBold,
+            // 解码/网络失败：用这段视频自己的封面铺满做底，再叠一张信息卡。
+            // 旧版这里是纯黑底 + 一行小字，用户只能对着黑屏猜；封面让「是哪条视频」
+            // 一目了然，信息卡给出可操作的原因与下一步。
+            val failedItem = videos.getOrNull(index)
+            if (failedItem != null && failedItem.thumbnailUrl.isNotBlank()) {
+                MediaImage(
+                    url = failedItem.thumbnailUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    targetWidth = 1920,
                 )
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = err,
-                    color = TvColor.TextSecondary,
-                    fontSize = 18.sp,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = if (index < videos.lastIndex) {
-                        "按遥控器「下一曲」跳到下一个（第 ${index + 1} / ${videos.size} 个）"
-                    } else {
-                        "已经是最后一个（第 ${index + 1} / ${videos.size} 个），按 BACK 返回"
-                    },
-                    color = TvColor.TextTertiary,
-                    fontSize = 16.sp,
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.78f)),
                 )
             }
+            PlaybackFailureCard(
+                title = failedItem?.title.orEmpty(),
+                spec = failedItem?.resolution.orEmpty(),
+                reason = err,
+                canGoNext = index < videos.lastIndex,
+                position = index + 1,
+                total = videos.size,
+                modifier = Modifier.align(Alignment.Center),
+            )
         } else if (buffering) {
             CircularProgressIndicator(
                 modifier = Modifier
@@ -510,6 +521,82 @@ fun VideoPlayerScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * 播放失败时的信息卡：叠在视频封面之上，给出「哪条视频 / 什么规格 / 为什么 / 怎么办」。
+ *
+ * 不是诊断工具，是给坐在沙发上的用户看的：一句话原因 + 一个明确的下一步动作。
+ */
+@Composable
+private fun PlaybackFailureCard(
+    title: String,
+    spec: String,
+    reason: String,
+    canGoNext: Boolean,
+    position: Int,
+    total: Int,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .widthIn(max = 900.dp)
+            .padding(horizontal = TvDimen.ScreenPadding)
+            .clip(RoundedCornerShape(TvDimen.RadiusL))
+            .background(TvColor.CinemaPanel)
+            .padding(horizontal = TvDimen.SpaceXl, vertical = TvDimen.SpaceL),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.PlayArrow,
+            contentDescription = null,
+            tint = TvColor.Warn,
+            modifier = Modifier.size(48.dp),
+        )
+        Spacer(Modifier.height(TvDimen.SpaceM))
+        Text(
+            text = "这个视频无法在当前设备播放",
+            color = TvColor.TextPrimary,
+            fontSize = TvType.Section,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(TvDimen.SpaceS))
+        if (title.isNotBlank()) {
+            Text(
+                text = title,
+                color = TvColor.TextSecondary,
+                fontSize = TvType.Caption,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (spec.isNotBlank()) {
+            Text(
+                text = "$spec · 原片直连（飞牛未提供转码流）",
+                color = TvColor.TextTertiary,
+                fontSize = TvType.Tiny,
+            )
+        }
+        Spacer(Modifier.height(TvDimen.SpaceM))
+        Text(
+            text = reason,
+            color = TvColor.Warn,
+            fontSize = TvType.Body,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(TvDimen.SpaceL))
+        Text(
+            text = if (canGoNext) {
+                "按遥控器「下一曲」跳到下一个（第 $position / $total 个）"
+            } else {
+                "已经是最后一个（第 $position / $total 个），按 BACK 返回"
+            },
+            color = TvColor.TextSecondary,
+            fontSize = TvType.Caption,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
