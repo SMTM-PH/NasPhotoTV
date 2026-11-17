@@ -28,3 +28,6 @@ __pycache__/
 
 # Promotion distribution archives (contents already tracked in docs/promotion/)
 docs/promotion/**/*.zip
+
+# Apple TV (tvOS) build output
+apple/.build*/
