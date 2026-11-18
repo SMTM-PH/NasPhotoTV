@@ -6,7 +6,8 @@ import androidx.compose.ui.unit.sp
 
 /**
  * ================= NAS Photo TV 设计规范（Design Tokens） =================
- * 10-foot UI：所有尺寸按 1920x1080 dp 画布设计（activity 未做 density 缩放时即 1dp≈1px on 1080p）。
+ * 10-foot UI：所有尺寸按 960x540 dp 画布设计（ProvideTvDesignDensity 会把任意
+ * 分辨率/系统密度归一化到这块画布；1080p 上 1dp=2px，4K 上 1dp=4px）。
  * 所有页面必须使用这里的 token，禁止在页面里写魔法色值/字号。
  */
 object TvColor {
@@ -77,6 +78,20 @@ object TvDimen {
     const val FocusScaleLarge = 1.12f
     val FocusRingWidth = 3.dp
     val FocusElevation = 24.dp
+}
+
+/**
+ * 缩略图请求像素：指「按 1080p 设计密度（1dp=2px）计算的目标宽度」，
+ * MediaImage 会再按实际设计密度等比放大（4K 上 ×2，封顶 1920）。
+ * 目标必须大于卡片显示像素，否则会出现「卡片大而图糊」的粗糙观感。
+ */
+object TvImage {
+    /** 相册封面（256dp 卡片，1080p 显示约 512px，请求 960px ≈ 1.9×） */
+    const val AlbumCoverPx = 960
+    /** 照片网格缩略图（192dp 卡片，1080p 显示约 384px） */
+    const val MediaThumbPx = 640
+    /** 详情页满屏背景：只做虚化背景，不需要全分辨率 */
+    const val DetailBackdropPx = 1280
 }
 
 object TvType {

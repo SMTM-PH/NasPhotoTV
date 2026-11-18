@@ -193,16 +193,20 @@ fun NasPhotoTvApp() {
                     val foldersDeferred = async {
                         // 文件夹视图：把磁盘扫描目录映射成 Album，复用相册卡片/详情页
                         runCatching {
-                            repository.getFolders().map { f ->
-                                com.nasphoto.tv.data.model.Album(
-                                    id = "folder:" + f.id,
-                                    name = f.name.ifBlank { f.path },
-                                    coverUrl = "",
-                                    itemCount = f.photoCount + f.videoCount,
-                                    type = com.nasphoto.tv.data.model.AlbumType.FOLDER,
-                                    subtitle = f.path,
-                                )
-                            }
+                            // 目录树可能包含同 id 的节点（不同接口口径），去重防止
+                            // FoldersTab 的 LazyGrid key 重复导致闪退。
+                            repository.getFolders()
+                                .distinctBy { it.id }
+                                .map { f ->
+                                    com.nasphoto.tv.data.model.Album(
+                                        id = "folder:" + f.id,
+                                        name = f.name.ifBlank { f.path },
+                                        coverUrl = "",
+                                        itemCount = f.photoCount + f.videoCount,
+                                        type = com.nasphoto.tv.data.model.AlbumType.FOLDER,
+                                        subtitle = if (f.depth > 0) "子文件夹 · ${f.path}" else f.path,
+                                    )
+                                }
                         }.getOrDefault(emptyList())
                     }
                     val approvedDeferred = async {

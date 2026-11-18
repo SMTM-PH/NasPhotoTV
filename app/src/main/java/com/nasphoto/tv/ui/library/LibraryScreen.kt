@@ -47,6 +47,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +56,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import com.nasphoto.tv.ui.common.MediaImage
 import com.nasphoto.tv.data.SettingsStore
 import com.nasphoto.tv.data.FavoritesStore
 import com.nasphoto.tv.data.model.Album
@@ -66,6 +69,7 @@ import com.nasphoto.tv.ui.AppRoute
 import com.nasphoto.tv.ui.LibraryState
 import com.nasphoto.tv.ui.theme.NasPhotoTvTheme
 import com.nasphoto.tv.ui.theme.TvColor
+import com.nasphoto.tv.ui.theme.TvImage
 import com.nasphoto.tv.ui.theme.TvDimen
 import com.nasphoto.tv.ui.theme.TvType
 
@@ -174,74 +178,87 @@ fun LibraryScreen(
         contentFocus.requestBlock(BLOCK_CONTENT)
     }
 
+    // 进入相册/人物/智能分类详情时切换成沉浸式全屏：去掉顶栏与底部提示，
+    // 用封面铺满整屏做背景（窗口本身已全屏，见 MainActivity），
+    // 让大屏真正用来展示照片，而不是被控件挤成一小块网格。
+    val detailOpen = openedAlbum != null || openedPerson != null || openedSmartAlbum != null
+    val detailCover = when {
+        openedAlbum != null -> openedAlbum?.coverUrl.orEmpty()
+        openedSmartAlbum != null -> openedSmartAlbum?.coverUrl.orEmpty()
+        openedPerson != null -> openedPerson?.coverUrl.orEmpty()
+        else -> ""
+    }
     val immersiveHome = selectedTab == LibraryTab.ALL && openedAlbum == null &&
         openedPerson == null && openedSmartAlbum == null && featuredItem != null
-    if (immersiveHome) CinemaBackdrop(featuredItem!!, modifier.fillMaxSize())
+    if (detailOpen) DetailBackdrop(detailCover, modifier.fillMaxSize())
+    else if (immersiveHome) CinemaBackdrop(featuredItem!!, modifier.fillMaxSize())
     else LibraryBackdrop(modifier.fillMaxSize())
 
     Column(Modifier.fillMaxSize()) {
-        LibraryTopBar(
-            tabs = TOP_LEVEL_TABS,
-            selectedTab = topLevelTab(selectedTab),
-            connectionName = state.connectionName,
-            isOnline = state.isOnline,
-            accountName = state.accountName,
-            accountCount = state.accountCount,
-            onAccountClick = { onNavigate(AppRoute.Settings) },
-            onAccountDown = { contentFocus.requestBlock(BLOCK_CONTENT) },
-            accountFocusRequester = accountRequester,
-            onTabClick = { tab ->
-                selectedTab = tab
-                openedAlbumId = null
-                openedPersonId = null
-                openedSmartAlbumId = null
-            },
-            onTabFocus = { lastTab = it },
-            onActionFocus = { lastAction = it },
-            tabFocusRequesters = tabRequesters,
-            actionFocusRequesters = actionRequesters,
-            onHome = {
-                selectedTab = LibraryTab.ALL
-                openedAlbumId = null
-                openedPersonId = null
-                openedSmartAlbumId = null
-            },
-            onScreensaver = { onNavigate(AppRoute.ScreensaverPreview) },
-            onSettings = { onNavigate(AppRoute.Settings) },
-            onTabDown = {
-                if (topLevelTab(selectedTab) == LibraryTab.ALBUMS && openedAlbum == null && openedPerson == null) {
-                    val index = listOf(LibraryTab.ALBUMS, LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.SMART).indexOf(selectedTab).coerceAtLeast(0)
-                    categoryRequesters[index].requestFocus()
-                } else contentFocus.requestBlock(BLOCK_CONTENT)
-            },
-        )
+        if (!detailOpen) {
+            LibraryTopBar(
+                tabs = TOP_LEVEL_TABS,
+                selectedTab = topLevelTab(selectedTab),
+                connectionName = state.connectionName,
+                isOnline = state.isOnline,
+                accountName = state.accountName,
+                accountCount = state.accountCount,
+                onAccountClick = { onNavigate(AppRoute.Settings) },
+                onAccountDown = { contentFocus.requestBlock(BLOCK_CONTENT) },
+                accountFocusRequester = accountRequester,
+                onTabClick = { tab ->
+                    selectedTab = tab
+                    openedAlbumId = null
+                    openedPersonId = null
+                    openedSmartAlbumId = null
+                },
+                onTabFocus = { lastTab = it },
+                onActionFocus = { lastAction = it },
+                tabFocusRequesters = tabRequesters,
+                actionFocusRequesters = actionRequesters,
+                onHome = {
+                    selectedTab = LibraryTab.ALL
+                    openedAlbumId = null
+                    openedPersonId = null
+                    openedSmartAlbumId = null
+                },
+                onScreensaver = { onNavigate(AppRoute.ScreensaverPreview) },
+                onSettings = { onNavigate(AppRoute.Settings) },
+                onTabDown = {
+                    if (topLevelTab(selectedTab) == LibraryTab.ALBUMS) {
+                        val index = listOf(LibraryTab.ALBUMS, LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.SMART).indexOf(selectedTab).coerceAtLeast(0)
+                        categoryRequesters[index].requestFocus()
+                    } else contentFocus.requestBlock(BLOCK_CONTENT)
+                },
+            )
+        }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
         Column(Modifier.fillMaxSize()) {
         if (selectedTab in listOf(LibraryTab.ALBUMS, LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.SMART) && openedAlbum == null && openedPerson == null) {
-            AlbumCategoryBar(selectedTab, categoryRequesters,
-                onUp = { tabRequesters[LibraryTab.ALBUMS.ordinal].requestFocus() }, onSelect = {
-                selectedTab = it
-                contentFocus.requestBlock(BLOCK_CONTENT)
+                AlbumCategoryBar(selectedTab, categoryRequesters,
+                    onUp = { tabRequesters[LibraryTab.ALBUMS.ordinal].requestFocus() }, onSelect = {
+                    selectedTab = it
+                    contentFocus.requestBlock(BLOCK_CONTENT)
             }, onDown = { contentFocus.requestBlock(BLOCK_CONTENT) })
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
         // 有照片列表才算「有库」；但要给人物留一条活路 —— 相册接口失败而人脸结果已到时，
         // 整个页面被空状态盖掉，人物 Tab 就永远进不去了。
         val isEmptyLibrary = state.recent.isEmpty() && state.albums.isEmpty() &&
-            state.people.isEmpty() && state.smartAlbums.isEmpty()
+                state.people.isEmpty() && state.smartAlbums.isEmpty()
         when {
-            isEmptyLibrary -> LibraryEmptyState(onOpenSettings = { onNavigate(AppRoute.Settings) })
+                isEmptyLibrary -> LibraryEmptyState(onOpenSettings = { onNavigate(AppRoute.Settings) })
 
-            openedSmartAlbum != null -> SmartCategoryDetailPane(
-                album = openedSmartAlbum,
-                onBack = {
-                    openedSmartAlbumId = null
-                    contentFocus.requestBlock(BLOCK_CONTENT)
+                openedSmartAlbum != null -> SmartCategoryDetailPane(
+                    album = openedSmartAlbum,
+                    onBack = {
+                        openedSmartAlbumId = null
+                        contentFocus.requestBlock(BLOCK_CONTENT)
                 },
-                onOpenPhoto = onOpenPhoto,
-                onOpenVideo = onOpenVideo,
-                onLoadMedia = onLoadSmartAlbumMedia,
+                    onOpenPhoto = onOpenPhoto,
+                    onOpenVideo = onOpenVideo,
+                    onLoadMedia = onLoadSmartAlbumMedia,
             )
 
             openedAlbum != null -> AlbumDetailPane(
@@ -356,9 +373,39 @@ fun LibraryScreen(
         }
         }
         }
-        GalleryNavigationHint(
-            label = if (openedAlbum != null) openedAlbum.name else if (openedPerson != null) openedPerson.name else selectedTab.label,
+        if (!detailOpen) GalleryNavigationHint(
+            label = selectedTab.label,
             hint = if (immersiveHome) "左右 选择分类    ·    确认 打开分类    ·    向上 浏览操作" else "方向键 移动    ·    确认 打开    ·    返回 上一级",
+        )
+    }
+}
+
+/**
+ * 详情页满屏背景：封面铺满整屏 + 上下渐变压暗，保证标题/卡片文字可读。
+ * 窗口本身已是全屏（MainActivity 隐藏系统栏），这里只负责视觉上的「大屏沉浸感」：
+ * 进入相册/人物/智能分类后不再是一块小网格贴在纯黑底上。
+ */
+@Composable
+private fun DetailBackdrop(coverUrl: String, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxSize().background(TvColor.Bg)) {
+        if (coverUrl.isNotBlank()) {
+            MediaImage(
+                url = coverUrl,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                targetWidth = TvImage.DetailBackdropPx,
+            )
+        }
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    0f to TvColor.Bg.copy(alpha = 0.82f),
+                    0.28f to TvColor.Bg.copy(alpha = 0.34f),
+                    0.72f to TvColor.Bg.copy(alpha = 0.58f),
+                    1f to TvColor.Bg.copy(alpha = 0.94f),
+                ),
+            ),
         )
     }
 }
@@ -461,7 +508,7 @@ private fun ChronoGrid(
     val gridState = rememberLazyGridState()
     val requesters = remember { mutableListOf<FocusRequester>() }
     var focusedIndex by remember { mutableIntStateOf(0) }
-    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 3 else CHRONO_GRID_COLUMNS
+    val columns = CHRONO_GRID_COLUMNS
     val firstCell = { buckets.firstOrNull()?.let { requesterAt(requesters, 0) } }
 
     ConsumeBlockRequest(innerFocus, BLOCK_CONTENT, blockFallback = firstCell)
@@ -672,7 +719,7 @@ private fun AlbumsTab(
     onFirstRowUp: () -> Unit,
 ) {
     val albums = remember(state) { folderAlbums(state) }
-    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 3 else ALBUM_GRID_COLUMNS
+    val columns = ALBUM_GRID_COLUMNS
     // 恢复位置可能已滚出可视区，而 LazyGrid 只组合可见项：让网格直接初始化在恢复位置
     // 所在行，目标卡片才在组合树里，requestFocus 才有意义（与 PeopleTab 同款处理）。
     val safeRestore = restoreIndex.coerceIn(0, albums.lastIndex.coerceAtLeast(0))
@@ -745,7 +792,7 @@ private fun FoldersTab(
     onFocusAlbum: (Int) -> Unit = {},
     onFirstRowUp: () -> Unit,
 ) {
-    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 3 else ALBUM_GRID_COLUMNS
+    val columns = ALBUM_GRID_COLUMNS
     val safeRestore = restoreIndex.coerceIn(0, folders.lastIndex.coerceAtLeast(0))
     val gridState = rememberLazyGridState(
         initialFirstVisibleItemIndex = (safeRestore / columns) * columns,
@@ -814,7 +861,7 @@ private fun RecentTab(
     contentFocus: PendingFocus,
 ) {
     val recent = remember(state) { state.recent }
-    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 4 else MEDIA_GRID_COLUMNS
+    val columns = MEDIA_GRID_COLUMNS
     // 全屏看图返回后 LibraryScreen 重新组合，落点若是第 0 张就等于把用户丢回列表开头。
     // rememberSaveable 由外层 SaveableStateProvider("library") 保管，看图往返不丢。
     var focusedIndex by rememberSaveable { mutableIntStateOf(0) }
@@ -870,7 +917,7 @@ private fun SmartTab(
     onFirstRowUp: () -> Unit,
 ) {
     var index by rememberSaveable { mutableIntStateOf(0) }
-    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 4 else MEDIA_GRID_COLUMNS
+    val columns = MEDIA_GRID_COLUMNS
     val safeIndex = index.coerceIn(0, favorites.lastIndex.coerceAtLeast(0))
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = (safeIndex / columns) * columns)
     val requesters = remember { mutableListOf<FocusRequester>() }
@@ -905,8 +952,8 @@ private fun MemoryRow(
         itemsIndexed(memories, key = { _, it -> it.key }) { index, memory ->
             ChronoCard(
                 bucket = memory,
-                width = 380,
-                height = 220,
+                width = CHRONO_CELL_W,
+                height = CHRONO_CELL_H,
                 focusRequester = requesterAt(requesters, index),
                 onClick = { onOpen(memory) },
                 onFocusChanged = { focused -> if (focused) focusedIndex = index },
@@ -950,8 +997,8 @@ private fun SmartAlbumRow(
             AlbumCard(
                 album = album,
                 coverUrl = albumCoverUrl(state, album),
-                width = 380,
-                height = 220,
+                width = ALBUM_CELL_W,
+                height = ALBUM_CELL_H,
                 focusRequester = requesterAt(requesters, index),
                 onClick = { onOpenAlbum(album) },
                 onFocusChanged = { focused -> if (focused) focusedIndex = index },
@@ -1043,7 +1090,7 @@ private fun RemoteMediaDetailPane(
     onLoadMedia: suspend (String) -> List<MediaItem>?,
 ) {
     var mediaState by remember(stateKey) { mutableStateOf<DetailMedia>(DetailMedia.Loading) }
-    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 4 else MEDIA_GRID_COLUMNS
+    val columns = MEDIA_GRID_COLUMNS
     var focusedIndex by rememberSaveable(stateKey) { mutableIntStateOf(0) }
     val gridState = rememberLazyGridState(
         initialFirstVisibleItemIndex = (focusedIndex / columns) * columns,
@@ -1156,7 +1203,7 @@ private fun PersonDetailPane(
     // 四态用类型表达，不再拿 null 兼「加载中 / 失败」两义：
     // 「读失败」和「确实没有照片」对用户是两件事 —— 前者要提示可以重试，后者是正常结果。
     var photosState by remember(person.id) { mutableStateOf<PersonPhotos>(PersonPhotos.Loading) }
-    val columns = if (LocalConfiguration.current.screenWidthDp < 1200) 4 else MEDIA_GRID_COLUMNS
+    val columns = MEDIA_GRID_COLUMNS
     // 同 AlbumDetailPane：记住看到的是哪一张，全屏看图返回后落回它而不是第一张
     var focusedIndex by rememberSaveable(person.id) { mutableIntStateOf(0) }
     val gridState = rememberLazyGridState(
@@ -1361,18 +1408,18 @@ private fun MediaGrid(
 
 private const val TOP_ACTION_COUNT = 3
 private const val DEFAULT_ACTION = 2
-private const val ALBUM_GRID_COLUMNS = 4
-private const val MEDIA_GRID_COLUMNS = 6
-private const val CHRONO_GRID_COLUMNS = 5
-private const val MEDIA_CELL_W = 244
-private const val MEDIA_CELL_H = 158
-private const val ALBUM_CELL_W = 408
-private const val ALBUM_CELL_H = 200
-private const val CHRONO_CELL_W = 340
-private const val CHRONO_CELL_H = 200
+private const val ALBUM_GRID_COLUMNS = 3
+private const val MEDIA_GRID_COLUMNS = 4
+private const val CHRONO_GRID_COLUMNS = 3
+private const val MEDIA_CELL_W = 192
+private const val MEDIA_CELL_H = 124
+private const val ALBUM_CELL_W = 256
+private const val ALBUM_CELL_H = 152
+private const val CHRONO_CELL_W = 256
+private const val CHRONO_CELL_H = 152
 
 /** 月份页里每天那一行缩略图的高度（宽度按原图宽高比算） */
-private const val MONTH_TILE_H = 150
+private const val MONTH_TILE_H = 112
 
 private fun initialTabOf(index: Int): LibraryTab = LibraryTab.entries.getOrElse(index) { LibraryTab.ALL }
 

@@ -99,13 +99,17 @@ fun MediaItem.isPortraitVideo(): Boolean {
 
 enum class AlbumType { FOLDER, SMART_PEOPLE, SMART_PLACE, MEMORY, FAVORITES, SMART_CATEGORY }
 
-/** 飞牛「文件夹视图」里的一个扫描目录（photo/folder/view 的 myFile 节点）。 */
+/** 飞牛「文件夹视图」里的一个目录节点（扫描根目录或它的子文件夹）。 */
 data class NasFolder(
     val id: String,
     val path: String,
     val name: String,
     val photoCount: Int = 0,
     val videoCount: Int = 0,
+    /** 父目录 id：根目录为空。UI 用它做层级缩进/归属提示。 */
+    val parentId: String = "",
+    /** 距离扫描根目录的层数：0 = 根目录。 */
+    val depth: Int = 0,
 )
 
 /**

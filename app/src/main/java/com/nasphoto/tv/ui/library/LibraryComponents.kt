@@ -56,6 +56,7 @@ import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.ui.common.MediaImage
 import com.nasphoto.tv.ui.theme.TvColor
+import com.nasphoto.tv.ui.theme.TvImage
 import com.nasphoto.tv.ui.theme.TvDimen
 import com.nasphoto.tv.ui.theme.TvType
 
@@ -200,7 +201,7 @@ fun MediaCard(
                 url = item.thumbnailUrl.ifBlank { item.url },
                 contentDescription = item.title,
                 modifier = Modifier.fillMaxSize(),
-                targetWidth = 480,
+                targetWidth = TvImage.MediaThumbPx,
                 cornerRadiusDp = 16,
             )
             if (showMetaOnFocus) {
@@ -284,7 +285,7 @@ fun AlbumCard(
     ) { focused ->
         Column(Modifier.fillMaxSize().blockPointer()) {
             Box(Modifier.fillMaxWidth().weight(1f)) {
-                MediaImage(coverUrl, album.name, Modifier.fillMaxSize(), targetWidth = 640)
+                MediaImage(coverUrl, album.name, Modifier.fillMaxSize(), targetWidth = TvImage.AlbumCoverPx)
                 if (album.isSmart) Text(smartGroupTitle(album.type), color = TvColor.TextPrimary,
                     fontSize = TvType.Caption,
                     modifier = Modifier.padding(TvDimen.SpaceS).clip(RoundedCornerShape(TvDimen.RadiusS))
@@ -339,7 +340,7 @@ fun ChronoCard(
                 url = bucket.coverUrl,
                 contentDescription = bucket.title,
                 modifier = Modifier.fillMaxSize(),
-                targetWidth = 480,
+                targetWidth = TvImage.MediaThumbPx,
                 cornerRadiusDp = 20,
             )
             Box(

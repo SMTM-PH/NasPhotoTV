@@ -7,9 +7,26 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 > 🍎 **Apple TV 版**：`feature/apple-tv` 分支上的原生 tvOS 重写（Swift + SwiftUI），见 [apple/README.md](apple/README.md)。
 
-- 版本：`1.2.4`（versionCode 10，Release 页提供 **正式签名 release 包**，修国产 ROM 拦 debug 签名安装）
+- 版本：`1.2.6`（versionCode 12，Release 页提供 **正式签名 release 包**）
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
+
+---
+
+## 1.2.6 更新（2026-11-17）
+
+- **图库年份全量加载（再次修复）**：1.2.3 的分页终止条件要求 `hasNext` 与「满 500 条」同时成立，
+  用户 NAS 每页不足 500（或 `hasNext` 是 `"1"`/`1`）时第一页就停，仍只显示最近 9 年；
+  改为 OR 语义 + 布尔兼容 + id 去重，`total` 未取满就继续。
+- **文件夹显示子目录**：`photo/folder/list` 只给扫描根目录，旧代码把 `folder_view/getFileList`
+  里的目录项当媒体丢弃；现在递归展开 `folder/view` 目录树（多字段名兼容），
+  并在必要时从文件列表识别子目录，子目录带「子文件夹 · 路径」说明。
+- **选择相册自动全屏**：进入相册/人物/智能分类详情后，用封面铺满整屏做背景并隐藏顶栏与底部提示，
+  网格铺满大屏，返回后原样恢复。
+- **缩略图更小更清晰**：按 960×540dp 设计画布重新校准卡片（相册 3 列 256×152、照片 4 列 192×124、
+  年份 3 列 256×152），请求像素提高到 960/640，同屏内容更多、画面更锐利。
+
+详见 [docs/releases/v1.2.6.md](docs/releases/v1.2.6.md)。
 
 ---
 

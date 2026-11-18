@@ -143,6 +143,9 @@ class DesignPreviewActivity : ComponentActivity() {
                                 onOpenVideo = { _, _, _ -> },
                                 onNavigate = { route = it },
                                 onLoadPersonPhotos = { sample.recent },
+                                onLoadAlbumMedia = { id ->
+                                    sample.mediaByAlbum[id] ?: sample.recent.take(3)
+                                },
                             )
                         }
                         AppRoute.Settings -> SettingsScreen(
@@ -207,6 +210,20 @@ private fun previewLibrary(tab: Int): LibraryState {
             extension = "JPG",
         )
     }
+    // 覆盖 2000–2017：用于离线验证「图库年份分桶」不再只显示最近几年。
+    val oldItems = listOf(2000, 2005, 2010, 2017).mapIndexed { index, year ->
+        MediaItem(
+            id = "design-old-$year",
+            title = "旧照片 $year",
+            type = MediaType.PHOTO,
+            url = resource(scenes[index].first),
+            dateTaken = LocalDate.of(year, 6, 15),
+            resolution = "3840x2160",
+            albumId = "design-album-0",
+            extension = "JPG",
+        )
+    }
+    val allItems = items + oldItems
     val albumNames = listOf("山海之间", "山野漫游", "日落收藏", "一起的时光")
     val albums = albumNames.mapIndexed { index, title ->
         Album(
@@ -217,14 +234,26 @@ private fun previewLibrary(tab: Int): LibraryState {
             subtitle = "示例相册 · 2026",
         )
     }
+    // 根目录 + 子文件夹：离线验证「文件夹」Tab 也能显示下层目录。
+    val folders = listOf(
+        Album("folder:1", "Photos", items[0].url, 4408,
+            subtitle = "/vol1/1000/Photos"),
+        Album("folder:1-1", "PhotoLibrary", items[1].url, 1200,
+            subtitle = "子文件夹 · /vol1/1000/Photos/PhotoLibrary"),
+        Album("folder:1-2", "MobileBackup", items[2].url, 900,
+            subtitle = "子文件夹 · /vol1/1000/Photos/MobileBackup"),
+        Album("folder:1-3", "DJI_001", items[3].url, 320,
+            subtitle = "子文件夹 · /vol1/1000/Photos/DJI_001"),
+    )
     return LibraryState(
-        recent = items,
+        recent = allItems,
         albums = albums,
-        mediaByAlbum = albums.associate { album -> album.id to items.filter { it.albumId == album.id } },
+        mediaByAlbum = albums.associate { album -> album.id to allItems.filter { it.albumId == album.id } },
         selectedTabIndex = tab.coerceIn(0, 5),
         connectionName = "本地示例图库",
         isOnline = true,
         accountName = "设计预览",
+        folders = folders,
         people = listOf(
             Person("design-person-1", "示例人物 A", itemCount = 6),
             Person("design-person-2", "示例人物 B", itemCount = 6),

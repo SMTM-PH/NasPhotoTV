@@ -15,6 +15,7 @@ import com.nasphoto.tv.data.model.RAW_EXTENSIONS
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
 
@@ -60,10 +61,15 @@ class FnOsMediaRepository(
 
     override suspend fun getRecent(limit: Int): List<MediaItem> {
         // 飞牛服务端单页最多 500 条：以前一次性传 limit=20000，只拿回最新 500 张，
-        // 于是「图库」只显示最近几年。这里按 offset 逐页拉全（实测全库 5294 张，11 页）。
-        val out = ArrayList<MediaItem>(minOf(limit, 8_000))
+        // 于是「图库」只显示最近几年。这里按 offset 逐页拉全。
+        //
+        // 1.2.3 的翻页判定是 `hasNext && page.size == 500`，两个信号必须同时说「还有」才继续。
+        // 用户实测 1.2.4 仍然只显示最近 9 年：他的 NAS 每页实际返回不足 500 条（或 hasNext
+        // 回的是 "1"/1 而非 true），于是第一页就误停。改为 OR 语义（见 Paging.kt），并对
+        // 重复页按 id 去重，避免服务端忽略 offset 时死循环。
+        val collected = LinkedHashMap<String, MediaItem>()
         var offset = 0
-        while (out.size < limit && offset < MAX_GALLERY_ITEMS) {
+        while (collected.size < limit && offset < MAX_GALLERY_ITEMS) {
             val data = api.getJson(
                 path = GALLERY_LIST,
                 params = listOf(
@@ -74,14 +80,24 @@ class FnOsMediaRepository(
                     "mode" to "index",
                 ),
             )
+            val rawPageSize = data.optJSONArray("list")?.length() ?: 0
             val page = parseMediaList(data)
-            if (page.isEmpty()) break
-            out += page
-            offset += page.size
-            val hasNext = data.optBoolean("hasNext", page.size >= GALLERY_PAGE_SIZE)
-            if (!hasNext || page.size < GALLERY_PAGE_SIZE) break
+            val before = collected.size
+            for (item in page) collected.putIfAbsent(item.id, item)
+            // 按服务端原始条数推进 offset：解析失败的条目仍占服务端的一页位置。
+            offset += rawPageSize.coerceAtLeast(page.size)
+            if (!shouldContinuePaging(
+                    data = data,
+                    parsedPageSize = page.size,
+                    rawPageSize = rawPageSize,
+                    pageSize = GALLERY_PAGE_SIZE,
+                    collected = collected.size,
+                    newlyAdded = collected.size - before,
+                    hardLimit = MAX_GALLERY_ITEMS,
+                )
+            ) break
         }
-        val result = out.take(limit)
+        val result = collected.values.take(limit)
         recentCache = result
         return result
     }
@@ -353,52 +369,168 @@ class FnOsMediaRepository(
     private var folderCache: List<NasFolder> = emptyList()
 
     override suspend fun getFolders(): List<NasFolder> {
-        // photo/folder/list 带真实的 photoCount/videoCount（folder/view 里这两个字段恒为 0），
-        // 卡片上的「N 项」需要它；失败再退回 folder/view 只取目录结构。
-        val arr = runCatching {
-            api.getJson(FOLDER_LIST, emptyList()).optJSONArray("list")
-        }.getOrNull() ?: runCatching {
-            api.getJson(FOLDER_VIEW, emptyList()).optJSONArray("myFile")
-        }.getOrNull() ?: return emptyList()
-        val list = (0 until arr.length()).mapNotNull { i ->
-            val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            val path = o.optString("folderPath")
-            NasFolder(
-                id = o.optString("folderId"),
-                path = path,
-                name = path.trimEnd('/').substringAfterLast('/').ifBlank { path },
-                photoCount = o.optInt("photoCount", 0),
-                videoCount = o.optInt("videoCount", 0),
-            )
+        // photo/folder/list 只返回「已加入扫描的根目录」（实测就 Photos / Video 两个），
+        // 不含磁盘上的子目录 —— 这正是用户反馈「只显示主文件夹」的根因。
+        // 这里保留根目录的真实计数，再从 folder/view 的目录树补齐所有子文件夹。
+        val rootData = runCatching { api.getJson(FOLDER_LIST, emptyList()) }.getOrNull()
+        val roots = parseFolderNodes(
+            rootData?.optJSONArray("list"), parentId = "", depth = 0,
+        )
+
+        val treeData = runCatching { api.getJson(FOLDER_VIEW, emptyList()) }.getOrNull()
+        val visited = HashSet<String>()
+        val tree = ArrayList<NasFolder>()
+        flattenFolderNodes(treeData?.optJSONArray("myFile"), "", 0, visited, tree)
+
+        // 某些 NAS 版本的 folder/view 只给根目录；退而求其次，从根目录的文件列表里
+        // 识别目录项（folder_view/getFileList 会同时返回文件与子文件夹）。
+        if (tree.none { it.parentId.isNotBlank() } && roots.isNotEmpty()) {
+            for (root in roots.take(MAX_FOLDER_ROOT_EXPANSION)) {
+                for (child in childrenFromListing(root)) {
+                    val key = folderKey(child)
+                    if (visited.add(key) && tree.size < MAX_FOLDER_NODES) tree += child
+                }
+            }
         }
-        folderCache = list
-        return list
+
+        // 合并去重：目录树节点为主，根目录的真实计数回填；树里缺失的根目录也要保留。
+        val countByKey = roots.associateBy(::folderKey)
+        val merged = tree.map { node ->
+            countByKey[folderKey(node)]?.let { root ->
+                node.copy(photoCount = root.photoCount, videoCount = root.videoCount)
+            } ?: node
+        }
+        val seen = merged.map(::folderKey).toSet()
+        val result = merged + roots.filter { folderKey(it) !in seen }
+        folderCache = result
+        return result
     }
+
+    /**
+     * 解析一层目录节点。folder/view 的 myFile 与 folder_view/getFileList 的 list 里
+     * 都可能混有媒体文件，只认带明确「目录」标记的节点，避免把照片当成文件夹。
+     */
+    internal fun parseFolderNodes(
+        arr: JSONArray?,
+        parentId: String,
+        depth: Int,
+        parentPath: String = "",
+    ): List<NasFolder> {
+        if (arr == null || depth > MAX_FOLDER_DEPTH) return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            parseFolderNode(arr.optJSONObject(i) ?: return@mapNotNull null, parentId, depth, parentPath)
+        }
+    }
+
+    internal fun parseFolderNode(
+        o: JSONObject,
+        parentId: String,
+        depth: Int,
+        parentPath: String = "",
+    ): NasFolder? {
+        if (!o.looksLikeFolder()) return null
+        val path = listOf("folderPath", "dirPath", "path", "fullPath")
+            .firstNotNullOfOrNull { key -> o.optString(key).takeIf { it.isNotBlank() } }.orEmpty()
+        val id = listOf("folderId", "dirId")
+            .firstNotNullOfOrNull { key -> o.optString(key).takeIf { it.isNotBlank() } }
+            ?: o.opt("id")?.toString().orEmpty()
+        val name = listOf("name", "folderName", "fileName")
+            .firstNotNullOfOrNull { key -> o.optString(key).takeIf { it.isNotBlank() } }
+            ?: path.trimEnd('/').substringAfterLast('/').ifBlank { path.ifBlank { id } }
+        // getFileList 的目录项有些版本只给名字/isDir，不给完整路径；
+        // 用父目录路径拼出来，否则 getFolderMedia 会因路径为空而加载不到照片。
+        val effectivePath = path.ifBlank {
+            if (parentPath.isNotBlank()) parentPath.trimEnd('/') + "/" + name else ""
+        }
+        if (id.isBlank() && effectivePath.isBlank()) return null
+        return NasFolder(
+            id = id.ifBlank { "path:$effectivePath" },
+            path = effectivePath,
+            name = name,
+            photoCount = o.optInt("photoCount", 0),
+            videoCount = o.optInt("videoCount", 0),
+            parentId = parentId,
+            depth = depth,
+        )
+    }
+
+    /** 深度遍历 folder/view 目录树；visited 防环，depth / 总数双上限防异常数据。 */
+    internal fun flattenFolderNodes(
+        arr: JSONArray?,
+        parentId: String,
+        depth: Int,
+        visited: MutableSet<String>,
+        out: MutableList<NasFolder>,
+        parentPath: String = "",
+    ) {
+        if (arr == null || depth > MAX_FOLDER_DEPTH || out.size >= MAX_FOLDER_NODES) return
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val node = parseFolderNode(o, parentId, depth, parentPath) ?: continue
+            if (!visited.add(folderKey(node))) continue
+            out += node
+            for (keyName in CHILD_ARRAY_KEYS) {
+                val children = o.optJSONArray(keyName) ?: continue
+                flattenFolderNodes(children, node.id, depth + 1, visited, out, node.path)
+            }
+        }
+    }
+
+    /** 从某个目录的文件列表里识别直接子目录（folder/view 不给子目录时的兜底）。 */
+    private suspend fun childrenFromListing(folder: NasFolder): List<NasFolder> {
+        val data = runCatching {
+            api.getJson(
+                FOLDER_FILES,
+                listOf(
+                    "folderId" to folder.id,
+                    "folderPath" to folder.path,
+                    "offset" to "0",
+                    "limit" to FOLDER_PAGE_SIZE.toString(),
+                ),
+            )
+        }.getOrNull() ?: return emptyList()
+        return parseFolderNodes(data.optJSONArray("list"), folder.id, folder.depth + 1, folder.path)
+    }
+
+    internal fun folderKey(folder: NasFolder): String =
+        folder.path.trim().trimEnd('/').lowercase().ifBlank { folder.id }
 
     override suspend fun getFolderMedia(folderId: String, limit: Int): List<MediaItem> {
         val path = folderCache.firstOrNull { it.id == folderId }?.path
             ?: getFolders().firstOrNull { it.id == folderId }?.path
             ?: return emptyList()
-        val out = ArrayList<MediaItem>()
+        // folder/view 里有些节点没有 folderId，我们用 "path:..." 合成 id 保证卡片 key 唯一；
+        // 这种 id 不能被服务端识别，查询时按 folderPath 定位即可。
+        val apiFolderId = folderId.takeIf { !it.startsWith("path:") }.orEmpty()
+        val collected = LinkedHashMap<String, MediaItem>()
         var offset = 0
-        while (out.size < limit) {
+        while (collected.size < limit && offset < MAX_FOLDER_ITEMS) {
             val data = api.getJson(
                 FOLDER_FILES,
                 listOf(
-                    "folderId" to folderId,
+                    "folderId" to apiFolderId,
                     "folderPath" to path,
                     "offset" to offset.toString(),
                     "limit" to FOLDER_PAGE_SIZE.toString(),
                 ),
             )
+            val rawPageSize = data.optJSONArray("list")?.length() ?: 0
             val page = parseMediaList(data)
-            if (page.isEmpty()) break
-            out += page
-            offset += page.size
-            val hasNext = data.optBoolean("hasNext", page.size >= FOLDER_PAGE_SIZE)
-            if (!hasNext || page.size < FOLDER_PAGE_SIZE) break
+            val before = collected.size
+            for (item in page) collected.putIfAbsent(item.id, item)
+            offset += rawPageSize.coerceAtLeast(page.size)
+            if (!shouldContinuePaging(
+                    data = data,
+                    parsedPageSize = page.size,
+                    rawPageSize = rawPageSize,
+                    pageSize = FOLDER_PAGE_SIZE,
+                    collected = collected.size,
+                    newlyAdded = collected.size - before,
+                    hardLimit = MAX_FOLDER_ITEMS,
+                )
+            ) break
         }
-        return out.sortedByDescending { it.dateTaken }
+        return collected.values.sortedByDescending { it.dateTaken }
     }
 
     override suspend fun getMediaItem(id: String): MediaItem? =
@@ -515,6 +647,12 @@ class FnOsMediaRepository(
         const val MAX_GALLERY_ITEMS = 50_000
         const val PERSON_PAGE_SIZE = 200
         const val FOLDER_PAGE_SIZE = 200
+        const val MAX_FOLDER_ITEMS = 20_000
+        /** folder/view 目录树遍历上限，异常数据也不能把启动拖死。 */
+        const val MAX_FOLDER_DEPTH = 12
+        const val MAX_FOLDER_NODES = 4_000
+        const val MAX_FOLDER_ROOT_EXPANSION = 12
+        val CHILD_ARRAY_KEYS = listOf("children", "subfolders", "subFolders", "childList", "fileList", "list", "myFile", "items")
         const val FOLDER_LIST = "/p/api/v1/photo/folder/list"
         const val FOLDER_VIEW = "/p/api/v1/photo/folder/view"
         const val FOLDER_FILES = "/p/api/v1/folder_view/getFileList"
@@ -527,4 +665,19 @@ class FnOsMediaRepository(
         const val PERSON_TIMELINE = "/p/api/v1/ai-person/photoLibrary/timeLine"
         const val PERSON_PHOTOS = "/p/api/v1/ai-person/photoLibrary/list"
     }
+}
+
+/**
+ * 目录节点判定：folder/view 的 myFile 和 folder_view/getFileList 的 list 都可能混着照片，
+ * 只认明确标记为目录的节点。filePath 单独出现不足以判定（媒体文件也有 filePath）。
+ */
+internal fun JSONObject.looksLikeFolder(): Boolean {
+    if (truthy("isDir") || truthy("isFolder") || truthy("isDirectory")) return true
+    val kind = optString("type").ifBlank { optString("category") }
+    if (kind.equals("folder", ignoreCase = true) ||
+        kind.equals("dir", ignoreCase = true) ||
+        kind.equals("directory", ignoreCase = true)
+    ) return true
+    if (optString("folderId").isNotBlank() || optString("dirId").isNotBlank()) return true
+    return optString("folderPath").isNotBlank() || optString("dirPath").isNotBlank()
 }
