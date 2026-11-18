@@ -258,11 +258,20 @@ fun rowValueText(key: SettingsKey, store: SettingsStore, feedback: SettingsFeedb
         SettingsKey.SS_ENABLED,
         SettingsKey.PB_AUTOPLAY,
         SettingsKey.PB_LOOP,
+        SettingsKey.ABOUT_UPDATE_AUTO,
         -> if (toggleState(key, store) == true) "开" else "关"
 
         SettingsKey.PB_PORTRAIT_FIT -> p.portraitFit.label
 
         SettingsKey.ABOUT_VERSION -> com.nasphoto.tv.BuildConfig.VERSION_NAME
+        SettingsKey.ABOUT_UPDATE -> com.nasphoto.tv.data.AppUpdateState.actionLabel
+        SettingsKey.ABOUT_UPDATE_AUTO -> if (store.update.autoCheck) "开" else "关"
+        SettingsKey.ABOUT_UPDATE_SOURCE -> store.update.apiUrl.ifBlank { "GitHub" }.let {
+            if (it.length > 22) it.take(20) + "…" else it
+        }
+        SettingsKey.ABOUT_UPDATE_MIRROR -> store.update.mirror.ifBlank { "直连" }.let {
+            if (it.length > 22) it.take(20) + "…" else it
+        }
         SettingsKey.ABOUT_ENGINE -> "Compose"
         SettingsKey.ABOUT_DEVICE -> "Android TV"
         SettingsKey.NAS_REFRESH,
@@ -286,6 +295,7 @@ fun toggleState(key: SettingsKey, store: SettingsStore): Boolean? {
         SettingsKey.SS_KEN_BURNS -> s.kenBurns
         SettingsKey.PB_AUTOPLAY -> p.autoPlayNext
         SettingsKey.PB_LOOP -> p.loopMode
+        SettingsKey.ABOUT_UPDATE_AUTO -> store.update.autoCheck
         else -> null
     }
 }
@@ -303,6 +313,7 @@ private val ACTION_KEYS = setOf(
     SettingsKey.ABOUT_RESET,
     SettingsKey.ACC_ADD,
     SettingsKey.ACC_REMOVE,
+    SettingsKey.ABOUT_UPDATE,
 )
 
 @Composable
@@ -314,6 +325,19 @@ private fun ActionTail(key: SettingsKey, feedback: SettingsFeedback, focused: Bo
             Spacer(Modifier.width(TvDimen.SpaceXs))
             Chevron(tint)
         }
+        SettingsKey.ABOUT_UPDATE -> when {
+            com.nasphoto.tv.data.AppUpdateState.checking || com.nasphoto.tv.data.AppUpdateState.downloading ->
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = TvColor.Accent,
+                    strokeWidth = 2.dp,
+                )
+
+            com.nasphoto.tv.data.AppUpdateState.info != null || com.nasphoto.tv.data.AppUpdateState.downloaded != null ->
+                Text(com.nasphoto.tv.data.AppUpdateState.actionLabel, fontSize = TvType.Tiny, color = tint)
+            else -> Chevron(tint)
+        }
+
         SettingsKey.NAS_TEST -> when {
             feedback.nasTesting -> CircularProgressIndicator(
                 modifier = Modifier.size(20.dp),

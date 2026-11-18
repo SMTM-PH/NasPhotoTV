@@ -7,9 +7,24 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 > 🍎 **Apple TV 版**：`feature/apple-tv` 分支上的原生 tvOS 重写（Swift + SwiftUI），见 [apple/README.md](apple/README.md)。
 
-- 版本：`1.2.6`（versionCode 12，Release 页提供 **正式签名 release 包**）
+- 版本：`1.2.7`（versionCode 13，Release 页提供 **正式签名 release 包**）
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
+
+---
+
+## 1.2.7 更新（2026-11-18）
+
+- **在线更新**：设置 → 关于 新增「在线更新」四行（检查/下载/安装状态机、启动静默检查开关、
+  可配置更新源地址与下载镜像前缀），右栏新增状态卡片。
+- 更新源默认 GitHub Releases `latest` API，可换镜像/反代；下载可叠加镜像前缀，
+  适配国内电视网络。
+- **全程手动确认**：检查 → 确认下载 → 确认安装，不自动下载、不自动装、不弹窗打断看图。
+- 网络层与 NAS 连接完全隔离（独立 OkHttp client，不带 AccessToken）；按当前安装包签名
+  自动挑 release / debug 包，避免签名不同导致覆盖安装失败。
+- `FileProvider` + `REQUEST_INSTALL_PACKAGES` 调起系统安装界面。
+
+详见 [docs/releases/v1.2.7.md](docs/releases/v1.2.7.md)。
 
 ---
 

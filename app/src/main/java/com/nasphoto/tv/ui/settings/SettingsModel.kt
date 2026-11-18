@@ -74,6 +74,11 @@ enum class SettingsKey(
     ABOUT_DEVICE(SettingsGroup.ABOUT, "设备", "当前电视型号"),
     ABOUT_DESIGN(SettingsGroup.ABOUT, "设计说明", "这套 10-foot UI 的设计原则"),
     ABOUT_RESET(SettingsGroup.ABOUT, "恢复默认设置", "需要按两次确认"),
+
+    ABOUT_UPDATE(SettingsGroup.ABOUT, "在线更新", "按确认执行下一步：检查 → 下载 → 安装，每步都要手动确认"),
+    ABOUT_UPDATE_AUTO(SettingsGroup.ABOUT, "启动时自动检查", "每天最多检查一次，只提示新版本，不自动下载"),
+    ABOUT_UPDATE_SOURCE(SettingsGroup.ABOUT, "更新源地址", "留空用 GitHub；国内不通可填镜像/反代的 latest API 地址"),
+    ABOUT_UPDATE_MIRROR(SettingsGroup.ABOUT, "下载镜像前缀", "可选；拼接在 APK 下载地址前，例如 https://镜像/"),
 }
 
 /** 左栏按组取行 */
@@ -278,6 +283,14 @@ class SettingsActions(
             feedback.armReset()
         }
     }
+
+    // ---------------- 在线更新（1.2.7） ----------------
+    fun toggleAutoCheck() = store.updateSettings { it.copy(autoCheck = !it.autoCheck) }
+
+    fun setUpdateApiUrl(value: String) = store.updateSettings { it.copy(apiUrl = value.trim()) }
+
+    fun setUpdateMirror(value: String) = store.updateSettings { it.copy(mirror = value.trim()) }
+
 }
 
 /**

@@ -48,6 +48,10 @@ object SettingsStore {
     var nas: NasConnection by mutableStateOf(defaultNas)
         private set
 
+    /** 在线更新偏好（1.2.7）：启动静默检查、自定义更新源与下载镜像。 */
+    var update: UpdateSettings by mutableStateOf(UpdateSettings())
+        private set
+
     /**
      * 「测试连接」的结果：null = 还没测过。
      * 设置页可以读它显示「已连接 · 12ms」/「连接失败」。
@@ -69,6 +73,10 @@ object SettingsStore {
         val next = transform(nas)
         invalidateDisplayScopeForIdentityChange(nas, next)
         nas = next
+    }
+
+    fun updateSettings(transform: (UpdateSettings) -> UpdateSettings) {
+        update = transform(update)
     }
 
     /**
@@ -176,6 +184,7 @@ object SettingsStore {
         playback = defaultPlayback
         nas = defaultNas
         nasLatencyMs = null
+        update = UpdateSettings()
     }
 
     // ---------- 「下一档」便捷方法（设置页遥控器一键切换） ----------
@@ -329,6 +338,10 @@ object SettingsStore {
         e.putBoolean("pb_next", playback.autoPlayNext)
         e.putBoolean("pb_loop", playback.loopMode)
         e.putString("pb_portrait_fit", playback.portraitFit.name)
+        e.putBoolean("upd_auto", update.autoCheck)
+        e.putString("upd_api", update.apiUrl)
+        e.putString("upd_mirror", update.mirror)
+        e.putLong("upd_last", update.lastCheckMs)
         e.apply()
     }
 
@@ -390,6 +403,12 @@ object SettingsStore {
                 p.getString("pb_portrait_fit", null),
                 defaultPlayback.portraitFit,
             ),
+        )
+        update = UpdateSettings(
+            autoCheck = p.getBoolean("upd_auto", true),
+            apiUrl = p.getString("upd_api", "") ?: "",
+            mirror = p.getString("upd_mirror", "") ?: "",
+            lastCheckMs = p.getLong("upd_last", 0L),
         )
     }
 

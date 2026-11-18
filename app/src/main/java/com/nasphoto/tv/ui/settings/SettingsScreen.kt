@@ -160,6 +160,10 @@ fun SettingsScreen(
                     feedback.toast = "正在刷新媒体库…"
                     onClose()
                 }
+                SettingsKey.ABOUT_UPDATE -> {
+                    val ctx = com.nasphoto.tv.data.AppContextHolder.context
+                    if (ctx != null) com.nasphoto.tv.data.AppUpdateController.onConfirm(ctx)
+                }
                 else -> {}
             }
         }
@@ -366,6 +370,8 @@ fun SettingsScreen(
                         SettingsKey.NAS_PASSWORD -> actions.setPassword(value)
                         SettingsKey.NAS_ACCESS_CODE -> actions.setAccessCode(value)
                         SettingsKey.ACC_LABEL -> actions.setAccountLabel(value)
+                        SettingsKey.ABOUT_UPDATE_SOURCE -> actions.setUpdateApiUrl(value)
+                        SettingsKey.ABOUT_UPDATE_MIRROR -> actions.setUpdateMirror(value)
                         else -> {}
                     }
                     textTarget = null
@@ -556,6 +562,8 @@ private fun performConfirm(
         SettingsKey.NAS_PASSWORD,
         SettingsKey.NAS_ACCESS_CODE,
         SettingsKey.ACC_LABEL,
+        SettingsKey.ABOUT_UPDATE_SOURCE,
+        SettingsKey.ABOUT_UPDATE_MIRROR,
         -> onEditText(key)
 
         // 账号组里 ENTER 就是「马上做那件事」，不做步进
@@ -563,6 +571,7 @@ private fun performConfirm(
         SettingsKey.ACC_REMOVE -> actions.requestRemoveActiveAccount()
 
         SettingsKey.SS_PREVIEW -> actions.previewScreensaver()
+        SettingsKey.ABOUT_UPDATE -> onQueue(key)
         SettingsKey.ABOUT_DESIGN -> actions.toggleDesign()
         SettingsKey.ABOUT_RESET -> actions.requestReset()
         // 其它行：ENTER 等同于"往后调一格"
@@ -596,6 +605,18 @@ private fun textEditSpec(key: SettingsKey, store: SettingsStore): TextEditSpec =
         initial = store.nas.activeAccount?.label.orEmpty(),
         masked = false,
     )
+    SettingsKey.ABOUT_UPDATE_SOURCE -> TextEditSpec(
+        title = "更新源地址",
+        subtitle = "留空 = GitHub 官方 latest API；可填镜像或反代的完整 URL",
+        initial = store.update.apiUrl,
+        masked = false,
+    )
+    SettingsKey.ABOUT_UPDATE_MIRROR -> TextEditSpec(
+        title = "下载镜像前缀",
+        subtitle = "可选；例如 https://mirror.example/ 会拼在 APK 下载地址前，留空直连",
+        initial = store.update.mirror,
+        masked = false,
+    )
     else -> TextEditSpec("输入", "", "", masked = false)
 }
 
@@ -619,6 +640,7 @@ private fun stepAction(key: SettingsKey, actions: SettingsActions): ((Boolean) -
     SettingsKey.PB_AUTOPLAY -> { _ -> actions.toggleAutoPlayNext() }
     SettingsKey.PB_LOOP -> { _ -> actions.toggleLoop() }
     SettingsKey.PB_PORTRAIT_FIT -> { isLeft -> actions.cyclePortraitFit(reverse = isLeft) }
+    SettingsKey.ABOUT_UPDATE_AUTO -> { _ -> actions.toggleAutoCheck() }
     else -> null
 }
 

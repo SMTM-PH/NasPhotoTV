@@ -28,6 +28,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalView
 import com.nasphoto.tv.data.AppContextHolder
+import com.nasphoto.tv.data.AppUpdateController
 import com.nasphoto.tv.data.displayPhotos
 import com.nasphoto.tv.data.mediaIdentityKey
 import com.nasphoto.tv.data.FavoritesStore
@@ -79,6 +80,7 @@ fun NasPhotoTvApp() {
 
         val screensaverSettings = SettingsStore.screensaver
         val playbackSettings = SettingsStore.playback
+        val updateSettings = SettingsStore.update
         val nas = SettingsStore.nas
         val identityKey = remember(
             nas.host, nas.port, nas.scheme, nas.basePath,
@@ -323,9 +325,17 @@ fun NasPhotoTvApp() {
         val saverPhotos = if (screensaverSettings.mode == ScreensaverSettings.Mode.PHOTO_ONLY ||
             screensaverSettings.background == ScreensaverSettings.BackgroundStyle.PHOTO) photoPool else emptyList()
 
-        // 任何设置变更立即落盘
-        LaunchedEffect(screensaverSettings, playbackSettings, nas) {
+        // 任何设置变更立即落盘（含在线更新偏好）
+        LaunchedEffect(screensaverSettings, playbackSettings, updateSettings, nas) {
             SettingsStore.persist()
+        }
+
+        // 在线更新：启动时静默检查，每天最多一次，失败不提示、不下载、不打断看图。
+        // 用户可在「设置 → 关于 → 启动时自动检查」关掉。
+        LaunchedEffect(Unit) {
+            AppContextHolder.context?.let { ctx ->
+                runCatching { AppUpdateController.silentCheck(ctx) }
+            }
         }
 
         // 首次连接页搜到 NAS：先填地址和端口，再进设置补账号密码

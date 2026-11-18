@@ -82,6 +82,71 @@ fun SettingsAboutPanel(store: SettingsStore, feedback: SettingsFeedback, modifie
 
         Spacer(Modifier.height(TvDimen.SpaceL))
 
+        // 在线更新（1.2.7）：状态卡片只展示，所有动作都在左栏按确认手动执行
+        val update = com.nasphoto.tv.data.AppUpdateState
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(TvDimen.RadiusM))
+                .background(TvColor.BgElevated)
+                .padding(TvDimen.SpaceM),
+            verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs),
+        ) {
+            Text(
+                text = "在线更新",
+                fontSize = TvType.Caption,
+                fontWeight = FontWeight.SemiBold,
+                color = TvColor.Accent,
+            )
+            Text(
+                text = update.statusText,
+                fontSize = TvType.Body,
+                color = TvColor.TextPrimary,
+            )
+            if (update.downloading) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(TvDimen.RadiusS))
+                        .background(TvColor.SurfaceHigh),
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(update.progress / 100f)
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(TvDimen.RadiusS))
+                            .background(TvColor.Accent),
+                    )
+                }
+            }
+            if (update.info != null && update.error == null) {
+                Text(
+                    text = update.info!!.notes.lineSequence()
+                        .filter { it.isNotBlank() && !it.startsWith("#") }
+                        .take(4)
+                        .joinToString(" · ")
+                        .take(180),
+                    fontSize = TvType.Tiny,
+                    color = TvColor.TextSecondary,
+                    maxLines = 3,
+                )
+            }
+            Text(
+                text = "更新源：" + (store.update.apiUrl.ifBlank { "GitHub Releases" }) +
+                    if (store.update.mirror.isBlank()) "" else " · 已设下载镜像",
+                fontSize = TvType.Tiny,
+                color = TvColor.TextTertiary,
+            )
+            Text(
+                text = "聚焦左栏「在线更新」按确认：检查 → 下载 → 安装，每步都要手动确认",
+                fontSize = TvType.Tiny,
+                color = TvColor.TextTertiary,
+            )
+        }
+
+        Spacer(Modifier.height(TvDimen.SpaceL))
+
         if (feedback.showDesignDetail) {
             Column(
                 Modifier
