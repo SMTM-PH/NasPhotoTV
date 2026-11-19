@@ -1,0 +1,2 @@
+bea4a83602ee06ddbec92314552e9f536a071865424ca7f29267efb60dcbe1db  NasPhotoTV-1.2.8-tvOS-simulator.zip
+6e91929595d16f34bd8b5860d656a16cf2b60665701b3594e4925db79f522e4e  NasPhotoTV-1.2.8-tvOS-unsigned-xcarchive.zip

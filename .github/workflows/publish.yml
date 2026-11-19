@@ -1,0 +1,29 @@
+name: Publish tvOS 1.2.8 preview
+
+on:
+  push:
+    branches:
+      - codex/publish-tvos-v1.2.8
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: write
+    steps:
+      - name: Verify tvOS archives
+        run: |
+          git init
+          git fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+          sha256sum --check SHA256SUMS.txt
+      - name: Publish tvOS prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create tvos-v1.2.8 NasPhotoTV-1.2.8-tvOS-simulator.zip \
+            NasPhotoTV-1.2.8-tvOS-unsigned-xcarchive.zip SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --latest=false --draft \
+            --title 'NAS Photo TV 1.2.8 · Apple TV 预览版' --notes-file release-notes.md
+          gh release edit tvos-v1.2.8 --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
