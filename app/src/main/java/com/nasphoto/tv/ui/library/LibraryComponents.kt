@@ -296,7 +296,10 @@ fun AlbumCard(
                 Column(Modifier.weight(1f)) {
                     Text(album.name, color = TvColor.TextPrimary, fontSize = TvType.Body,
                         fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${album.itemCount} 项", color = TvColor.TextSecondary,
+                    // 子目录接口不返回媒体计数，不能把未知数量显示成「0 项」。
+                    Text(if (album.id.startsWith("folder:path:") && album.itemCount == 0) {
+                        if (album.subtitle.startsWith("子文件夹")) "子文件夹" else "文件夹"
+                    } else "${album.itemCount} 项", color = TvColor.TextSecondary,
                         fontSize = TvType.Caption, maxLines = 1)
                 }
                 if (focused) Icon(Icons.Filled.PlayArrow, null, tint = TvColor.Accent,

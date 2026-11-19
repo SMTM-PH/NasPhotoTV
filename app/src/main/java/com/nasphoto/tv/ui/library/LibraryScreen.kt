@@ -334,6 +334,7 @@ fun LibraryScreen(
                 LibraryTab.FOLDER -> FoldersTab(
                     folders = state.folders,
                     loaded = state.foldersLoaded,
+                    error = state.foldersError,
                     onOpenAlbum = { openedAlbumId = it.id },
                     contentFocus = contentFocus,
                     restoreIndex = albumsFocusIndex,
@@ -786,6 +787,7 @@ private fun AlbumsTab(
 private fun FoldersTab(
     folders: List<Album>,
     loaded: Boolean,
+    error: String?,
     onOpenAlbum: (Album) -> Unit,
     contentFocus: PendingFocus,
     restoreIndex: Int = 0,
@@ -809,13 +811,13 @@ private fun FoldersTab(
     Column(Modifier.fillMaxSize()) {
         SectionHeader(
             title = "文件夹",
-            trailing = if (loaded) "${folders.size} 个目录" else "正在读取…",
+            trailing = if (error != null) "读取失败" else if (loaded) "${folders.size} 个目录" else "正在读取…",
             modifier = Modifier.padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceM),
         )
         if (folders.isEmpty()) {
             EmptyState(
-                title = if (loaded) "没有可浏览的文件夹" else "正在读取文件夹…",
-                subtitle = "在飞牛「相册」设置里添加要扫描的照片目录后会显示在这里",
+                title = if (error != null) "文件夹暂时无法读取" else if (loaded) "没有可浏览的文件夹" else "正在读取文件夹…",
+                subtitle = error ?: "在飞牛「相册」设置里添加要扫描的照片目录后会显示在这里",
                 modifier = Modifier.fillMaxSize(),
                 icon = Icons.Outlined.Folder,
             )

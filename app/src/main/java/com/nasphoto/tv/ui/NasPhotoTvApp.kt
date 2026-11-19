@@ -157,13 +157,8 @@ fun NasPhotoTvApp() {
             }
             loadState = LibraryLoad.Loading
             try {
-                // 「最近添加」横排与「年·月·日」时间线共用这份数据：
-                // 取 24 会让时间线只剩最近一天、用户永远看不到更早的照片，
-                // 这里按服务端可分页上限取足，保证时间线覆盖整个照片库。
-                // 图库（年/月/日）要按年份分组，只取最近 1000 条时这 5281 张素材
-                // 会全挤在 2026 年，2021 之前的年份根本看不到。一次取全库：
-                // 实测 5281 条约 1.3 秒、5.3 MB JSON，作为首屏唯一的主请求仍可接受，
-                // 相册详情已改为按需加载，堆内不再有第二份全量副本。
+                // 图库与「最近添加」共用媒体池；按服务端时间线读取完整范围，
+                // 不能按开发机样本数量截断，否则大照片库会再次丢失旧年份。
                 val recent = repository.getRecent(FULL_LIBRARY_LIMIT)
                 val albums = repository.getAlbums()
                 // 相册媒体改为进入详情时按需加载（见 LibraryScreen.onLoadAlbumMedia）。
@@ -192,25 +187,6 @@ fun NasPhotoTvApp() {
                     val statsDeferred = async {
                         runCatching { repository.stats() }.getOrNull()
                     }
-                    val foldersDeferred = async {
-                        // 文件夹视图：把磁盘扫描目录映射成 Album，复用相册卡片/详情页
-                        runCatching {
-                            // 目录树可能包含同 id 的节点（不同接口口径），去重防止
-                            // FoldersTab 的 LazyGrid key 重复导致闪退。
-                            repository.getFolders()
-                                .distinctBy { it.id }
-                                .map { f ->
-                                    com.nasphoto.tv.data.model.Album(
-                                        id = "folder:" + f.id,
-                                        name = f.name.ifBlank { f.path },
-                                        coverUrl = "",
-                                        itemCount = f.photoCount + f.videoCount,
-                                        type = com.nasphoto.tv.data.model.AlbumType.FOLDER,
-                                        subtitle = if (f.depth > 0) "子文件夹 · ${f.path}" else f.path,
-                                    )
-                                }
-                        }.getOrDefault(emptyList())
-                    }
                     val approvedDeferred = async {
                         val ids = approvedAlbumIds.intersect(albums.map { it.id }.toSet())
                         ids.map { id ->
@@ -224,7 +200,6 @@ fun NasPhotoTvApp() {
                         people = peopleDeferred.await(),
                         smartAlbums = smartDeferred.await(),
                         stats = statsDeferred.await(),
-                        folders = foldersDeferred.await(),
                         approvedMedia = approvedDeferred.await(),
                     )
                 }
@@ -257,13 +232,41 @@ fun NasPhotoTvApp() {
                         accountName = nas.activeAccount?.displayName.orEmpty(),
                         accountCount = nas.accounts.size.coerceAtLeast(1),
                         people = optional.people,
-                        folders = optional.folders,
+                        foldersLoaded = false,
                         peopleLoaded = true,
                         smartAlbums = optional.smartAlbums,
                         smartAlbumsError = smartAlbumsError,
                     ),
                     screensaverPhotos = optional.screensaverPhotos,
                 )
+
+                // 深层目录树需要逐目录请求，放在图库就绪后继续读取，避免阻塞首页。
+                var foldersError: String? = null
+                val folderAlbums = try {
+                    repository.getFolders().map { f ->
+                        Album(
+                            id = "folder:" + f.id,
+                            name = f.name.ifBlank { f.path },
+                            coverUrl = "",
+                            itemCount = f.photoCount + f.videoCount,
+                            type = com.nasphoto.tv.data.model.AlbumType.FOLDER,
+                            subtitle = if (f.depth > 0) "子文件夹 · ${f.path}" else f.path,
+                        )
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    foldersError = "请检查飞牛相册的目录权限和网络连接，在设置中刷新后重试"
+                    emptyList()
+                }
+                currentCoroutineContext().ensureActive()
+                if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
+                val current = loadState as? LibraryLoad.Ready ?: return@LaunchedEffect
+                loadState = current.copy(library = current.library.copy(
+                    folders = folderAlbums,
+                    foldersLoaded = true,
+                    foldersError = foldersError,
+                ))
             } catch (e: FnOsTwoFactorRequired) {
                 if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
                 // 密码已通过，只差动态码：WebSocket 由仓库里的 FnOsApi 继续持有
@@ -643,14 +646,13 @@ fun NasPhotoTvApp() {
     }
 }
 
-/** 一次取全库条目数：本 NAS 共 5281 条，留足余量避免漏掉更早的年份。 */
-private const val FULL_LIBRARY_LIMIT = 20_000
+/** 图库必须覆盖完整时间范围，不能按开发机的照片数量截断旧年份。 */
+private const val FULL_LIBRARY_LIMIT = Int.MAX_VALUE
 
 /** 与媒体库主数据无关、可并行拉取的附属数据 */
 private data class OptionalLibraryData(
     val screensaverPhotos: List<MediaItem>,
     val people: List<Person>,
-    val folders: List<Album>,
     val smartAlbums: List<Album>,
     val stats: com.nasphoto.tv.data.fn.FnOsStats?,
     val approvedMedia: Map<String, List<MediaItem>>,

@@ -37,11 +37,11 @@ interface MediaRepository {
     /** 某个相册下的媒体，按拍摄时间倒序 */
     suspend fun getMedia(albumId: String): List<MediaItem>
 
-    /** 飞牛「文件夹视图」的根目录列表（按磁盘目录浏览）。 */
+    /** 飞牛「文件夹视图」的扫描根目录与各层子目录（按磁盘目录浏览）。 */
     suspend fun getFolders(): List<NasFolder> = emptyList()
 
     /** 某个磁盘目录下的全部媒体（按拍摄时间倒序）。 */
-    suspend fun getFolderMedia(folderId: String, limit: Int = 20_000): List<MediaItem> = emptyList()
+    suspend fun getFolderMedia(folderId: String, limit: Int = Int.MAX_VALUE): List<MediaItem> = emptyList()
 
     /** 搜索媒体（按标题/日期） */
     suspend fun search(query: String): List<MediaItem>
