@@ -1,19 +1,19 @@
 import Foundation
 
 /// 飞牛相册数据源（Swift 移植自 Android 端 `FnOsMediaRepository.kt`，首期核心闭环）：
-///  - 时间线（gallery/getList 按 offset 逐页拉全）；
+///  - 时间线（按年分页，必要时按天补齐）；
 ///  - 相册列表与相册详情（album/photos 分页）；
 ///  - 屏保照片池；
 ///  - 服务端缩略图（m）与原图（o）。
 ///
 /// 所有图片/视频地址都是绝对 URL，鉴权由 `FnOsTransport` 统一注入 AccessToken。
+@MainActor
 final class FnOsRepository {
 
     let access: FnOsAccess
     private let api: FnOsApi
     private var recentCache: [MediaItem] = []
     private var albumCache: [String: [MediaItem]] = [:]
-    private var folderCache: [NasFolder] = []
     private var personCache: [Person] = []
     private var smartAlbumCache: [Album] = []
     /// 非相册类集合（人物/文件夹/智能分类/收藏）的媒体缓存，key 为集合 id
@@ -60,32 +60,101 @@ final class FnOsRepository {
 
     // MARK: - 时间线 / 相册
 
-    /// 全库时间线（按拍摄时间倒序）。飞牛服务端单页最多 500 条：以前一次性传
-    /// limit=20000 只会拿到最新 500 张，所以按 offset 逐页拉全（分批回填给 UI）。
-    func getRecent(limit: Int = 8000) async throws -> [MediaItem] {
-        var out: [MediaItem] = []
-        out.reserveCapacity(min(limit, 8000))
-        var offset = 0
-        while out.count < limit && offset < Self.maxGalleryItems {
-            let data = try await api.getJson(
-                Self.galleryList,
-                params: [
-                    KeyValue("start_time", "1970:01:01 00:00:00"),
-                    KeyValue("end_time", "2099:12:31 23:59:59"),
-                    KeyValue("limit", String(Self.galleryPageSize)),
-                    KeyValue("offset", String(offset)),
-                    KeyValue("mode", "index"),
-                ],
-            )
-            let page = Self.parseMediaList(data, baseUrl: access.baseUrl)
-            if page.isEmpty { break }
-            out.append(contentsOf: page)
-            offset += page.count
-            let hasNext = data.bool("hasNext") || page.count >= Self.galleryPageSize
-            if !hasNext { break }
+    /// 先按年读取，跨日分页不完整时按时间线逐日补齐。
+    func getRecent(limit: Int = .max) async throws -> [MediaItem] {
+        guard limit > 0 else { return [] }
+        if limit != .max {
+            return try await galleryRange("1970:01:01", "2099:12:31", limit: limit)
         }
-        recentCache = out
-        return out
+        let timeline = try await api.getJson("/p/api/v1/gallery/timeline")
+        var days: [String: Int] = [:]
+        for day in try Self.requiredList(timeline, context: "图库时间线") {
+            try Task.checkCancellation()
+            let year = day.int("year")
+            let month = day.int("month")
+            let date = day.int("day")
+            let count = day.int("itemCount", -1)
+            let calendar = Calendar(identifier: .gregorian)
+            let components = DateComponents(year: year, month: month, day: date)
+            guard (1...9999).contains(year), components.isValidDate(in: calendar), count >= 0 else {
+                throw FnOsError("图库时间线包含无效日期或数量")
+            }
+            if count > 0 {
+                let key = String(format: "%04d:%02d:%02d", year, month, date)
+                days[key] = max(days[key, default: 0], count)
+            }
+        }
+
+        let years = Dictionary(grouping: days.keys.sorted(by: >)) { String($0.prefix(4)) }
+        var library = LinkedHashMap()
+        for year in years.keys.sorted(by: >) {
+            guard let dates = years[year] else { continue }
+            let expected = dates.reduce(0) { $0 + days[$1, default: 0] }
+            do {
+                let items = try await galleryRange("\(year):01:01", "\(year):12:31", expected: expected)
+                items.forEach { library.putIfAbsent($0) }
+            } catch is IncompleteRange {
+                for date in dates {
+                    do {
+                        let items = try await galleryRange(date, date, expected: days[date])
+                        items.forEach { library.putIfAbsent($0) }
+                    } catch is IncompleteRange {
+                        throw FnOsError("图库未读取完整（\(date)），请刷新后重试")
+                    }
+                }
+            }
+        }
+        guard library.count >= days.values.reduce(0, +) else {
+            throw FnOsError("图库未读取完整，请刷新后重试")
+        }
+        let result = library.values.sorted(by: Self.newer)
+        recentCache = result
+        return result
+    }
+
+    private struct IncompleteRange: Error {}
+
+    private func galleryRange(
+        _ start: String, _ end: String, expected: Int? = nil, limit: Int = .max
+    ) async throws -> [MediaItem] {
+        var collected = LinkedHashMap()
+        var offset = 0
+        while collected.count < limit {
+            try Task.checkCancellation()
+            let data = try await api.getJson(Self.galleryList, params: [
+                KeyValue("start_time", "\(start) 00:00:00"),
+                KeyValue("end_time", "\(end) 23:59:59"),
+                KeyValue("limit", String(Self.galleryPageSize)),
+                KeyValue("offset", String(offset)),
+                KeyValue("mode", "index"),
+            ])
+            let page = try Self.requiredList(data, context: "图库")
+            if page.isEmpty { break }
+            let before = collected.count
+            for json in page {
+                guard let item = Self.parseMedia(json, baseUrl: access.baseUrl) else { continue }
+                if expected != nil {
+                    let date = Self.isoDate(item.dateTaken).replacingOccurrences(of: "-", with: ":")
+                    guard date >= start, date <= end else { throw IncompleteRange() }
+                }
+                collected.putIfAbsent(item)
+            }
+            offset += page.count
+            if let expected, collected.count >= expected { break }
+            if before == collected.count {
+                if expected != nil { throw IncompleteRange() }
+                throw FnOsError("图库未正确翻页，请刷新后重试")
+            }
+        }
+        if let expected, collected.count < expected { throw IncompleteRange() }
+        return Array(collected.values.prefix(limit))
+    }
+
+    private static func requiredList(_ data: Json, context: String) throws -> [Json] {
+        guard let list = data.raw["list"] as? [[String: Any]] else {
+            throw FnOsError("\(context)响应缺少有效列表")
+        }
+        return list.map(Json.init)
     }
 
     /// 自己的 + 收到分享的相册列表。
@@ -272,7 +341,6 @@ final class FnOsRepository {
     /// 单个相册的分页兜底上限，防止服务端异常（如 total 缺失且永不返回空页）时无限拉取。
     private static let maxAlbumItems = 20_000
     private static let galleryPageSize = 500
-    private static let maxGalleryItems = 50_000
 
     private static let galleryList = "/p/api/v1/gallery/getList"
     private static let albumList = "/p/api/v1/album/list"
@@ -296,7 +364,7 @@ extension FnOsRepository {
     private static let personTimeline = "/p/api/v1/ai-person/photoLibrary/timeLine"
     private static let personLibraryList = "/p/api/v1/ai-person/photoLibrary/list"
     private static let folderList = "/p/api/v1/photo/folder/list"
-    private static let folderView = "/p/api/v1/photo/folder/view"
+    private static let folderChildren = "/p/api/v1/folder_view/getFolderList"
     private static let folderFiles = "/p/api/v1/folder_view/getFileList"
     private static let smartCategories = "/p/api/v1/ai-smart-rec/categories"
     private static let magicSearch = "/p/api/v1/magic-search/do"
@@ -413,55 +481,77 @@ extension FnOsRepository {
 
     // MARK: 文件夹
 
-    /// 磁盘文件夹列表：优先 folder/list（带真实计数），失败兜底 folder/view 的 myFile。
-    func getFolders() async throws -> [NasFolder] {
-        var arr = (try? await api.getJson(Self.folderList)).map(Self.responseList) ?? []
-        if arr.isEmpty {
-            arr = (try? await api.getJson(Self.folderView))?.array("myFile") ?? []
-        }
-        let folders = arr.compactMap { json -> NasFolder? in
-            let id = json.string("folderId")
-            let path = json.string("folderPath")
-            guard !id.isEmpty else { return nil }
-            let noTrailing = path.replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
-            let last = noTrailing.split(separator: "/").last.map(String.init) ?? ""
+    /// 只加载当前层级。媒体列表与子目录列表由 fnOS 的独立接口提供。
+    func getFolders(parentPath: String? = nil) async throws -> [NasFolder] {
+        var params = [KeyValue("desc", "false"), KeyValue("orderBy", "2")]
+        if let parentPath { params.append(KeyValue("folderPath", parentPath)) }
+        let endpoint = parentPath == nil ? Self.folderList : Self.folderChildren
+        let data = try await api.getJson(endpoint, params: params)
+        let list = try Self.requiredList(data, context: "文件夹")
+        guard data.int("total") <= list.count else { throw FnOsError("子目录列表未读取完整") }
+
+        var seen = Set<String>()
+        return try list.compactMap { json in
+            let rawPath = json.string(parentPath == nil ? "folderPath" : "path")
+            let path = rawPath == "/" ? rawPath : rawPath.replacingOccurrences(
+                of: "/+$", with: "", options: .regularExpression
+            )
+            guard path.hasPrefix("/") else { throw FnOsError("文件夹缺少完整路径") }
+            if let parentPath {
+                let prefix = parentPath == "/" ? "/" : parentPath + "/"
+                guard path.hasPrefix(prefix), path != parentPath else {
+                    throw FnOsError("NAS 返回了无效子目录")
+                }
+            }
+            guard seen.insert(path).inserted else { return nil }
+            let name = json.string("name")
             return NasFolder(
-                id: id,
+                id: path,
                 path: path,
-                name: last.isEmpty ? path : last,
+                name: name.isEmpty ? (path.split(separator: "/").last.map(String.init) ?? path) : name,
                 photoCount: json.int("photoCount"),
-                videoCount: json.int("videoCount"),
+                videoCount: json.int("videoCount")
             )
         }
-        folderCache = folders
-        return folders
     }
 
-    func getFolderMedia(folderId: String) async throws -> [MediaItem] {
-        let key = "folder:\(folderId)"
+    func getFolderMedia(folderId path: String) async throws -> [MediaItem] {
+        guard path.hasPrefix("/") else { throw FnOsError("文件夹路径无效") }
+        let key = "folder:\(path)"
         if let cached = collectionCache[key] { return cached }
-        let folders = folderCache.isEmpty ? (try await getFolders()) : folderCache
-        guard let folder = folders.first(where: { $0.id == folderId }) else { return [] }
-        var out: [MediaItem] = []
+
+        var collected = LinkedHashMap()
+        var rawIDs = Set<String>()
         var offset = 0
-        while offset < Self.maxGalleryItems {
-            let data = try await api.getJson(
-                Self.folderFiles,
-                params: [
-                    KeyValue("folderId", folderId),
-                    KeyValue("folderPath", folder.path),
-                    KeyValue("offset", String(offset)),
-                    KeyValue("limit", String(Self.folderPageSize)),
-                ],
-            )
-            let page = Self.parseMediaList(data, baseUrl: access.baseUrl)
-            if page.isEmpty { break }
-            out.append(contentsOf: page)
+        var total = 0
+        while true {
+            try Task.checkCancellation()
+            let data = try await api.getJson(Self.folderFiles, params: [
+                KeyValue("folderPath", path),
+                KeyValue("desc", "true"),
+                KeyValue("orderBy", "0"),
+                KeyValue("offset", String(offset)),
+                KeyValue("limit", String(Self.folderPageSize)),
+            ])
+            let page = try Self.requiredList(data, context: "目录媒体")
+            total = max(total, data.int("total"))
+            if page.isEmpty {
+                guard offset >= total else { throw FnOsError("目录媒体未读取完整") }
+                break
+            }
+            let before = rawIDs.count
+            for json in page {
+                let id = json.string("id")
+                rawIDs.insert(id.isEmpty ? String(describing: json.raw) : id)
+                if let item = Self.parseMedia(json, baseUrl: access.baseUrl) {
+                    collected.putIfAbsent(item)
+                }
+            }
+            guard rawIDs.count > before else { throw FnOsError("目录接口重复返回同一页") }
             offset += page.count
-            let hasNext = data.bool("hasNext") || page.count >= Self.folderPageSize
-            if !hasNext { break }
+            if total > 0, offset >= total { break }
         }
-        let result = Self.dedup(out).sorted { Self.newer($0, $1) }
+        let result = collected.values.sorted(by: Self.newer)
         collectionCache[key] = result
         return result
     }

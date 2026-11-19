@@ -9,6 +9,7 @@ struct ScreensaverSettings: Equatable, Codable {
     var photoIntervalSec: Int = 10
     /// 是否显示日期
     var showDate: Bool = true
+    var showLunarDate: Bool = false
     /// 夜间调暖色遮罩
     var nightDim: Bool = true
     /// Ken Burns 缓慢推拉（防烧屏）
@@ -27,6 +28,7 @@ struct ScreensaverSettings: Equatable, Codable {
         idleTimeoutSec = try c.decodeIfPresent(Int.self, forKey: .idleTimeoutSec) ?? 60
         photoIntervalSec = try c.decodeIfPresent(Int.self, forKey: .photoIntervalSec) ?? 10
         showDate = try c.decodeIfPresent(Bool.self, forKey: .showDate) ?? true
+        showLunarDate = try c.decodeIfPresent(Bool.self, forKey: .showLunarDate) ?? false
         nightDim = try c.decodeIfPresent(Bool.self, forKey: .nightDim) ?? true
         kenBurns = try c.decodeIfPresent(Bool.self, forKey: .kenBurns) ?? true
         musicEnabled = try c.decodeIfPresent(Bool.self, forKey: .musicEnabled) ?? true
@@ -38,11 +40,41 @@ struct ScreensaverSettings: Equatable, Codable {
 }
 
 /// 播放设置（对齐 Android `PlaybackSettings`）。
+enum VideoFit: String, CaseIterable, Codable {
+    case automatic, fit, fill
+
+    var title: String {
+        switch self {
+        case .automatic: return "自动"
+        case .fit: return "完整"
+        case .fill: return "填满"
+        }
+    }
+
+    var next: VideoFit {
+        switch self {
+        case .automatic: return .fit
+        case .fit: return .fill
+        case .fill: return .automatic
+        }
+    }
+}
+
 struct PlaybackSettings: Equatable, Codable {
     /// 播完自动播下一个
     var autoPlayNext: Bool = true
     /// 单条循环
     var loopMode: Bool = false
+    var videoFit: VideoFit = .automatic
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        autoPlayNext = try values.decodeIfPresent(Bool.self, forKey: .autoPlayNext) ?? true
+        loopMode = try values.decodeIfPresent(Bool.self, forKey: .loopMode) ?? false
+        videoFit = try values.decodeIfPresent(VideoFit.self, forKey: .videoFit) ?? .automatic
+    }
 }
 
 /// 连接配置持久化（单账号，迁移自 Android 端 SettingsStore 的最小子集）。
@@ -103,6 +135,19 @@ final class AppSettings: ObservableObject {
 
     var access: FnOsAccess {
         FnOsAccess(host: host, port: port, username: username, password: password, accessCode: accessCode)
+    }
+
+    private var displayAlbumKey: String {
+        let account = access
+        return "displayAlbums.\(account.baseUrl)|\(account.username)"
+    }
+
+    func displayAlbumIDs() -> Set<String> {
+        Set(defaults.stringArray(forKey: displayAlbumKey) ?? [])
+    }
+
+    func saveDisplayAlbumIDs(_ ids: Set<String>) {
+        defaults.set(ids.sorted(), forKey: displayAlbumKey)
     }
 
     /// 待机进入时间下一档：30 秒 → 1/2/5/10/30 分钟循环（对齐 Android cycleIdleTimeout）。

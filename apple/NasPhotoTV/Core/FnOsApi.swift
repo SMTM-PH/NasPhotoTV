@@ -8,25 +8,43 @@ struct FnOsAccess: Equatable {
     var password: String
     var accessCode: String = ""
 
-    var baseUrl: String { "https://\(host):\(port)" }
-    var wsUrl: String { "wss://\(host):\(port)/websocket?type=main" }
+    private let endpoint: URLComponents?
+
+    var baseUrl: String { endpoint?.string ?? "" }
+    var wsUrl: URL? {
+        guard var parts = endpoint else { return nil }
+        parts.scheme = parts.scheme == "http" ? "ws" : "wss"
+        parts.percentEncodedPath += "/websocket"
+        parts.queryItems = [URLQueryItem(name: "type", value: "main")]
+        return parts.url
+    }
 
     init(host: String, port: Int, username: String, password: String, accessCode: String = "") {
-        self.host = host
-            .trimmingCharacters(in: .whitespaces)
-            .removingPrefix("https://")
-            .removingPrefix("http://")
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        self.port = port
+        let address = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let explicitScheme = address.contains("://")
+        var parts = URLComponents(string: explicitScheme ? address : "https://" + address)
+        let scheme = parts?.scheme?.lowercased()
+        if let hostname = parts?.host, !hostname.isEmpty,
+           scheme == "http" || scheme == "https",
+           parts?.user == nil, parts?.password == nil, parts?.query == nil, parts?.fragment == nil {
+            let resolvedPort = parts?.port ?? (explicitScheme ? (scheme == "http" ? 80 : 443) : port)
+            if (1...65535).contains(resolvedPort) {
+                parts?.scheme = scheme
+                parts?.port = resolvedPort
+                let path = parts?.percentEncodedPath ?? ""
+                parts?.percentEncodedPath = path.replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
+            } else {
+                parts = nil
+            }
+        } else {
+            parts = nil
+        }
+        endpoint = parts
+        self.host = parts?.host ?? address
+        self.port = parts?.port ?? port
         self.username = username.trimmingCharacters(in: .whitespaces)
         self.password = password
         self.accessCode = accessCode.trimmingCharacters(in: .whitespaces)
-    }
-}
-
-private extension String {
-    func removingPrefix(_ prefix: String) -> String {
-        hasPrefix(prefix) ? String(dropFirst(prefix.count)) : self
     }
 }
 
@@ -336,13 +354,13 @@ actor FnOsApi {
         wsBuffer = []
         wsOpen = false
 
+        guard let wsUrl = access.wsUrl else { throw FnOsError("NAS 地址不合法") }
         if !access.accessCode.isEmpty {
             try await verifyAccessCode()
         }
 
         let delegate = FnOsWsDelegate()
         wsDelegate = delegate
-        guard let wsUrl = URL(string: access.wsUrl) else { throw FnOsError("WSS 地址不合法") }
         let task = FnOsTransport.shared.session.webSocketTask(with: wsUrl)
         wsTask = task
         task.delegate = delegate
@@ -591,7 +609,7 @@ actor FnOsApi {
         case NSURLErrorTimedOut:
             return "连接超时，检查地址与端口"
         case NSURLErrorCannotConnectToHost:
-            return "无法连接 \(access.host):\(access.port)（确认是 HTTPS 端口）"
+            return "无法连接 \(access.host):\(access.port)（检查端口和协议）"
         case NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateUntrusted:
             if FnOsTofuDelegate.shared.pinMismatch {
                 return "NAS 证书指纹已变化，已清除旧指纹，请再试一次新证书"

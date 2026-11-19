@@ -21,10 +21,30 @@ struct VideoPlayerView: View {
 
     private var current: MediaItem? { items.indices.contains(index) ? items[index] : nil }
 
+    private var isPortrait: Bool {
+        let sides = current?.resolution.split(separator: "x").compactMap { Int($0) } ?? []
+        if sides.count == 2, sides[0] > 0, sides[1] > 0 { return sides[1] > sides[0] }
+        return model.presentationSize.height > model.presentationSize.width
+    }
+
+    private var videoGravity: AVLayerVideoGravity {
+        isPortrait && settings.playback.videoFit == .fill ? .resizeAspectFill : .resizeAspect
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            PlayerLayerView(player: model.player)
+            if isPortrait, settings.playback.videoFit == .automatic,
+               let cover = current?.thumbnailUrl, !cover.isEmpty {
+                GeometryReader { geometry in
+                    RemoteImage(url: cover, contentMode: .fill)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                        .overlay(.black.opacity(0.72))
+                }
+                .ignoresSafeArea()
+            }
+            PlayerLayerView(player: model.player, gravity: videoGravity)
                 .ignoresSafeArea()
 
             if model.buffering {
@@ -114,13 +134,21 @@ struct VideoPlayerView: View {
             VStack(spacing: Tv.Dimen.spaceM) {
                 progressTrack
                 HStack(spacing: Tv.Dimen.spaceM) {
-                    Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 28))
-                        .foregroundColor(Tv.Color.textPrimary)
+                    Button {
+                        model.togglePlayPause()
+                        showControls()
+                    } label: {
+                        Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                    }
+                    .accessibilityLabel(model.isPlaying ? "暂停" : "播放")
                     Text("\(formatTime(model.positionMs)) / \(formatTime(model.durationMs))")
                         .font(.system(size: Tv.Font.caption))
                         .foregroundColor(Tv.Color.textSecondary)
                     Spacer()
+                    Button("画面 · \(settings.playback.videoFit.title)") {
+                        settings.playback.videoFit = settings.playback.videoFit.next
+                        showControls()
+                    }
                     if items.count > 1 {
                         Button("上一个") { step(-1) }
                             .buttonStyle(.plain)
@@ -230,6 +258,7 @@ final class VideoPlayerModel: ObservableObject {
     @Published var positionMs: Int64 = 0
     @Published var durationMs: Int64 = 0
     @Published var buffering = true
+    @Published var presentationSize: CGSize = .zero
     @Published var error: String?
     let player = AVPlayer()
 
@@ -248,6 +277,7 @@ final class VideoPlayerModel: ObservableObject {
         buffering = true
         positionMs = 0
         durationMs = 0
+        presentationSize = .zero
         isPlaying = false
         guard let url = URL(string: item.url), !item.url.isEmpty else {
             error = "视频地址无效"; buffering = false; return
@@ -264,9 +294,10 @@ final class VideoPlayerModel: ObservableObject {
 
         statusObservation = playerItem.observe(\.status) { [weak self] observed, _ in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, self.player.currentItem === observed else { return }
                 switch observed.status {
                 case .readyToPlay:
+                    self.presentationSize = observed.presentationSize
                     let seconds = observed.duration.seconds
                     if seconds.isFinite, seconds > 0 { self.durationMs = Int64(seconds * 1000) }
                     self.buffering = false
@@ -286,7 +317,8 @@ final class VideoPlayerModel: ObservableObject {
             queue: .main,
         ) { [weak self] time in
             guard let self else { return }
-            self.positionMs = Int64(max(0, CMTimeGetSeconds(time)) * 1000)
+            let seconds = time.seconds
+            if seconds.isFinite { self.positionMs = Int64(max(0, seconds) * 1000) }
             self.isPlaying = self.player.timeControlStatus == .playing
         }
         endObserver = NotificationCenter.default.addObserver(
@@ -311,6 +343,7 @@ final class VideoPlayerModel: ObservableObject {
     func seek(_ deltaSeconds: Int64) {
         let current = CMTimeGetSeconds(player.currentTime())
         let duration = player.currentItem?.duration.seconds ?? 0
+        guard current.isFinite else { return }
         var target = max(0, current + Double(deltaSeconds))
         if duration.isFinite, duration > 0 { target = min(target, duration) }
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
@@ -326,6 +359,7 @@ final class VideoPlayerModel: ObservableObject {
     func stop() {
         player.pause()
         cleanup()
+        player.replaceCurrentItem(with: nil)
     }
 
     private func cleanup() {
@@ -358,22 +392,25 @@ final class VideoPlayerModel: ObservableObject {
 
 struct PlayerLayerView: UIViewRepresentable {
     let player: AVPlayer
+    var gravity: AVLayerVideoGravity = .resizeAspect
 
     func makeUIView(context: Context) -> PlayerContainerView {
         PlayerContainerView(player: player)
     }
 
-    func updateUIView(_ uiView: PlayerContainerView, context: Context) {}
+    func updateUIView(_ uiView: PlayerContainerView, context: Context) {
+        uiView.playerLayer.videoGravity = gravity
+    }
 }
 
 final class PlayerContainerView: UIView {
     override class var layerClass: AnyClass { AVPlayerLayer.self }
 
-    private var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
 
     init(player: AVPlayer) {
         super.init(frame: .zero)
-        backgroundColor = .black
+        backgroundColor = .clear
         playerLayer.player = player
         playerLayer.videoGravity = .resizeAspect
     }

@@ -49,9 +49,24 @@ struct ScreensaverView: View {
                 if settings.screensaver.nightDim {
                     Color(hex: 0xFF8A3D, alpha: 0.2).ignoresSafeArea()
                 }
+            } else {
+                auroraBackground
             }
 
             clockLayer
+
+            if settings.screensaver.showLunarDate {
+                VStack {
+                    HStack {
+                        Text(lunarDateText)
+                            .font(.system(size: Tv.Font.caption))
+                            .foregroundStyle(.white.opacity(0.7))
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .padding(Tv.Dimen.spaceM)
+            }
 
             VStack {
                 Spacer()
@@ -80,6 +95,20 @@ struct ScreensaverView: View {
         }
         .onPlayPauseCommand { onExit() }
         .onExitCommand { onExit() }
+    }
+
+    private var auroraBackground: some View {
+        let raised = (Int(now.timeIntervalSinceReferenceDate) / 12).isMultiple(of: 2)
+        return ZStack {
+            RadialGradient(colors: [Color(hex: 0x164858), .clear],
+                           center: raised ? .topLeading : .leading,
+                           startRadius: 0, endRadius: 1000)
+            RadialGradient(colors: [Color(hex: 0x172149), .clear],
+                           center: raised ? .bottomTrailing : .trailing,
+                           startRadius: 0, endRadius: 900)
+        }
+        .ignoresSafeArea()
+        .animation(.easeInOut(duration: 12), value: raised)
     }
 
     @ViewBuilder
@@ -222,6 +251,14 @@ struct ScreensaverView: View {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "M月d日"
         return formatter.string(from: now)
+    }
+
+    private var lunarDateText: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.calendar = Calendar(identifier: .chinese)
+        formatter.dateFormat = "MMMMd日"
+        return "农历 " + formatter.string(from: now)
     }
 
     private var weekdayText: String {

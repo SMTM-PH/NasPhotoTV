@@ -32,7 +32,7 @@ struct ConnectView: View {
             }
 
             HStack(spacing: Tv.Dimen.spaceM) {
-                field(label: "NAS 地址（IP 或域名）", text: $settings.host, placeholder: "192.168.1.10", width: 420)
+                field(label: "NAS 地址（IP、域名或 URL）", text: $settings.host, placeholder: "192.168.1.10", width: 540)
                 field(label: "端口", text: portText, placeholder: "5667", width: 160)
             }
             HStack(spacing: Tv.Dimen.spaceM) {
@@ -223,7 +223,7 @@ struct ConnectView: View {
     private func test() async {
         testing = true
         isError = false
-        message = "正在连接 \(currentAccess().host):\(currentAccess().port) …"
+        message = "正在连接 \(currentAccess().baseUrl) …"
         defer { testing = false }
         let access = currentAccess()
         // 凭据变了就换新会话（旧 WebSocket 一并关闭）
