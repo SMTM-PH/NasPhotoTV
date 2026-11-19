@@ -7,13 +7,13 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 > 🍎 **Apple TV 版**：`feature/apple-tv` 分支上的原生 tvOS 重写（Swift + SwiftUI），见 [apple/README.md](apple/README.md)。
 
-- 开发版本：`1.2.8`（versionCode 14）；最近已发布版本：`1.2.7`
+- 版本：`1.2.8`（versionCode 14）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.8)
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
 
 ---
 
-## 1.2.8 修复（2026-11-19，待发布）
+## 1.2.8 修复（2026-11-19）
 
 - **文件夹子目录**：根据飞牛官方 Web 前端协议，改用 `folder_view/getFolderList`
   逐层读取子目录；目录与媒体分别请求，不再从仅返回媒体的 `getFileList` 中猜测目录项。
