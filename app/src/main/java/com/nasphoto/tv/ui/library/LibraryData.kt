@@ -222,6 +222,69 @@ fun buildMemories(items: List<MediaItem>, today: LocalDate = LocalDate.now()): L
 /** 普通相册（文件夹/回忆/收藏等非智能相册） */
 fun folderAlbums(state: LibraryState): List<Album> = state.albums.filter { !it.isSmart }
 
+/**
+ * 把仓库读到的扁平目录节点映射成 UI 卡片。
+ *
+ * id 与 parentId 统一加 "folder:" 前缀（仓库侧是 "path:/..."），
+ * 这样 [FolderHierarchy] 只认一种 id 口径；扫描根目录的 parentId 为空。
+ * 抽成纯函数是为了单测「层级关系不会在映射时丢掉」。
+ */
+internal fun folderAlbum(folder: com.nasphoto.tv.data.model.NasFolder): Album = Album(
+    id = "folder:" + folder.id,
+    name = folder.name.ifBlank { folder.path },
+    coverUrl = folder.coverUrl,
+    itemCount = folder.photoCount + folder.videoCount,
+    type = AlbumType.FOLDER,
+    subtitle = folder.path,
+    parentId = if (folder.parentId.isEmpty()) "" else "folder:" + folder.parentId,
+    depth = folder.depth,
+)
+
+/**
+ * 文件夹视图的层级索引：把扁平的 [Album] 列表按 parentId 组织成「逐层浏览」结构。
+ *
+ * 为什么不用 depth / 列表顺序切层：目录数量与顺序随 NAS 扫描变化，只有 parentId
+ * 能真实表达归属；父目录缺失（刷新中途、旧缓存）时把孤儿目录挂到根层，
+ * 保证任何情况下都有入口，不会白屏或出现永远进不去的目录。
+ */
+internal class FolderHierarchy(private val folders: List<Album>) {
+    private val byId: Map<String, Album> = folders.associateBy { it.id }
+    private val childrenByParent: Map<String, List<Album>> =
+        folders.filter { it.parentId.isNotBlank() }.groupBy { it.parentId }
+
+    /** 当前层的直接子目录；parentId == null 表示扫描根目录层。保持仓库给的排序。 */
+    fun childrenOf(parentId: String?): List<Album> =
+        if (parentId == null) {
+            folders.filter { it.parentId.isBlank() || byId[it.parentId] == null }
+        } else {
+            childrenByParent[parentId].orEmpty()
+        }
+
+    fun hasChildren(id: String): Boolean = childrenByParent[id]?.isNotEmpty() == true
+
+    /** 上一级目录 id；已在根层或父目录不存在时返回 null。 */
+    fun parentOf(id: String?): String? = id?.let { byId[it] }?.parentId?.takeIf { it.isNotBlank() }
+
+    fun folder(id: String?): Album? = id?.let { byId[it] }
+
+    /**
+     * 面包屑：从扫描根目录到 [currentId] 的目录链（不含虚拟的「全部」节点）。
+     * 父链有环或指向不存在的目录时立即收尾，避免脏数据把 UI 卡死。
+     */
+    fun breadcrumb(currentId: String?): List<Album> {
+        if (currentId == null) return emptyList()
+        val chain = ArrayDeque<Album>()
+        val seen = HashSet<String>()
+        var cursor: String? = currentId
+        while (cursor != null && seen.add(cursor)) {
+            val node = byId[cursor] ?: break
+            chain.addFirst(node)
+            cursor = node.parentId.takeIf { it.isNotBlank() }
+        }
+        return chain.toList()
+    }
+}
+
 /** 智能相册按类型分组：收藏（FAVORITES）、人物（SMART_PEOPLE）、地点（SMART_PLACE），回忆单列 */
 fun smartAlbums(state: LibraryState, type: AlbumType): List<Album> =
     state.albums.filter { it.isSmart && it.type == type }

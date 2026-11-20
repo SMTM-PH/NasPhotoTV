@@ -7,9 +7,26 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 > 🍎 **Apple TV 版**：原生 tvOS 1.2.8，支持 tvOS 17+。构建、真机签名与分发说明见 [apple/README.md](apple/README.md)。
 
-- 版本：`1.2.9`（versionCode 15）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.9)
+- 版本：`1.2.10`（versionCode 16）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.10)
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
+
+---
+
+## 1.2.10 更新（2026-11-20）
+
+> 用户反馈：「现在点文件夹，会把主文件夹、子文件夹、孙文件夹全部都列在一起，如果能分层列出会更好」。
+
+- **文件夹改为逐层浏览**：文件夹 Tab 只列当前层的直接子目录，点有子目录的卡片下钻一层，
+  不再把扫描根目录和所有层级子孙目录平铺在同一个网格里。
+- **面包屑 + 返回上一级**：进入目录后显示「文件夹 › Photos › DJI_001」完整路径，
+  网格首格固定是「返回上一级」，遥控器 BACK 也逐层向上，回到根层才退出 Tab。
+- **本目录照片仍能看**：第二格固定是「查看本目录照片」，下钻后不会丢掉该目录自己的照片；
+  叶子目录（没有子目录）仍是点一下直接看照片，卡片会显示「N 个子文件夹 / N 项」。
+- 目录层级关系由 `NasFolder.parentId` 一路透传到 UI（`Album.parentId`），
+  层级索引与孤儿目录兜底由 `FolderHierarchy` 纯函数实现，新增 9 个单元测试。
+
+实现与验证见 [docs/releases/v1.2.10.md](docs/releases/v1.2.10.md)。
 
 ---
 

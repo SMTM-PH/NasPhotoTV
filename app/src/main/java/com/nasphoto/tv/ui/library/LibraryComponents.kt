@@ -276,6 +276,8 @@ fun AlbumCard(
     modifier: Modifier = Modifier,
     onUp: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
+    /** 覆盖卡片第二行文字（文件夹视图用「N 个子文件夹」）；null = 沿用媒体计数逻辑 */
+    secondaryText: String? = null,
 ) {
     TvFocusBox(
         focusRequester = focusRequester, cornerRadiusDp = 16,
@@ -297,13 +299,56 @@ fun AlbumCard(
                     Text(album.name, color = TvColor.TextPrimary, fontSize = TvType.Body,
                         fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     // 子目录接口不返回媒体计数，不能把未知数量显示成「0 项」。
-                    Text(if (album.id.startsWith("folder:path:") && album.itemCount == 0) {
+                    // 文件夹层级视图会传 secondaryText（如「3 个子文件夹」）覆盖默认计数。
+                    Text(secondaryText ?: if (album.id.startsWith("folder:path:") && album.itemCount == 0) {
                         if (album.subtitle.startsWith("子文件夹")) "子文件夹" else "文件夹"
                     } else "${album.itemCount} 项", color = TvColor.TextSecondary,
                         fontSize = TvType.Caption, maxLines = 1)
                 }
                 if (focused) Icon(Icons.Filled.PlayArrow, null, tint = TvColor.Accent,
                     modifier = Modifier.size(TvDimen.IconSize))
+            }
+        }
+    }
+}
+
+/**
+ * 文件夹层级浏览里的导航卡片（「返回上一级」/「查看本目录照片」）。
+ *
+ * 与 [AlbumCard] 同尺寸、同焦点行为，只是用图标代替封面图：导航项没有封面，
+ * 伪造一张图反而会让人误以为是目录。放在网格首两项，遥控器一进来就能按到。
+ */
+@Composable
+fun FolderNavCard(
+    title: String,
+    caption: String,
+    icon: ImageVector,
+    width: Int,
+    height: Int,
+    focusRequester: FocusRequester?,
+    onClick: () -> Unit,
+    onFocusChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    onUp: (() -> Unit)? = null,
+    onDown: (() -> Unit)? = null,
+) {
+    TvFocusBox(
+        focusRequester = focusRequester, cornerRadiusDp = 16,
+        onFocusChanged = onFocusChanged, onConfirm = onClick, onUp = onUp, onDown = onDown,
+        modifier = modifier.width(width.dp).height(height.dp)
+            .clip(RoundedCornerShape(TvDimen.RadiusM)).background(TvColor.Stage),
+    ) {
+        Column(Modifier.fillMaxSize().blockPointer()) {
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = TvColor.Accent, modifier = Modifier.size(44.dp))
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = TvDimen.SpaceM, vertical = TvDimen.SpaceS),
+                verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, color = TvColor.TextPrimary, fontSize = TvType.Body,
+                        fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(caption, color = TvColor.TextSecondary, fontSize = TvType.Caption, maxLines = 1)
+                }
             }
         }
     }

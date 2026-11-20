@@ -47,6 +47,7 @@ import com.nasphoto.tv.data.model.ScreensaverSettings
 import com.nasphoto.tv.ui.connection.ConnectionMode
 import com.nasphoto.tv.ui.connection.ConnectionScreen
 import com.nasphoto.tv.ui.library.LibraryScreen
+import com.nasphoto.tv.ui.library.folderAlbum
 import com.nasphoto.tv.ui.common.NasImageLoader
 import com.nasphoto.tv.ui.common.ScreenIdleGuard
 import com.nasphoto.tv.ui.screensaver.ScreensaverScreen
@@ -243,16 +244,8 @@ fun NasPhotoTvApp() {
                 // 深层目录树需要逐目录请求，放在图库就绪后继续读取，避免阻塞首页。
                 var foldersError: String? = null
                 val folderAlbums = try {
-                    repository.getFolders().map { f ->
-                        Album(
-                            id = "folder:" + f.id,
-                            name = f.name.ifBlank { f.path },
-                            coverUrl = f.coverUrl,
-                            itemCount = f.photoCount + f.videoCount,
-                            type = com.nasphoto.tv.data.model.AlbumType.FOLDER,
-                            subtitle = if (f.depth > 0) "子文件夹 · ${f.path}" else f.path,
-                        )
-                    }
+                    // 保留 parentId / depth：文件夹 Tab 按层级逐级浏览，不再把根/子/孙目录平铺。
+                    repository.getFolders().map(::folderAlbum)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {

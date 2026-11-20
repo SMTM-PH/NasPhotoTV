@@ -13,8 +13,8 @@ android {
         applicationId = "com.nasphoto.tv"
         minSdk = 24
         targetSdk = 34
-        versionCode = 15
-        versionName = "1.2.9"
+        versionCode = 16
+        versionName = "1.2.10"
     }
 
     signingConfigs {

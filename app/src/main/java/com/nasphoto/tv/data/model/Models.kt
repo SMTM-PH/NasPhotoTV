@@ -97,6 +97,14 @@ fun MediaItem.isPortraitVideo(): Boolean {
     /** 「人像/地点/回忆」等智能相册在标题下显示的小字说明 */
     val subtitle: String = "",
     val isSmart: Boolean = false,
+    /**
+     * 文件夹视图专用：父目录 id（扫描根目录为空）。
+     * UI 按 parentId 逐层列出目录，不再把根/子/孙目录混在一个网格里。
+     * 其它相册类型忽略此字段。
+     */
+    val parentId: String = "",
+    /** 文件夹视图专用：距离扫描根目录的层数，0 = 根目录。 */
+    val depth: Int = 0,
 )
 
 enum class AlbumType { FOLDER, SMART_PEOPLE, SMART_PLACE, MEMORY, FAVORITES, SMART_CATEGORY }

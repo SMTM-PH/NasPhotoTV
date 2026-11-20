@@ -234,16 +234,20 @@ private fun previewLibrary(tab: Int): LibraryState {
             subtitle = "示例相册 · 2026",
         )
     }
-    // 根目录 + 子文件夹：离线验证「文件夹」Tab 也能显示下层目录。
+    // 根 / 子 / 孙三层：离线验证「文件夹」Tab 逐层下钻，而不是平铺全部目录。
     val folders = listOf(
         Album("folder:1", "Photos", items[0].url, 4408,
             subtitle = "/vol1/1000/Photos"),
+        Album("folder:2", "Video", items[4].url, 455,
+            subtitle = "/vol1/1000/Video"),
         Album("folder:1-1", "PhotoLibrary", items[1].url, 1200,
-            subtitle = "子文件夹 · /vol1/1000/Photos/PhotoLibrary"),
+            subtitle = "/vol1/1000/Photos/PhotoLibrary", parentId = "folder:1", depth = 1),
         Album("folder:1-2", "MobileBackup", items[2].url, 900,
-            subtitle = "子文件夹 · /vol1/1000/Photos/MobileBackup"),
+            subtitle = "/vol1/1000/Photos/MobileBackup", parentId = "folder:1", depth = 1),
         Album("folder:1-3", "DJI_001", items[3].url, 320,
-            subtitle = "子文件夹 · /vol1/1000/Photos/DJI_001"),
+            subtitle = "/vol1/1000/Photos/DJI_001", parentId = "folder:1", depth = 1),
+        Album("folder:1-3-1", "夏天", items[5].url, 42,
+            subtitle = "/vol1/1000/Photos/DJI_001/夏天", parentId = "folder:1-3", depth = 2),
     )
     return LibraryState(
         recent = allItems,

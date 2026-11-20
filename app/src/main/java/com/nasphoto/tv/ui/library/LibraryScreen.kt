@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Image
@@ -36,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +54,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -120,6 +123,12 @@ fun LibraryScreen(
     var peopleFocusIndex by rememberSaveable { mutableStateOf(0) }
     // 从相册详情 BACK 回来时要落回刚才那个相册卡片；否则焦点掉到顶栏，得重新往下找
     var albumsFocusIndex by rememberSaveable { mutableIntStateOf(0) }
+    // 文件夹按层级浏览：当前所在目录（null = 扫描根目录层）。详情页/切 Tab 只销毁
+    // Tab 组合，状态挂在本页才不会一进相册详情就退回根目录。
+    var folderNavId by rememberSaveable { mutableStateOf<String?>(null) }
+    var folderFocusIndex by rememberSaveable { mutableIntStateOf(0) }
+    // 从子目录返回时落回「进入它的那张卡」；键 = 进入的子目录 id。进程重建不关键，用 remember。
+    val folderReturnIndices = remember { HashMap<String, Int>() }
 
     // 派生数据（全部空安全）
     val allItems = remember(state) { allPhotos(state) }
@@ -171,11 +180,25 @@ fun LibraryScreen(
         contentFocus.requestBlock(BLOCK_CONTENT)
     }
 
-    BackHandler(enabled = openedAlbum == null && openedPerson == null && openedSmartAlbum == null && selectedTab != LibraryTab.ALL) {
-        selectedTab = if (selectedTab == LibraryTab.PEOPLE || selectedTab == LibraryTab.SMART)
-            LibraryTab.ALBUMS else LibraryTab.ALL
-        lastTab = topLevelTab(selectedTab).ordinal
+    // 文件夹树里「往上一层」的唯一 BACK 出口：集中在外壳处理，避免与 Tab 退出
+    // 抢 BackHandler 的注册顺序（多个 enabled 回调谁先谁后取决于组合顺序，别赌）。
+    fun upFolder(parentId: String?) {
+        folderFocusIndex = folderNavId?.let { folderReturnIndices[it] } ?: 0
+        folderNavId = parentId
         contentFocus.requestBlock(BLOCK_CONTENT)
+    }
+
+    BackHandler(enabled = openedAlbum == null && openedPerson == null && openedSmartAlbum == null && selectedTab != LibraryTab.ALL) {
+        if (selectedTab == LibraryTab.FOLDER && folderNavId != null) {
+            val parentId = state.folders.firstOrNull { it.id == folderNavId }
+                ?.parentId?.takeIf { it.isNotBlank() }
+            upFolder(parentId)
+        } else {
+            selectedTab = if (selectedTab == LibraryTab.PEOPLE || selectedTab == LibraryTab.SMART)
+                LibraryTab.ALBUMS else LibraryTab.ALL
+            lastTab = topLevelTab(selectedTab).ordinal
+            contentFocus.requestBlock(BLOCK_CONTENT)
+        }
     }
 
     // 进入相册/人物/智能分类详情时切换成沉浸式全屏：去掉顶栏与底部提示，
@@ -335,11 +358,24 @@ fun LibraryScreen(
                     folders = state.folders,
                     loaded = state.foldersLoaded,
                     error = state.foldersError,
+                    currentFolderId = folderNavId,
+                    onEnterFolder = { childId, fromIndex ->
+                        folderReturnIndices[childId] = fromIndex
+                        folderNavId = childId
+                        folderFocusIndex = 0
+                        contentFocus.requestBlock(BLOCK_CONTENT)
+                    },
+                    onUpFolder = { parentId -> upFolder(parentId) },
+                    onResetFolder = {
+                        folderNavId = null
+                        folderFocusIndex = 0
+                        contentFocus.requestBlock(BLOCK_CONTENT)
+                    },
                     coverFor = { albumCoverUrl(state, it) },
                     onOpenAlbum = { openedAlbumId = it.id },
                     contentFocus = contentFocus,
-                    restoreIndex = albumsFocusIndex,
-                    onFocusAlbum = { albumsFocusIndex = it },
+                    restoreIndex = folderFocusIndex,
+                    onFocusAlbum = { folderFocusIndex = it },
                     onFirstRowUp = { categoryRequesters[1].requestFocus() },
                 )
 
@@ -782,13 +818,46 @@ private fun AlbumsTab(
     }
 }
 
-// ============================== Tab：文件夹（按磁盘目录浏览） ==============================
+// ============================== Tab：文件夹（按层级逐级浏览） ==============================
 
+/** 文件夹网格里的一格：两张导航卡 + 当前层的直接子目录。 */
+private sealed interface FolderEntry {
+    val key: String
+
+    /** 返回上一级 */
+    data object Up : FolderEntry {
+        override val key: String = "folder-nav-up"
+    }
+
+    /** 查看当前目录自己的照片（有子目录的文件夹也能看到本层照片） */
+    data class ViewMedia(val album: Album) : FolderEntry {
+        override val key: String = "folder-nav-media:${album.id}"
+    }
+
+    /** 一个子目录 */
+    data class Child(val album: Album) : FolderEntry {
+        override val key: String = album.id
+    }
+}
+
+/**
+ * 文件夹 Tab 按磁盘目录**逐层**浏览：只列当前层的直接子目录，不再把扫描根目录、
+ * 子目录、孙目录平铺在同一个网格里（用户反馈「全部列在一起」）。
+ *
+ * - 根层显示扫描根目录；点有子目录的卡片下钻一层，点叶子目录直接看它的照片；
+ * - 进入目录后网格前两格固定是「返回上一级」与「查看本目录照片」，
+ *   保证下钻后仍能看到该目录自己的媒体；遥控器 BACK 也返回上一层；
+ * - 面包屑显示完整路径，返回时焦点落回进入该目录的那张卡。
+ */
 @Composable
 private fun FoldersTab(
     folders: List<Album>,
     loaded: Boolean,
     error: String?,
+    currentFolderId: String?,
+    onEnterFolder: (folderId: String, fromIndex: Int) -> Unit,
+    onUpFolder: (parentId: String?) -> Unit,
+    onResetFolder: () -> Unit,
     onOpenAlbum: (Album) -> Unit,
     contentFocus: PendingFocus,
     restoreIndex: Int = 0,
@@ -797,59 +866,138 @@ private fun FoldersTab(
     /** 目录封面：优先 cover 接口给的 poster，拿不到时用时间线同路径照片兜底 */
     coverFor: (Album) -> String = { it.coverUrl },
 ) {
-    val columns = ALBUM_GRID_COLUMNS
-    val safeRestore = restoreIndex.coerceIn(0, folders.lastIndex.coerceAtLeast(0))
-    val gridState = rememberLazyGridState(
-        initialFirstVisibleItemIndex = (safeRestore / columns) * columns,
-    )
-    val requesters = remember { mutableListOf<FocusRequester>() }
-    var focusedIndex by remember { mutableIntStateOf(safeRestore) }
+    val hierarchy = remember(folders) { FolderHierarchy(folders) }
+    val current = hierarchy.folder(currentFolderId)
+    // 刷新 / 换账号后当前目录可能已不在新数据里：退回根层，别卡在空白页。
+    LaunchedEffect(currentFolderId, folders) {
+        if (currentFolderId != null && current == null) onResetFolder()
+    }
 
-    ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = {
-        folders.getOrNull(focusedIndex)?.let { requesterAt(requesters, focusedIndex) }
-    })
-    val gridBottomInset = with(LocalDensity.current) { 56.dp.roundToPx() }
-    LaunchedEffect(focusedIndex) { scrollGridTo(gridState, focusedIndex, columns, gridBottomInset) }
+    val crumbs = hierarchy.breadcrumb(currentFolderId)
+    val children = hierarchy.childrenOf(currentFolderId)
+    val entries: List<FolderEntry> = remember(currentFolderId, folders) {
+        buildList<FolderEntry> {
+            if (currentFolderId != null) {
+                add(FolderEntry.Up)
+                current?.let { add(FolderEntry.ViewMedia(it)) }
+            }
+            children.forEach { add(FolderEntry.Child(it)) }
+        }
+    }
+    val parentName = hierarchy.folder(hierarchy.parentOf(currentFolderId))?.name
 
-    Column(Modifier.fillMaxSize()) {
-        SectionHeader(
-            title = "文件夹",
-            trailing = if (error != null) "读取失败" else if (loaded) "${folders.size} 个目录" else "正在读取…",
-            modifier = Modifier.padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceM),
+    // 换层时整棵子树重建：gridState / focusedIndex / FocusRequester 都从新一层重新初始化。
+    key(currentFolderId) {
+        val columns = ALBUM_GRID_COLUMNS
+        val safeRestore = restoreIndex.coerceIn(0, entries.lastIndex.coerceAtLeast(0))
+        val gridState = rememberLazyGridState(
+            initialFirstVisibleItemIndex = (safeRestore / columns) * columns,
         )
-        if (folders.isEmpty()) {
-            EmptyState(
-                title = if (error != null) "文件夹暂时无法读取" else if (loaded) "没有可浏览的文件夹" else "正在读取文件夹…",
-                subtitle = error ?: "在飞牛「相册」设置里添加要扫描的照片目录后会显示在这里",
-                modifier = Modifier.fillMaxSize(),
-                icon = Icons.Outlined.Folder,
-            )
-        } else {
-            LazyVerticalGrid(
-                state = gridState,
-                columns = GridCells.Fixed(columns),
-                contentPadding = GridContentPadding,
-                horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM),
-                verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceM),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                itemsIndexed(folders, key = { _, it -> it.id }) { index, folder ->
-                    AlbumCard(
-                        album = folder,
-                        coverUrl = coverFor(folder),
-                        width = ALBUM_CELL_W,
-                        height = ALBUM_CELL_H,
-                        focusRequester = requesterAt(requesters, index),
-                        onClick = { onOpenAlbum(folder) },
-                        onFocusChanged = { focused ->
+        val requesters = remember { mutableListOf<FocusRequester>() }
+        var focusedIndex by remember { mutableIntStateOf(safeRestore) }
+
+        ConsumeBlockRequest(contentFocus, BLOCK_CONTENT, blockFallback = {
+            if (entries.isEmpty()) null
+            else requesterAt(requesters, focusedIndex.coerceIn(0, entries.lastIndex))
+        })
+        // 遥控器 BACK 统一由 LibraryScreen 处理（文件夹树里往上一层 / 根层退出 Tab）。
+        val gridBottomInset = with(LocalDensity.current) { 56.dp.roundToPx() }
+        LaunchedEffect(focusedIndex) { scrollGridTo(gridState, focusedIndex, columns, gridBottomInset) }
+
+        Column(Modifier.fillMaxSize()) {
+            Column(Modifier.padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceM)) {
+                SectionHeader(
+                    title = current?.name ?: "文件夹",
+                    trailing = when {
+                        error != null -> "读取失败"
+                        !loaded -> "正在读取…"
+                        currentFolderId == null -> "${children.size} 个扫描目录"
+                        else -> "${children.size} 个子目录"
+                    },
+                )
+                if (crumbs.isNotEmpty()) {
+                    Text(
+                        text = "文件夹 › " + crumbs.joinToString(" › ") { it.name },
+                        color = TvColor.TextTertiary,
+                        fontSize = TvType.Caption,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (entries.isEmpty()) {
+                EmptyState(
+                    title = if (error != null) "文件夹暂时无法读取" else if (loaded) "没有可浏览的文件夹" else "正在读取文件夹…",
+                    subtitle = error ?: "在飞牛「相册」设置里添加要扫描的照片目录后会显示在这里",
+                    modifier = Modifier.fillMaxSize(),
+                    icon = Icons.Outlined.Folder,
+                )
+            } else {
+                LazyVerticalGrid(
+                    state = gridState,
+                    columns = GridCells.Fixed(columns),
+                    contentPadding = GridContentPadding,
+                    horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM),
+                    verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceM),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    itemsIndexed(entries, key = { _, it -> it.key }) { index, entry ->
+                        val onFocusChanged = { focused: Boolean ->
                             if (focused) {
                                 focusedIndex = index
                                 onFocusAlbum(index)
                             }
-                        },
-                        onUp = if (index < columns) onFirstRowUp else null,
-                        onDown = null,
-                    )
+                        }
+                        val onUp = if (index < columns) onFirstRowUp else null
+                        when (entry) {
+                            is FolderEntry.Up -> FolderNavCard(
+                                title = "返回上一级",
+                                caption = parentName?.let { "返回「$it」" } ?: "返回扫描目录",
+                                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                                width = ALBUM_CELL_W,
+                                height = ALBUM_CELL_H,
+                                focusRequester = requesterAt(requesters, index),
+                                onClick = { onUpFolder(hierarchy.parentOf(currentFolderId)) },
+                                onFocusChanged = onFocusChanged,
+                                onUp = onUp,
+                            )
+
+                            is FolderEntry.ViewMedia -> FolderNavCard(
+                                title = "查看本目录照片",
+                                caption = "「${entry.album.name}」中的照片与视频",
+                                icon = Icons.Outlined.Image,
+                                width = ALBUM_CELL_W,
+                                height = ALBUM_CELL_H,
+                                focusRequester = requesterAt(requesters, index),
+                                onClick = { onOpenAlbum(entry.album) },
+                                onFocusChanged = onFocusChanged,
+                                onUp = onUp,
+                            )
+
+                            is FolderEntry.Child -> {
+                                val childCount = hierarchy.childrenOf(entry.album.id).size
+                                AlbumCard(
+                                    album = entry.album,
+                                    coverUrl = coverFor(entry.album),
+                                    width = ALBUM_CELL_W,
+                                    height = ALBUM_CELL_H,
+                                    focusRequester = requesterAt(requesters, index),
+                                    onClick = {
+                                        if (childCount > 0) onEnterFolder(entry.album.id, index)
+                                        else onOpenAlbum(entry.album)
+                                    },
+                                    onFocusChanged = onFocusChanged,
+                                    onUp = onUp,
+                                    onDown = null,
+                                    secondaryText = when {
+                                        childCount > 0 -> "$childCount 个子文件夹"
+                                        entry.album.itemCount > 0 -> "${entry.album.itemCount} 项"
+                                        else -> "文件夹"
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
