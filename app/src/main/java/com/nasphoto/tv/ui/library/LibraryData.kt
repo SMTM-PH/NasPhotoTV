@@ -245,12 +245,20 @@ fun albumItems(state: LibraryState, album: Album): List<MediaItem> {
     return state.mediaByAlbum.values.flatten().filter { it.albumId == album.id }
 }
 
-/** 相册封面 url（专辑自带 coverUrl 为空时用第一张缩略图兜底） */
+/** 相册封面 url（专辑自带 coverUrl 为空时用相册内第一张缩略图、或同路径时间线照片兜底） */
 fun albumCoverUrl(state: LibraryState, album: Album): String {
     album.coverUrl.takeIf { it.isNotBlank() }?.let { return it }
-    return state.mediaByAlbum[album.id]?.firstOrNull { it.url.isNotBlank() || it.thumbnailUrl.isNotBlank() }
-        ?.let { it.thumbnailUrl.ifBlank { it.url } }
-        ?: ""
+    state.mediaByAlbum[album.id]?.firstOrNull { it.url.isNotBlank() || it.thumbnailUrl.isNotBlank() }
+        ?.let { return it.thumbnailUrl.ifBlank { it.url } }
+    // 文件夹视图：cover 接口没给封面时，用整库时间线里同目录前缀的照片兜底，
+    // 不再额外发一轮「每个目录取第一张」的请求（156 个目录会很慢）。
+    val path = album.id.removePrefix("folder:").removePrefix("path:")
+    if (path.startsWith("/")) {
+        val prefix = path.trimEnd('/') + "/"
+        state.recent.firstOrNull { it.filePath.startsWith(prefix) }
+            ?.let { return it.thumbnailUrl.ifBlank { it.url } }
+    }
+    return ""
 }
 
 /** 统一入口：按媒体类型分发到 viewer / player，避免每个点击点重复判断 */

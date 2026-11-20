@@ -240,8 +240,13 @@ suspend fun scrollRowTo(state: LazyListState, focusedIndex: Int) {
 }
 
 /**
- * 网格自动滚动：只在聚焦行"完全不可见"时滚动（滚到上一行做参照），
- * 已在可视区时不动，避免上下移动时画面跳动。
+ * 网格自动滚动：把聚焦卡片连同它的底部文字**完整**留在可视区（留一档安全余量）。
+ *
+ * 1.2.8 及以前的做法是「不可见时才滚到上一行的行首」：
+ * `animateScrollToItem(((row - 1).coerceAtLeast(0)) * columns)`。
+ * 第二行（row=1）算出来是第 0 项，网格已经在顶部，这一步等于没滚 ——
+ * 于是第二行卡片贴着屏幕下沿被裁掉半张、下面的文字看不见（用户反馈）。
+ * 现在改成按实际溢出量做最小滚动，不会整行跳、也不会左右移动时抖动。
  */
 suspend fun scrollGridTo(
     state: LazyGridState,
@@ -252,14 +257,48 @@ suspend fun scrollGridTo(
     if (focusedIndex < 0) return
     val vp = state.layoutInfo.viewportSize.height
     if (vp <= 0) return
-    val info = state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == focusedIndex } ?: return
-    // 底部导航提示是覆盖在网格上的，不算进 LazyGrid 的 viewport；
-    // 不扣掉这段高度，最后一行会「看起来在屏幕内」却被提示条挡住半张图。
     val usableHeight = (vp - bottomInsetPx).coerceAtLeast(1)
-    val fullyVisible = info.offset.y >= 0 && info.offset.y + info.size.height <= usableHeight
-    if (fullyVisible) return
-    val row = focusedIndex / columns.coerceAtLeast(1)
-    runCatching { state.animateScrollToItem(((row - 1).coerceAtLeast(0)) * columns) }
+    val info = state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == focusedIndex }
+    if (info == null) {
+        // 焦点跳到还没组合出来的行：先按该行行首定位，让目标进入可视区
+        runCatching { state.animateScrollToItem((focusedIndex / columns.coerceAtLeast(1)) * columns) }
+        return
+    }
+    // 焦点放大 1.08 与卡片底部文字都在测量高度之外，额外留 12%（至少 16px）余量
+    val delta = gridScrollDeltaPx(
+        top = info.offset.y,
+        height = info.size.height,
+        usableHeight = usableHeight,
+        canScrollBack = state.firstVisibleItemIndex > 0,
+    )
+    if (delta == 0f) return
+    // 用「当前首项 + 增加/减少的像素偏移」做最小滚动；LazyGridState 没有 animateScrollBy，
+    // animateScrollToItem(index, scrollOffset) 等价且所有 Compose 版本都支持。
+    runCatching {
+        state.animateScrollToItem(
+            state.firstVisibleItemIndex,
+            (state.firstVisibleItemScrollOffset + delta.toInt()).coerceAtLeast(0),
+        )
+    }
+}
+
+/**
+ * 纯计算：把聚焦卡片完整留在可视区所需的最小滚动量（正 = 内容上移）。
+ * 抽成函数是为了能单测「第二行贴着屏幕下沿」这个回归场景。
+ */
+internal fun gridScrollDeltaPx(
+    top: Int,
+    height: Int,
+    usableHeight: Int,
+    canScrollBack: Boolean,
+): Float {
+    val margin = (height * 0.12f).toInt().coerceAtLeast(16)
+    val bottom = top + height
+    return when {
+        bottom + margin > usableHeight -> (bottom + margin - usableHeight).toFloat()
+        top - margin < 0 && canScrollBack -> (top - margin).toFloat()
+        else -> 0f
+    }
 }
 
 /** 网格内容边距：四周都留出焦点放大空间，边缘卡片不会被裁 */

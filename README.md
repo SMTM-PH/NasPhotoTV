@@ -7,9 +7,23 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 > 🍎 **Apple TV 版**：原生 tvOS 1.2.8，支持 tvOS 17+。构建、真机签名与分发说明见 [apple/README.md](apple/README.md)。
 
-- 版本：`1.2.8`（versionCode 14）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.8)
+- 版本：`1.2.9`（versionCode 15）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.9)
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
+
+---
+
+## 1.2.9 修复（2026-11-20）
+
+- **文件夹里的照片能显示了**：`folder_view/getFileList` 条目常不带
+  `additional.thumbnail`，按飞牛官方前端算法用 `id + photoUUID` 拼 stream 地址
+  （缩略图 `s`、大图 `o`、RAW `m`、视频 `v/{id}`），修好目录缩略图与全屏大图空白。
+- **文件夹卡片有封面了**：新增 `folder_view/cover` 批量读取封面；接口不可用或旧版本
+  降级时，用整库时间线里同目录前缀的照片兜底。
+- **第二行不再被裁**：焦点滚动改为按实际溢出量最小滚动，聚焦第二行时照片会整体上移，
+  卡片下方的标题与日期完整可见。
+
+协议取证、验证与待确认范围见 [docs/releases/v1.2.9.md](docs/releases/v1.2.9.md)。
 
 ---
 

@@ -18,6 +18,9 @@ import org.json.JSONObject
 internal class FnOsFolders(
     private val getJson: suspend (String, List<Pair<String, String>>) -> JSONObject,
     private val parseMedia: (JSONObject) -> MediaItem?,
+    /** 目录封面的批量接口；null = 不取封面（测试 / 旧版本降级） */
+    private val postJson: (suspend (String, JSONObject) -> JSONObject)? = null,
+    private val baseUrl: String = "",
 ) {
     @Volatile
     private var folderCache: Map<String, NasFolder> = emptyMap()
@@ -47,8 +50,73 @@ internal class FnOsFolders(
             visit(parseFolder(json, parent = null))
         }
         // Only publish a complete traversal. Permission/network errors must remain visible to callers.
-        folderCache = folders.toMap()
-        return folders.values.toList()
+        val discovered = folders.values.toList()
+        // 目录封面：官方前端用 folder_view/cover 按父目录批量取 poster，
+        // 失败不能影响目录树本身（旧版本可能没有这个接口）。
+        val withCovers = attachCovers(discovered)
+        folderCache = withCovers.associateBy { it.id }
+        return withCovers
+    }
+
+    /**
+     * 按父目录批量取封面。官方前端（XPOBuNOhKVjDE-Zr.js）每次最多 50 个 dirName：
+     * POST {currentPath, dirNames} → data.list[] {dirPath, cover:[{id,uuid}], defaultCover:[...]}。
+     * 拼出的地址与前端 getPhotoUrl 一致：/p/api/v1/stream/p/t/{id}/xs/{uuid}。
+     */
+    private suspend fun attachCovers(folders: List<NasFolder>): List<NasFolder> {
+        val poster = postJson ?: return folders
+        if (folders.isEmpty()) return folders
+        val covers = HashMap<String, String>()
+        folders.groupBy { parentPathOf(it.path) }.forEach { (parent, children) ->
+            for (batch in children.chunked(COVER_BATCH)) {
+                runCatching {
+                    val dirNames = JSONArray()
+                    batch.forEach { dirNames.put(it.name) }
+                    val body = JSONObject()
+                        .put("currentPath", parent)
+                        .put("dirNames", dirNames)
+                    val data = poster(COVER, body)
+                    val list = data.optJSONArray("list")
+                        ?: data.optJSONArray("covers")
+                        ?: return@runCatching
+                    for (i in 0 until list.length()) {
+                        val entry = list.optJSONObject(i) ?: continue
+                        val url = firstPoster(entry)?.let { posterUrl(it, baseUrl) }.orEmpty()
+                        if (url.isBlank()) continue
+                        val dirPath = firstNonBlank(entry, "dirPath", "folderPath", "path", "dirName")
+                        val key = when {
+                            dirPath.startsWith("/") -> dirPath.trimEnd('/')
+                            dirPath.isNotBlank() -> parent.trimEnd('/') + "/" + dirPath.trim('/')
+                            else -> batch.getOrNull(i)?.path.orEmpty()
+                        }
+                        if (key.isNotBlank()) covers[key] = url
+                    }
+                }
+            }
+        }
+        if (covers.isEmpty()) return folders
+        return folders.map { folder ->
+            covers[folder.path.trimEnd('/')]?.let { folder.copy(coverUrl = it) } ?: folder
+        }
+    }
+
+    private fun firstPoster(entry: JSONObject): JSONObject? {
+        for (key in listOf("cover", "defaultCover", "poster", "posters")) {
+            val arr = entry.optJSONArray(key) ?: continue
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                if ((firstNonBlank(item, "id", "photoId").toLongOrNull() ?: 0L) > 0L &&
+                    firstNonBlank(item, "uuid", "photoUUID", "session").isNotBlank()
+                ) return item
+            }
+        }
+        return null
+    }
+
+    private fun parentPathOf(path: String): String {
+        val trimmed = path.trimEnd('/')
+        val cut = trimmed.lastIndexOf('/')
+        return if (cut <= 0) "/" else trimmed.substring(0, cut)
     }
 
     suspend fun getMedia(folderId: String, limit: Int): List<MediaItem> {
@@ -125,6 +193,8 @@ internal class FnOsFolders(
         const val ROOTS = "/p/api/v1/photo/folder/list"
         const val CHILDREN = "/p/api/v1/folder_view/getFolderList"
         const val FILES = "/p/api/v1/folder_view/getFileList"
+        const val COVER = "/p/api/v1/folder_view/cover"
+        const val COVER_BATCH = 50
         const val ID_PREFIX = "path:"
         const val MAX_FOLDER_NODES = 50_000
         const val MAX_FOLDER_DEPTH = 128

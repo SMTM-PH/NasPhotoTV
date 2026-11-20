@@ -247,7 +247,7 @@ fun NasPhotoTvApp() {
                         Album(
                             id = "folder:" + f.id,
                             name = f.name.ifBlank { f.path },
-                            coverUrl = "",
+                            coverUrl = f.coverUrl,
                             itemCount = f.photoCount + f.videoCount,
                             type = com.nasphoto.tv.data.model.AlbumType.FOLDER,
                             subtitle = if (f.depth > 0) "子文件夹 · ${f.path}" else f.path,

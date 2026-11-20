@@ -11,7 +11,6 @@ import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.data.model.NasConnection
 import com.nasphoto.tv.data.model.NasFolder
 import com.nasphoto.tv.data.model.Person
-import com.nasphoto.tv.data.model.RAW_EXTENSIONS
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -41,7 +40,7 @@ class FnOsMediaRepository(
     private val albumCache = mutableMapOf<String, List<MediaItem>>()
     private val smartAlbums = FnOsSmartAlbums(api::getJson, api::postJson, ::parseMedia, ::absolute)
     private val gallery = FnOsGallery(api::getJson, ::parseMedia)
-    private val folders = FnOsFolders(api::getJson, ::parseMedia)
+    private val folders = FnOsFolders(api::getJson, ::parseMedia, api::postJson, baseUrl)
 
     suspend fun probe(): FnOsProbeResult = api.testConnection()
 
@@ -348,34 +347,21 @@ class FnOsMediaRepository(
         }
     }
 
+    /**
+     * 解析一条飞牛媒体记录。地址解析交给 [resolveMediaUrls]：
+     * 文件夹视图的条目常缺少 additional.thumbnail，必须按 id + photoUUID 拼 stream 地址，
+     * 否则目录里的照片卡片与全屏大图都会是空白（1.2.8 用户反馈）。
+     */
     private fun parseMedia(json: JSONObject): MediaItem? {
         val id = json.optLong("id", 0L)
         if (id <= 0L) return null
 
-        val thumb = json.optJSONObject("additional")?.optJSONObject("thumbnail")
-        val fileName = json.optString("fileName")
+        val urls = resolveMediaUrls(json, id, baseUrl)
+        val fileName = firstNonBlank(json, "fileName", "name")
         val isVideo = json.optString("category").equals("video", ignoreCase = true)
-
-        val mUrl = thumb?.optString("mUrl").orEmpty()
-        val sUrl = thumb?.optString("sUrl").orEmpty()
-        val xsUrl = thumb?.optString("xsUrl").orEmpty()
-        val originalUrl = thumb?.optString("originalUrl").orEmpty()
-        val videoUrl = thumb?.optString("videoUrl").orEmpty()
-
         val extension = fileName.substringAfterLast('.', "").uppercase()
-        val isRaw = extension in RAW_EXTENSIONS
-
-        val thumbUrl = absolute(mUrl.ifBlank { sUrl.ifBlank { xsUrl } })
-        val fullUrl = when {
-            isVideo -> absolute(videoUrl.ifBlank { "/p/api/v1/stream/v/$id" })
-            // RAW 端侧没有解码器：直接看 NAS 生成的高清 JPG 预览（m = 1280px），
-            // 原图（o）是相机原始文件，交给 Coil 只会得到一张占位图。
-            isRaw -> absolute(mUrl.ifBlank { sUrl.ifBlank { originalUrl } })
-            else -> absolute(originalUrl.ifBlank { mUrl })
-        }
         val width = json.optInt("width", 0)
         val height = json.optInt("height", 0)
-        val isLive = json.optInt("isLive", 0) == 1 && videoUrl.isNotBlank()
 
         return MediaItem(
             id = id.toString(),
@@ -383,17 +369,20 @@ class FnOsMediaRepository(
                 if (isVideo) "未命名视频" else "未命名照片"
             },
             type = if (isVideo) MediaType.VIDEO else MediaType.PHOTO,
-            url = fullUrl.ifBlank { thumbUrl },
-            thumbnailUrl = thumbUrl.ifBlank { fullUrl },
-            isLive = isLive,
-            liveUrl = if (isLive) absolute(videoUrl) else "",
-            dateTaken = parseDate(json.optString("dateTime").ifBlank { json.optString("photoDateTime") }),
+            url = urls.fullUrl,
+            thumbnailUrl = urls.thumbnailUrl,
+            isLive = urls.liveUrl.isNotBlank(),
+            liveUrl = urls.liveUrl,
+            dateTaken = parseDate(
+                firstNonBlank(json, "dateTime", "photoDateTime", "createTime", "mtime"),
+            ),
             durationMs = MediaDuration.fromJson(json),
             sizeBytes = json.optLong("fileSize", 0L),
-            resolution = if (width > 0 && height > 0) "${width}x$height" else "",
+            resolution = if (width > 0 && height > 0) "${width}x${height}" else "",
             albumId = "",
             starred = json.optInt("isCollect", 0) == 1,
             extension = extension,
+            filePath = firstNonBlank(json, "filePath", "path", "showFilePath"),
         )
     }
 
@@ -427,12 +416,7 @@ class FnOsMediaRepository(
         return runCatching { LocalDate.parse(head) }.getOrDefault(LocalDate.now())
     }
 
-    private fun absolute(relative: String): String {
-        if (relative.isBlank()) return ""
-        if (relative.startsWith("http://") || relative.startsWith("https://")) return relative
-        // baseUrl 已含反代子路径（如 https://relay.com/fnos），相对路径挂到它下面
-        return baseUrl.trimEnd('/') + "/" + relative.trimStart('/')
-    }
+    private fun absolute(relative: String): String = absoluteUrl(relative, baseUrl)
 
     private companion object {
         /** 相册分页的单页大小：实测服务端单页最多 500，沿用该值即可少走往返。 */

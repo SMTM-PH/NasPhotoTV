@@ -36,6 +36,8 @@ data class MediaItem(
     val starred: Boolean = false,
     /** 扩展名，如 JPG / MP4 / HEIC */
     val extension: String = "",
+    /** NAS 上的完整文件路径；文件夹卡片的封面可按目录前缀从这里兜底 */
+    val filePath: String = "",
 )
 
 /** 常见 RAW 原始格式（相机直出） */
@@ -110,6 +112,8 @@ data class NasFolder(
     val parentId: String = "",
     /** 距离扫描根目录的层数：0 = 根目录。 */
     val depth: Int = 0,
+    /** 目录封面（folder_view/cover 返回的 poster 拼出的 xs 图）；拿不到时由 UI 用时间线兜底 */
+    val coverUrl: String = "",
 )
 
 /**

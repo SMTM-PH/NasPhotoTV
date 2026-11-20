@@ -335,6 +335,7 @@ fun LibraryScreen(
                     folders = state.folders,
                     loaded = state.foldersLoaded,
                     error = state.foldersError,
+                    coverFor = { albumCoverUrl(state, it) },
                     onOpenAlbum = { openedAlbumId = it.id },
                     contentFocus = contentFocus,
                     restoreIndex = albumsFocusIndex,
@@ -793,6 +794,8 @@ private fun FoldersTab(
     restoreIndex: Int = 0,
     onFocusAlbum: (Int) -> Unit = {},
     onFirstRowUp: () -> Unit,
+    /** 目录封面：优先 cover 接口给的 poster，拿不到时用时间线同路径照片兜底 */
+    coverFor: (Album) -> String = { it.coverUrl },
 ) {
     val columns = ALBUM_GRID_COLUMNS
     val safeRestore = restoreIndex.coerceIn(0, folders.lastIndex.coerceAtLeast(0))
@@ -833,7 +836,7 @@ private fun FoldersTab(
                 itemsIndexed(folders, key = { _, it -> it.id }) { index, folder ->
                     AlbumCard(
                         album = folder,
-                        coverUrl = folder.coverUrl,
+                        coverUrl = coverFor(folder),
                         width = ALBUM_CELL_W,
                         height = ALBUM_CELL_H,
                         focusRequester = requesterAt(requesters, index),
