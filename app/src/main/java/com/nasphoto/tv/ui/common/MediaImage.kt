@@ -2,22 +2,23 @@ package com.nasphoto.tv.ui.common
 
 import android.content.Context
 import android.os.Build
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.BrokenImage
-import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -31,6 +32,7 @@ import coil.decode.ImageDecoderDecoder
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.nasphoto.tv.data.fn.FnOsTransport
+import kotlinx.coroutines.delay
 
 /**
  * ================= 通用媒体加载组件 =================
@@ -39,9 +41,23 @@ import com.nasphoto.tv.data.fn.FnOsTransport
  *  - 自签证书的 TOFU 信任；
  *  - AccessToken 由拦截器动态注入（重登后无需重建 ImageLoader）。
  *
- * 支持 http(s) NAS 图片和本地 android.resource 示例；加载中 / 失败 / 其他地址显示渐变占位，
- * 保证 10-foot UI 不会出现白块或崩溃。
+ * 支持 http(s) NAS 图片和本地 android.resource 示例。占位样式见 [MediaPlaceholder]：
+ * 幻灯片换页时不再闪出「破图」锯齿图标，而是保留上一张画面直到新图解码完成。
  */
+
+/**
+ * 加载 / 失败时的占位样式。
+ *
+ * - [SPINNER]：渐变底 + 转圈，卡片、缩略图默认。旧的 `BrokenImage` 锯齿图标
+ *   在两张幻灯片之间会一闪而过，观感很差，统一换成转圈。
+ * - [HOLD]：完全透明，保留下层画面（全屏舞台 / 屏保）。下一张还没解码出来时
+ *   继续显示上一张；超过 [HoldSpinnerDelayMs] 才叠一个很轻的转圈，
+ *   不会再出现「渐变底 + 锯齿图标」的间隙。
+ */
+enum class MediaPlaceholder { SPINNER, HOLD }
+
+/** HOLD 模式下多久才显示转圈：秒开时不打扰，慢网络时给个可见反馈 */
+private const val HoldSpinnerDelayMs = 600L
 
 /** 由 url 生成一个稳定的「主题色」，用于加载中 / 失败占位 */
 fun colorForUrl(url: String): Color {
@@ -50,6 +66,15 @@ fun colorForUrl(url: String): Color {
     val hue = ((h and 0x7fffffff) % 360) / 360f
     return Color.hsv(hue * 360f, 0.45f, 0.55f)
 }
+
+/**
+ * 按屏幕密度放大缩略图请求尺寸（4K 面板不发虚），大图原样保留。
+ * 抽成纯函数是为了让「预加载下一张」与真正显示时用同一把尺子 ——
+ * Coil 的内存缓存键包含尺寸，两边不一致就会白预加载一场。
+ */
+internal fun effectiveImageWidth(targetWidth: Int, density: Float): Int =
+    if (targetWidth >= 1920) targetWidth
+    else (targetWidth * (density / 2f)).toInt().coerceIn(targetWidth, 1920)
 
 /** 全局单例 ImageLoader：磁盘/内存缓存由 Coil 管理 */
 object NasImageLoader {
@@ -121,6 +146,8 @@ fun MediaImage(
     contentScale: ContentScale = ContentScale.Crop,
     targetWidth: Int = 640,
     cornerRadiusDp: Int = 0,
+    /** 见 [MediaPlaceholder]：全屏舞台 / 屏保传 [MediaPlaceholder.HOLD] 保留上一张画面 */
+    placeholder: MediaPlaceholder = MediaPlaceholder.SPINNER,
 ) {
     val boxModifier = if (cornerRadiusDp > 0) {
         modifier.clip(RoundedCornerShape(cornerRadiusDp.dp))
@@ -130,21 +157,19 @@ fun MediaImage(
 
     if (!url.startsWith("http://") && !url.startsWith("https://") &&
         !url.startsWith("android.resource://")) {
-        Placeholder(colorForUrl(url), boxModifier)
+        when (placeholder) {
+            MediaPlaceholder.SPINNER -> Placeholder(colorForUrl(url), boxModifier)
+            MediaPlaceholder.HOLD -> Box(boxModifier)
+        }
         return
     }
 
     val context = LocalContext.current
+    val tint = colorForUrl(url)
     // targetWidth 是按 1080p（density 2）调的像素值。4K 面板上密度会到 4，
     // 同样的卡片物理像素翻倍，还用原值就会发虚。这里只对「缩略图」按密度等比放大，
-    // 封顶 1920 防止低内存电视解码过大位图；本来就是全屏/全景的大图（>=1920）保持原值，
-    // 避免把 4096 的全景图反而压小。
-    val density = LocalDensity.current.density
-    val effectiveWidth = if (targetWidth >= 1920) {
-        targetWidth
-    } else {
-        (targetWidth * (density / 2f)).toInt().coerceIn(targetWidth, 1920)
-    }
+    // 封顶 1920 防止低内存电视解码过大位图；本来就是全屏/全景的大图（>=1920）保持原值。
+    val effectiveWidth = effectiveImageWidth(targetWidth, LocalDensity.current.density)
     SubcomposeAsyncImage(
         model = ImageRequest.Builder(context)
             .data(url)
@@ -155,12 +180,66 @@ fun MediaImage(
         contentDescription = contentDescription,
         modifier = boxModifier,
         contentScale = contentScale,
-        loading = { Placeholder(colorForUrl(url)) },
-        error = { Placeholder(colorForUrl(url)) },
+        loading = {
+            when (placeholder) {
+                MediaPlaceholder.SPINNER -> SpinnerPlaceholder(tint)
+                MediaPlaceholder.HOLD -> HoldPlaceholder()
+            }
+        },
+        error = {
+            // 失败也不再画锯齿「破图」图标：卡片给渐变底，全屏舞台保持透明让上一层画面留着。
+            when (placeholder) {
+                MediaPlaceholder.SPINNER -> Placeholder(tint)
+                MediaPlaceholder.HOLD -> Box(Modifier.fillMaxSize())
+            }
+        },
     )
 }
 
-/** 占位图：渐变 + 虚线相框图标 */
+/** 卡片占位：渐变底 + 转圈（取代旧的锯齿破图图标） */
+@Composable
+private fun SpinnerPlaceholder(tint: Color) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(
+                Brush.linearGradient(
+                    listOf(tint.copy(alpha = 0.65f), Color(0xFF14161D)),
+                ),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(28.dp),
+            color = Color.White.copy(alpha = 0.72f),
+            strokeWidth = 3.dp,
+        )
+    }
+}
+
+/**
+ * 全屏舞台 / 屏保占位：透明，保留下层（上一张）画面。
+ * 只有加载真的很慢时才叠一个很轻的转圈，避免黑屏时用户以为死机。
+ */
+@Composable
+private fun HoldPlaceholder() {
+    var showSpinner by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(HoldSpinnerDelayMs)
+        showSpinner = true
+    }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        if (showSpinner) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(32.dp),
+                color = Color.White.copy(alpha = 0.62f),
+                strokeWidth = 3.dp,
+            )
+        }
+    }
+}
+
+/** 静态空状态占位：只保留渐变底，不画任何图标（设置页「还没有视频」等用） */
 @Composable
 fun Placeholder(tint: Color, modifier: Modifier = Modifier) {
     Box(
@@ -171,15 +250,7 @@ fun Placeholder(tint: Color, modifier: Modifier = Modifier) {
                     listOf(tint.copy(alpha = 0.65f), Color(0xFF14161D)),
                 ),
             ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.BrokenImage,
-            contentDescription = null,
-            modifier = Modifier.size(48.dp),
-            tint = Color.White.copy(alpha = 0.5f),
-        )
-    }
+    )
 }
 
 fun Modifier.clipRounded(dp: Int): Modifier =

@@ -640,6 +640,7 @@ private fun stepAction(key: SettingsKey, actions: SettingsActions): ((Boolean) -
     SettingsKey.PB_AUTOPLAY -> { _ -> actions.toggleAutoPlayNext() }
     SettingsKey.PB_LOOP -> { _ -> actions.toggleLoop() }
     SettingsKey.PB_PORTRAIT_FIT -> { isLeft -> actions.cyclePortraitFit(reverse = isLeft) }
+    SettingsKey.PB_ROTATION -> { isLeft -> actions.cycleVideoRotation(reverse = isLeft) }
     SettingsKey.ABOUT_UPDATE_AUTO -> { _ -> actions.toggleAutoCheck() }
     else -> null
 }

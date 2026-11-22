@@ -370,6 +370,28 @@ data class ScreensaverSettings(
 }
 
 /**
+ * 视频画面手动旋转：修正个别素材的方向元数据写错 / 缺失导致的「横着放」。
+ * 顺时针角度，播放器里可临时覆盖，切到下一条视频时回到这里的默认值。
+ */
+enum class VideoRotation(val degrees: Int, val label: String) {
+    NONE(0, "不旋转"),
+    CW_90(90, "向右 90°"),
+    CW_180(180, "旋转 180°"),
+    CW_270(270, "向左 90°"),
+    ;
+
+    fun next(): VideoRotation = entries[(ordinal + 1) % entries.size]
+
+    companion object {
+        /** 把任意角度归一化成四档（用于叠加解码器回报的 unappliedRotationDegrees） */
+        fun fromDegrees(degrees: Int): VideoRotation {
+            val normalized = ((degrees % 360) + 360) % 360
+            return entries.firstOrNull { it.degrees == normalized } ?: NONE
+        }
+    }
+}
+
+/**
  * 播放相关设置。
  */
 data class PlaybackSettings(
@@ -379,6 +401,8 @@ data class PlaybackSettings(
     val loopMode: Boolean = false,
     /** 竖屏视频（手机/无人机竖拍）在 16:9 电视上的画面适配方式 */
     val portraitFit: PortraitFit = PortraitFit.AUTO,
+    /** 视频画面默认旋转角度；播放器里按 MENU 可临时覆盖当前这一条 */
+    val rotation: VideoRotation = VideoRotation.NONE,
 )
 
 /**

@@ -1,6 +1,8 @@
 package com.nasphoto.tv.ui.video
 
 import android.util.Log
+import android.view.LayoutInflater
+import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -9,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -42,6 +45,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -65,6 +69,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.nasphoto.tv.BuildConfig
+import com.nasphoto.tv.R
 import com.nasphoto.tv.data.fn.FnOsTransport
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
@@ -117,6 +122,19 @@ fun VideoPlayerScreen(
     var playError by remember { mutableStateOf<String?>(null) }
     /** 当前生效的竖屏适配方式（会话内可切换，默认取设置） */
     var portraitFit by remember { mutableStateOf(settings.portraitFit) }
+    /**
+     * 手动旋转（默认取设置，播放中 MENU 可临时覆盖当前这一条）。
+     * 个别素材的方向元数据写错 / 缺失时，用户自己转 90°/180°/270° 就能看正。
+     */
+    var manualRotation by remember { mutableStateOf(settings.rotation) }
+    /**
+     * 解码器回报「尚未应用的旋转」（0/90/180/270）。
+     * MediaCodecVideoRenderer 通常会自己把 90/270 折算进宽高并把这里置 0；
+     * 少数走其它渲染路径的素材会留下非零值，此时要由 UI 补旋一次，否则画面是躺着的。
+     */
+    var autoRotationDegrees by remember { mutableIntStateOf(0) }
+    /** 最终生效角度 = 手动覆盖 + 解码器未应用的旋转 */
+    val effectiveDegrees = (manualRotation.degrees + autoRotationDegrees) % 360
     /**
      * 解码器回报的真实画面尺寸（宽, 高，已含旋转）。
      *
@@ -237,9 +255,11 @@ fun VideoPlayerScreen(
 
             /** 解码器给出的真实尺寸（含旋转），用作竖屏判定的兜底 */
             override fun onVideoSizeChanged(videoSize: VideoSize) {
-                val w = videoSize.width
-                val h = videoSize.height
-                decodedSize = if (w > 0 && h > 0) w to h else null
+                // 解码器没把旋转应用到像素上时由 UI 补旋；宽高也按显示方向换算，
+                // 否则竖屏判定与实际画面不一致（用户反馈的「方向时好时坏」）。
+                val unapplied = readUnappliedRotation(videoSize)
+                autoRotationDegrees = normalizeUnappliedRotation(unapplied)
+                decodedSize = displayVideoSize(videoSize.width, videoSize.height, unapplied)
             }
 
             /**
@@ -272,6 +292,9 @@ fun VideoPlayerScreen(
         val item = videos.getOrNull(index) ?: return@LaunchedEffect
         playError = null
         decodedSize = null
+        // 换片必须把上一条的旋转状态清掉，否则「临时转了这一条」会误伤后面所有视频。
+        autoRotationDegrees = 0
+        manualRotation = settings.rotation
         player.setMediaItem(androidx.media3.common.MediaItem.fromUri(item.url))
         player.prepare()
         player.play()
@@ -333,9 +356,24 @@ fun VideoPlayerScreen(
                         true
                     }
 
+                    // 手动旋转：MENU 是电视遥控器上最通用的空闲键，逐档 0→90→180→270。
+                    // INFO / 红键只是别名，方便带信息键或彩键的遥控器。
+                    Key.Menu, Key.Info, Key.ProgramRed -> {
+                        manualRotation = manualRotation.next()
+                        showControls()
+                        true
+                    }
+
+                    // 复位到设置里的默认值：转错了不用连按三下绕回来。
+                    Key.ProgramGreen -> {
+                        manualRotation = settings.rotation
+                        showControls()
+                        true
+                    }
+
                     // 竖屏素材在 16:9 电视上只能三选一：左右留黑 / 用封面填两侧 / 裁切铺满。
-                    // 遥控器没有专门的「画面比例」键，MENU 键在电视上通常空着，用它循环切换。
-                    Key.Menu -> {
+                    // 彩键黄键（没有彩键的遥控器仍可在「设置 → 视频播放」里改）。
+                    Key.ProgramYellow, Key.ZoomIn -> {
                         if (portrait) {
                             portraitFit = when (portraitFit) {
                                 PortraitFit.AUTO -> PortraitFit.FILL
@@ -390,29 +428,44 @@ fun VideoPlayerScreen(
             }
         }
 
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    useController = false
-                    setShutterBackgroundColor(android.graphics.Color.BLACK)
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    isFocusable = false
-                    isClickable = false
-                    this.player = player
-                }
-            },
-            modifier = Modifier.fillMaxSize(),
-            update = { view ->
-                view.player = player
-                // FILL：按高度铺满并裁掉左右（竖屏素材会切掉上下）；FIT/AUTO：完整画面
-                val mode = if (portrait && portraitFit == PortraitFit.FILL) {
-                    AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                } else {
-                    AspectRatioFrameLayout.RESIZE_MODE_FIT
-                }
-                if (view.resizeMode != mode) view.resizeMode = mode
-            },
-        )
+        // 旋转 90/270 度时，整块画面的外接矩形会转过来：先把 PlayerView 缩到
+        // 「转过来仍能完整放进屏幕」的比例，再旋转，既不裁切也不拉伸。
+        // 16:9 屏上这个系数是 0.5625 —— 旋转后画面正好占满高度、两侧留黑。
+        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            val fitScale = rotationFitScale(maxWidth.value, maxHeight.value, effectiveDegrees)
+            AndroidView(
+                factory = { ctx ->
+                    // TextureView 版 PlayerView：SurfaceView 的内容不受父级 View 旋转影响，
+                    // 手动旋转会在部分盒子上「按了没反应」。详见 layout/player_view_rotatable.xml。
+                    (LayoutInflater.from(ctx)
+                        .inflate(R.layout.player_view_rotatable, null) as PlayerView).apply {
+                        layoutParams = FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                        )
+                        useController = false
+                        setShutterBackgroundColor(android.graphics.Color.BLACK)
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        isFocusable = false
+                        isClickable = false
+                        this.player = player
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxSize(fitScale)
+                    .graphicsLayer { rotationZ = effectiveDegrees.toFloat() },
+                update = { view ->
+                    view.player = player
+                    // FILL：按高度铺满并裁掉左右（竖屏素材会切掉上下）；FIT/AUTO：完整画面
+                    val mode = if (portrait && portraitFit == PortraitFit.FILL) {
+                        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    } else {
+                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                    if (view.resizeMode != mode) view.resizeMode = mode
+                },
+            )
+        }
 
         val err = playError
         if (err != null) {
@@ -486,17 +539,35 @@ fun VideoPlayerScreen(
                             color = TvColor.TextTertiary,
                         )
                     }
-                    if (portrait) {
+                    Column(
+                        modifier = Modifier.padding(end = TvDimen.SpaceM),
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
                         Text(
-                            text = "竖屏 · ${portraitFit.label} · MENU 切换",
+                            text = if (effectiveDegrees != 0) {
+                                "已旋转 ${effectiveDegrees}° · MENU 继续 / 绿键复位"
+                            } else {
+                                "MENU 旋转画面"
+                            },
                             fontSize = TvType.Tiny,
                             color = TvColor.Accent,
                             modifier = Modifier
-                                .padding(end = TvDimen.SpaceM)
                                 .clip(RoundedCornerShape(TvDimen.RadiusS))
                                 .background(TvColor.AccentDim)
                                 .padding(horizontal = TvDimen.SpaceXs, vertical = 2.dp),
                         )
+                        if (portrait) {
+                            Text(
+                                text = "竖屏 · ${portraitFit.label} · 黄键切换",
+                                fontSize = TvType.Tiny,
+                                color = TvColor.Accent,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(TvDimen.RadiusS))
+                                    .background(TvColor.AccentDim)
+                                    .padding(horizontal = TvDimen.SpaceXs, vertical = 2.dp),
+                            )
+                        }
                     }
                     Text(
                         text = "${index + 1} / ${videos.size}",
@@ -663,6 +734,46 @@ private fun ProgressTrack(positionMs: Long, durationMs: Long) {
 }
 
 private const val TAG = "NasPhotoTV.Video"
+
+/**
+ * media3 1.5 起该字段标记为 deprecated（正常渲染路径恒为 0）。
+ * 仍保留读取：少数渲染路径 / 老版本解码器会留下非零值，正是「方向不一致」的来源。
+ */
+@Suppress("DEPRECATION")
+private fun readUnappliedRotation(videoSize: VideoSize): Int = videoSize.unappliedRotationDegrees
+
+/**
+ * 把解码器回报的「未应用旋转」归一化到 0/90/180/270。
+ * 非法值（负数、任意角度）一律当 0，避免脏元数据把画面转歪。
+ */
+internal fun normalizeUnappliedRotation(degrees: Int): Int {
+    val r = ((degrees % 360) + 360) % 360
+    return if (r == 90 || r == 180 || r == 270) r else 0
+}
+
+/**
+ * 解码器给的 coded 宽高 + 未应用旋转 → 真正显示方向上的 (宽, 高)。
+ * 90/270 度需要交换宽高，否则竖屏判定用的是「躺着」的画面尺寸。
+ */
+/**
+ * 旋转 90/270 度时，PlayerView 要缩到多少才能「转过来仍完整放进屏幕」。
+ * 16:9 屏上是 0.5625：旋转后画面正好占满高度、两侧留黑，不裁切也不拉伸。
+ */
+internal fun rotationFitScale(screenWidth: Float, screenHeight: Float, degrees: Int): Float {
+    if (screenWidth <= 0f || screenHeight <= 0f) return 1f
+    val r = ((degrees % 360) + 360) % 360
+    return if (r == 90 || r == 270) {
+        minOf(screenWidth, screenHeight) / maxOf(screenWidth, screenHeight)
+    } else {
+        1f
+    }
+}
+
+internal fun displayVideoSize(width: Int, height: Int, unappliedRotationDegrees: Int): Pair<Int, Int>? {
+    if (width <= 0 || height <= 0) return null
+    val r = normalizeUnappliedRotation(unappliedRotationDegrees)
+    return if (r == 90 || r == 270) height to width else width to height
+}
 
 /**
  * 这段素材是否按竖屏处理。

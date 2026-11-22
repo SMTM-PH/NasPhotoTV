@@ -338,6 +338,7 @@ object SettingsStore {
         e.putBoolean("pb_next", playback.autoPlayNext)
         e.putBoolean("pb_loop", playback.loopMode)
         e.putString("pb_portrait_fit", playback.portraitFit.name)
+        e.putString("pb_rotation", playback.rotation.name)
         e.putBoolean("upd_auto", update.autoCheck)
         e.putString("upd_api", update.apiUrl)
         e.putString("upd_mirror", update.mirror)
@@ -402,6 +403,10 @@ object SettingsStore {
             portraitFit = enumOrDefault(
                 p.getString("pb_portrait_fit", null),
                 defaultPlayback.portraitFit,
+            ),
+            rotation = enumOrDefault(
+                p.getString("pb_rotation", null),
+                defaultPlayback.rotation,
             ),
         )
         update = UpdateSettings(

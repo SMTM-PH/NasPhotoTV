@@ -71,23 +71,28 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.request.ImageRequest
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.data.model.isPanoramaPhoto
 import com.nasphoto.tv.data.model.pixelSize
 import com.nasphoto.tv.ui.common.LivePhotoVideo
 import com.nasphoto.tv.ui.common.MediaImage
+import com.nasphoto.tv.ui.common.MediaPlaceholder
+import com.nasphoto.tv.ui.common.NasImageLoader
 import com.nasphoto.tv.ui.theme.NasPhotoTvTheme
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
 import com.nasphoto.tv.ui.theme.TvType
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 
 /** 控制栏无操作自动隐藏时长 */
@@ -103,6 +108,15 @@ private const val HudAutoHideMs = 1500L
 
 /** 幻灯片每张停留时长 */
 private const val SlideshowIntervalMs = 5000L
+
+/** 换页前预加载下一张的最长等待：地址失效 / 网络极差时不能把幻灯片卡死 */
+private const val SlideshowPreloadTimeoutMs = 8_000L
+
+/** 幻灯片换页叠化时长（showcase 风格：缓慢淡入淡出，不做左右滑） */
+private const val SlideshowCrossfadeMs = 900
+
+/** 幻灯片单张缓慢推拉的终值，配合叠化做「会呼吸」的 showcase 观感 */
+private const val ShowcaseZoomFactor = 1.05f
 
 /** 放大平移的步进（0.5 倍：一次方向键平移半张图） */
 private const val PanStep = 0.5f
@@ -131,6 +145,24 @@ private val ChromeScrim = Brush.verticalGradient(
     0.62f to Color.Black.copy(alpha = 0.88f),
     1.0f to TvColor.Bg,
 )
+
+/**
+ * 把下一张照片解码进 Coil 的内存缓存，换页时舞台可以直接显示，不用等网络。
+ *
+ * 请求尺寸必须和舞台上的 [MediaImage] 完全一致（Coil 内存缓存键包含尺寸），
+ * 全景图按 4K 宽度请求，否则白预加载一场。失败只忽略：幻灯片仍会在超时后换页，
+ * 由 HOLD 占位保留上一张画面，不会卡死。
+ */
+private suspend fun preloadSlideshowPhoto(context: android.content.Context, item: MediaItem) {
+    val url = item.url
+    if (url.isBlank()) return
+    val target = if (item.isPanoramaPhoto()) PanoramaTargetWidth else FullScreenTargetWidth
+    val request = ImageRequest.Builder(context)
+        .data(url)
+        .size(target)
+        .build()
+    runCatching { NasImageLoader.get(context).execute(request) }
+}
 
 /**
  * ================= 全屏图片浏览器（原 viewer-dev，现由 viewer-fixer 维护） =================
@@ -235,11 +267,21 @@ fun PhotoViewerScreen(
     }
 
     // ---- 幻灯片自动播放：每 5 秒下一张，到末尾循环 ----
+    // 先把下一张解码进 Coil 内存缓存再换页：网络不好时舞台上仍是上一张照片，
+    // 不会出现「渐变占位 + 锯齿破图图标」的间隙，也不必靠转圈熬过等待。
+    val preloadContext = LocalContext.current
     LaunchedEffect(state.slideshowPlaying) {
         if (!state.slideshowPlaying) return@LaunchedEffect
         while (true) {
             delay(SlideshowIntervalMs)
-            state.advanceSlideshow()
+            if (!state.slideshowPlaying) return@LaunchedEffect
+            val next = state.peekNextPhoto() ?: continue
+            withTimeoutOrNull(SlideshowPreloadTimeoutMs) {
+                preloadSlideshowPhoto(preloadContext, next)
+            }
+            if (!state.slideshowPlaying) return@LaunchedEffect
+            // 期间用户可能已手动翻页 / 暂停，只有还停在同一张时才推进
+            if (state.peekNextPhoto()?.id == next.id) state.advanceSlideshow()
         }
     }
 
@@ -291,36 +333,50 @@ fun PhotoViewerScreen(
                 // 会把整个 Stage 撑大，舞台内的坐标随之偏移。
                 modifier = Modifier.fillMaxSize(),
                 transitionSpec = {
-                    // 按切换方向从左右滑入滑出 + 淡入
-                    val d = if (state.direction >= 0) 1 else -1
-                    val spec = tween<androidx.compose.ui.unit.IntOffset>(durationMillis = 320, easing = FastOutSlowInEasing)
-                    (slideInHorizontally(spec) { w -> d * w / 3 } + fadeIn(tween(220)))
-                        .togetherWith(
-                            slideOutHorizontally(spec) { w -> -d * w / 3 } + fadeOut(tween(160)),
-                        )
+                    if (state.slideshowPlaying) {
+                        // 幻灯片：showcase 风格的缓慢叠化，不做左右滑。
+                        // 两张照片在叠化期间同时在树上，HOLD 占位让上一张一直可见，
+                        // 配合预加载后新图已解码，观感是「直接换成下一张」而不是闪一下黑底。
+                        fadeIn(tween(SlideshowCrossfadeMs, easing = FastOutSlowInEasing))
+                            .togetherWith(fadeOut(tween(SlideshowCrossfadeMs, easing = FastOutSlowInEasing)))
+                    } else {
+                        // 手动翻页：按切换方向从左右滑入滑出 + 淡入
+                        val d = if (state.direction >= 0) 1 else -1
+                        val spec = tween<androidx.compose.ui.unit.IntOffset>(durationMillis = 320, easing = FastOutSlowInEasing)
+                        (slideInHorizontally(spec) { w -> d * w / 3 } + fadeIn(tween(220)))
+                            .togetherWith(
+                                slideOutHorizontally(spec) { w -> -d * w / 3 } + fadeOut(tween(160)),
+                            )
+                    }
                 },
                 contentAlignment = Alignment.Center,
                 label = "viewerSlide",
             ) { item ->
                 if (item == null) return@AnimatedContent
-                StageContent(
-                    item = item,
-                    active = item == state.current,
-                    state = state,
-                    imageFocus = imageFocus,
-                    onOpenVideo = { currentOnOpenVideo(item, items) },
-                    onToggleChrome = { state.toggleChrome() },
-                    onPauseSlideshow = { state.pauseSlideshow() },
-                    onNext = { state.go(1); photoHint += 1 },
-                    onPrev = { state.go(-1); photoHint += 1 },
-                    onEnterToolbar = {
-                        state.showChrome()
-                        toolbarEnter += 1
-                    },
-                    onToggleInfo = { state.toggleInfo() },
-                    onFocusChanged = { },
-                    inToolbar = { inToolbar },
-                )
+                ShowcaseZoom(
+                    enabled = state.slideshowPlaying && !state.zoomed,
+                    key = item.id,
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    StageContent(
+                        item = item,
+                        active = item == state.current,
+                        state = state,
+                        imageFocus = imageFocus,
+                        onOpenVideo = { currentOnOpenVideo(item, items) },
+                        onToggleChrome = { state.toggleChrome() },
+                        onPauseSlideshow = { state.pauseSlideshow() },
+                        onNext = { state.go(1); photoHint += 1 },
+                        onPrev = { state.go(-1); photoHint += 1 },
+                        onEnterToolbar = {
+                            state.showChrome()
+                            toolbarEnter += 1
+                        },
+                        onToggleInfo = { state.toggleInfo() },
+                        onFocusChanged = { },
+                        inToolbar = { inToolbar },
+                    )
+                }
             }
 
             // ================= 左上浮层：LIVE 徽标常驻，其余信息随控制栏出现 =================
@@ -413,6 +469,41 @@ fun PhotoViewerScreen(
         }
 
 
+    }
+}
+
+/**
+ * 幻灯片 showcase 推拉：每张照片在停留的 5 秒里从 1.0 缓缓放到 1.05，
+ * 配合叠化换页就是「画面在呼吸」的观感。暂停 / 放大查看时立刻回到 1.0，
+ * 不会干扰 2× 放大平移，也不会让全景平移的坐标失准。
+ */
+@Composable
+private fun ShowcaseZoom(
+    enabled: Boolean,
+    key: Any,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val scale = remember { Animatable(1f) }
+    LaunchedEffect(enabled, key) {
+        if (enabled) {
+            scale.snapTo(1f)
+            scale.animateTo(
+                ShowcaseZoomFactor,
+                tween(durationMillis = SlideshowIntervalMs.toInt(), easing = LinearEasing),
+            )
+        } else {
+            scale.snapTo(1f)
+        }
+    }
+    Box(
+        modifier.graphicsLayer {
+            scaleX = scale.value
+            scaleY = scale.value
+        },
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
     }
 }
 
@@ -633,6 +724,7 @@ private fun PhotoStage(item: MediaItem, zoomed: Boolean, panX: Float, panY: Floa
                 },
             contentScale = ContentScale.Fit,
             targetWidth = FullScreenTargetWidth,
+            placeholder = MediaPlaceholder.HOLD,
         )
         if (zoomed) {
             ZoomHint(
@@ -675,6 +767,7 @@ private fun PanoramaStage(item: MediaItem, offset: Float) {
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.FillBounds,
                         targetWidth = PanoramaTargetWidth,
+                        placeholder = MediaPlaceholder.HOLD,
                     )
                 },
                 modifier = Modifier.fillMaxSize(),
@@ -702,6 +795,7 @@ private fun VideoStage(item: MediaItem) {
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Fit,
             targetWidth = FullScreenTargetWidth,
+            placeholder = MediaPlaceholder.HOLD,
         )
         // 播放遮罩
         Box(

@@ -7,9 +7,29 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 > 🍎 **Apple TV 版**：原生 tvOS 1.2.8，支持 tvOS 17+。构建、真机签名与分发说明见 [apple/README.md](apple/README.md)。
 
-- 版本：`1.2.10`（versionCode 16）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.10)
+- 版本：`1.2.11`（versionCode 17）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.11)
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
+
+---
+
+## 1.2.11 更新（2026-11-22）
+
+> 用户反馈：① 网络不好时幻灯片两图间隙会闪「锯齿样」破图图标；② 希望像 showcase 一样有切换动画；③ 视频方向有时不一致，想能手动旋转。
+
+- **换页不再闪破图**：全屏舞台 / 屏保改成「HOLD」占位（透明，保留上一张画面），
+  卡片加载占位把锯齿破图图标统一换成转圈；幻灯片换页前先把下一张解码进缓存再切换，
+  慢网络下会一直显示当前照片直到下一张就绪（最多等 8 秒，不会卡死）。
+- **showcase 风格切换动画**：幻灯片自动换页改为 900ms 缓慢叠化 + 每张 1.0→1.05 的
+  轻微推拉；手动左右翻页仍保留原来的方向滑动。屏保同样提前预加载下一张。
+- **视频方向修正 + 手动旋转**：`VideoSize.unappliedRotationDegrees` 参与换算，
+  避免竖屏判定与实际画面不一致；新增「设置 → 视频播放 → 画面旋转」默认档位，
+  播放中按 **MENU**（INFO / 红键同效）逐档 0°→90°→180°→270° 旋转当前视频，
+  **绿键**复位，**黄键**切换竖屏适配；换片自动回到默认值。播放器改用 TextureView，
+  让旋转变换真正作用到画面上（SurfaceView 不受父级 View 旋转影响）。
+- 新增 `VideoRotationTest` / `SlideshowPreloadTest` 共 11 例单元测试。
+
+详见 [docs/releases/v1.2.11.md](docs/releases/v1.2.11.md)。
 
 ---
 

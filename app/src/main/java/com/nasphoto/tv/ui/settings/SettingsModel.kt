@@ -9,6 +9,7 @@ import com.nasphoto.tv.data.SettingsStore
 import com.nasphoto.tv.data.model.NasAccount
 import com.nasphoto.tv.data.model.PortraitFit
 import com.nasphoto.tv.data.model.ScreensaverSettings
+import com.nasphoto.tv.data.model.VideoRotation
 import com.nasphoto.tv.data.fn.FnOsApi
 import com.nasphoto.tv.data.fn.FnOsTwoFactorChallenge
 import com.nasphoto.tv.data.fn.NasAddressParser
@@ -67,7 +68,8 @@ enum class SettingsKey(
 
     PB_AUTOPLAY(SettingsGroup.PLAYBACK, "自动连播下一集", "播完自动播放列表里的下一个"),
     PB_LOOP(SettingsGroup.PLAYBACK, "循环播放", "单个视频播完从头再放"),
-    PB_PORTRAIT_FIT(SettingsGroup.PLAYBACK, "竖屏画面", "手机/无人机竖拍视频在电视上的适配方式，播放中可按 MENU 切换"),
+    PB_PORTRAIT_FIT(SettingsGroup.PLAYBACK, "竖屏画面", "手机/无人机竖拍视频在电视上的适配方式，播放中可按彩键黄键切换"),
+    PB_ROTATION(SettingsGroup.PLAYBACK, "画面旋转", "个别视频方向不对时旋转画面；播放中按 MENU 可临时旋转当前这一条"),
 
     ABOUT_VERSION(SettingsGroup.ABOUT, "版本", "当前版本"),
     ABOUT_ENGINE(SettingsGroup.ABOUT, "引擎", "渲染与状态框架"),
@@ -262,6 +264,15 @@ class SettingsActions(
             val i = order.indexOf(it.portraitFit).coerceAtLeast(0)
             val next = order[((i + if (reverse) -1 else 1) + order.size) % order.size]
             it.copy(portraitFit = next)
+        }
+    }
+
+    /** 画面旋转：不旋转 → 90° → 180° → 270° 循环（← 反向） */
+    fun cycleVideoRotation(reverse: Boolean = false) {
+        store.updatePlayback {
+            val order = VideoRotation.entries
+            val i = it.rotation.ordinal
+            it.copy(rotation = order[((i + if (reverse) -1 else 1) + order.size) % order.size])
         }
     }
 

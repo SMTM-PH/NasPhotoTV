@@ -40,6 +40,7 @@ import com.nasphoto.tv.ui.settings.SettingsScreen
 import com.nasphoto.tv.ui.settings.currentDisplayAlbums
 import com.nasphoto.tv.ui.theme.NasPhotoTvTheme
 import com.nasphoto.tv.ui.theme.TvColor
+import com.nasphoto.tv.ui.video.VideoPlayerScreen
 import com.nasphoto.tv.ui.viewer.PhotoViewerScreen
 import java.time.LocalDate
 
@@ -117,12 +118,35 @@ class DesignPreviewActivity : ComponentActivity() {
                         if (initialScreen == "viewer") ViewerRequest(sample.recent, 0, "示例照片") else null,
                     )
                 }
-                BackHandler(enabled = viewer == null && route != AppRoute.Library) {
+                // 离线方向测试：`--ez video-preview true`。用 res/raw 里一段
+                // 上红下蓝的短片验证 TextureView + 手动旋转是否真的把画面转过来。
+                var videoPreview by remember {
+                    mutableStateOf(intent.getBooleanExtra("video-preview", false))
+                }
+                BackHandler(enabled = viewer == null && !videoPreview && route != AppRoute.Library) {
                     route = AppRoute.Library
                 }
                 Box(Modifier.fillMaxSize().background(TvColor.Bg)) {
                     val activeViewer = viewer
-                    if (activeViewer != null) {
+                    if (videoPreview) {
+                        VideoPlayerScreen(
+                            items = listOf(
+                                MediaItem(
+                                    id = "direction-test",
+                                    title = "方向测试片（上红下蓝）",
+                                    type = MediaType.VIDEO,
+                                    url = "android.resource://com.nasphoto.tv/raw/test_video",
+                                    thumbnailUrl = "",
+                                    resolution = "640x360",
+                                    durationMs = 3000L,
+                                ),
+                            ),
+                            initialIndex = 0,
+                            contextTitle = "离线方向测试",
+                            settings = SettingsStore.playback,
+                            onClose = { videoPreview = false },
+                        )
+                    } else if (activeViewer != null) {
                         PhotoViewerScreen(
                             items = activeViewer.items,
                             initialIndex = activeViewer.initialIndex,

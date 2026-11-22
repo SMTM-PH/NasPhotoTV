@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -23,10 +24,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import coil.request.ImageRequest
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.ScreensaverSettings
 import com.nasphoto.tv.ui.common.LivePhotoVideo
 import com.nasphoto.tv.ui.common.MediaImage
+import com.nasphoto.tv.ui.common.MediaPlaceholder
+import com.nasphoto.tv.ui.common.NasImageLoader
+import com.nasphoto.tv.ui.common.effectiveImageWidth
 import com.nasphoto.tv.ui.theme.TvColor
 import kotlin.math.abs
 
@@ -61,6 +68,22 @@ fun ScreensaverPhotoBackground(
     settings: ScreensaverSettings,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val density = LocalDensity.current.density
+    // 提前解码下一张：Crossfade 期间新图已经在内存缓存里，网络差时不会露出占位图。
+    // 尺寸和下面的 MediaImage 用同一把尺子，Coil 内存缓存键才对得上。
+    LaunchedEffect(photos, index) {
+        val n = photos.size.coerceAtLeast(1)
+        val next = photos.getOrNull((index + 1) % n) ?: return@LaunchedEffect
+        val url = next.thumbnailUrl.ifBlank { next.url }
+        if (url.isBlank()) return@LaunchedEffect
+        val request = ImageRequest.Builder(context)
+            .data(url)
+            .size(effectiveImageWidth(1280, density))
+            .build()
+        runCatching { NasImageLoader.get(context).execute(request) }
+    }
+
     Box(modifier.fillMaxSize().background(TvColor.Bg)) {
         Crossfade(
             targetState = index,
@@ -80,6 +103,7 @@ fun ScreensaverPhotoBackground(
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
                         targetWidth = 1280,
+                        placeholder = MediaPlaceholder.HOLD,
                     )
                     // 实况照片在屏保里也自动播放动态片段（静音、循环）
                     if (item.isLive && item.liveUrl.isNotBlank()) {

@@ -262,6 +262,7 @@ fun rowValueText(key: SettingsKey, store: SettingsStore, feedback: SettingsFeedb
         -> if (toggleState(key, store) == true) "开" else "关"
 
         SettingsKey.PB_PORTRAIT_FIT -> p.portraitFit.label
+        SettingsKey.PB_ROTATION -> p.rotation.label
 
         SettingsKey.ABOUT_VERSION -> com.nasphoto.tv.BuildConfig.VERSION_NAME
         SettingsKey.ABOUT_UPDATE -> com.nasphoto.tv.data.AppUpdateState.actionLabel

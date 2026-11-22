@@ -132,6 +132,7 @@ fun SettingsPlaybackPanel(store: SettingsStore, modifier: Modifier = Modifier) {
                 ParamRow("自动连播", p.autoPlayNext)
                 ParamRow("循环播放", p.loopMode)
                 ParamRow("竖屏画面", p.portraitFit != PortraitFit.FIT)
+                ParamRow("画面旋转", p.rotation != com.nasphoto.tv.data.model.VideoRotation.NONE)
             }
         }
 
@@ -141,6 +142,7 @@ fun SettingsPlaybackPanel(store: SettingsStore, modifier: Modifier = Modifier) {
             if (p.autoPlayNext) add("播完自动播放下一个") else add("播完停在当前画面")
             if (p.loopMode) add("单条循环") else add("不循环")
             add("竖屏 ${p.portraitFit.label}")
+            add("画面 ${p.rotation.label}")
         }.joinToString(" · ")
 
         Row(
