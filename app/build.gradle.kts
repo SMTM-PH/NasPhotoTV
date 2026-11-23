@@ -11,13 +11,22 @@ android {
 
     defaultConfig {
         applicationId = "com.nasphoto.tv"
+        // Android 7.0（API 24）起支持，覆盖 7.0 / 7.1.x 老电视盒子。
+        // java.time 等 API 26 才有的类由 core library desugaring 提供。
         minSdk = 24
         targetSdk = 34
-        versionCode = 17
-        versionName = "1.2.11"
+        versionCode = 18
+        versionName = "1.2.12"
     }
 
     signingConfigs {
+        // 兼容 Android 7.x：AGP 8 在 minSdk >= 24 时默认只签 v2，
+        // 部分国产 7.0/7.1 盒子的 v2 校验实现不完整，显式补上 v1(JAR) 签名。
+        // Android 7.0 是首个支持 v2 的版本，双签不影响新系统。
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
+        }
         create("release") {
             // 正式签名：keystore 不进 git（见 .gitignore），密码在本机 keystore/pass.txt。
             // 首次生成：keytool -genkeypair -keystore keystore/release.jks -alias nasphototv ...
@@ -29,6 +38,8 @@ android {
                 keyAlias = "nasphototv"
                 keyPassword = passFile.readText().trim()
             }
+            enableV1Signing = true
+            enableV2Signing = true
         }
     }
 
@@ -63,6 +74,19 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+
+    lint {
+        // 本项目没有 androidTest 源码；离线构建时不必为了 lint 去解析 androidTest 依赖。
+        checkTestSources = false
+        // 下面几项是项目既有的基线误报（media3 的 @UnstableApi 标记、androidx 的
+        // RestrictedApi、Compose 的 lambda 参数约定），与 minSdk 24 兼容无关。
+        // 保留 NewApi / InlinedApi 等真正能挡住低版本崩溃的检查继续生效。
+        disable += setOf(
+            "UnsafeOptInUsageError",
+            "RestrictedApi",
+            "UnusedContentLambdaTargetStateParameter",
+        )
     }
 }
 

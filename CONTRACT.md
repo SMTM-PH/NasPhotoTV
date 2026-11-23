@@ -130,7 +130,7 @@ fun SettingsScreen(
 - 所有中文文案直接写中文字符串（不用 stringRes，原型优先速度）。
 - 所有颜色/字号/间距用 `ui/theme/Tokens.kt` 里的 token。
 - 每个 Screen 至少提供一个 `@Preview(widthDp = 1920, heightDp = 1080)`。
-- 不要用 `java.time` 以外的新 API 之外的东西；minSdk 26，可以用 java.time。
+- 不要用 `java.time` 以外的新 API 之外的东西；minSdk 24（Android 7.0），可以用 java.time（已开启 core library desugaring）。
 - 不要写网络请求；所有数据来自 repository/mock。
 - 代码里不要留 TODO 到崩溃的路径（LazyRow 空列表要处理）。
 

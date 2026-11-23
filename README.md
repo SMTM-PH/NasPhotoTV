@@ -7,9 +7,30 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 > 🍎 **Apple TV 版**：原生 tvOS 1.2.8，支持 tvOS 17+。构建、真机签名与分发说明见 [apple/README.md](apple/README.md)。
 
-- 版本：`1.2.11`（versionCode 17）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.11)
-- 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ minSdk 26、compileSdk 35、targetSdk 34
+- 版本：`1.2.12`（versionCode 18）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.12)
+- 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ **minSdk 24（Android 7.0）**、compileSdk 35、targetSdk 34；`java.time` 由 core library desugaring 提供
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
+
+---
+
+## 1.2.12 更新（2026-11-23）
+
+> 用户反馈：希望支持安卓 7.0。
+
+- **修复真正挡住 7.x 的问题**：`themes.xml` 里 API 27 才有的 `windowLayoutInDisplayCutoutMode`
+  原本放在基础 `values/`，Android 7.0/7.1 解析主题时会遇到未定义属性（部分定制系统会因此报错）。
+  现已拆成 `values/`（纯基础主题）+ `values-v27/`（刘海屏属性），7.x 只加载前者。
+- **放开 leanback 特性**：`android.software.leanback` 从 `required="true"` 改为 `false`。
+  不少国产 Android 7.x 盒子 / 老平板并不声明 leanback，required=true 会被应用市场和部分安装器直接过滤；
+  TV 启动入口（`LEANBACK_LAUNCHER`）与横屏 D-Pad 交互完全不变。
+- **启用 v1+v2 双签名**：AGP 8 在 minSdk ≥ 24 时默认只签 v2，部分 7.x 定制系统的 v2 校验实现不完整，
+  补上 v1(JAR) 签名兜底；新系统不受影响。
+- **lint 守门**：联网跑通 `lintDebug`，修完上面那条后 **0 errors**；`NewApi` 检查继续保留，
+  避免以后又把高版本 API 加进基础资源。
+- 统一 README / CONTRACT 里过时的「minSdk 26 / Android 8.0 及以上」描述。
+- Android TV **API 24（7.0）系统镜像**实装、启动、UI 复核通过。
+
+详见 [docs/releases/v1.2.12.md](docs/releases/v1.2.12.md)。
 
 ---
 
@@ -281,9 +302,9 @@ https://relay.example.com/nas/        # https 443 中转 + 子路径 /nas
 | JDK | **17+**（工程 `sourceCompatibility/targetCompatibility = 17`、`jvmTarget = 17`） | JDK 17 (Temurin) 实测通过 |
 | Gradle | 用仓库自带 Wrapper（**8.10.2**），不要用全局 gradle | 已含 `gradle/wrapper/gradle-wrapper.jar` |
 | Android SDK | **compileSdk 35**（platforms;android-35 + build-tools 34/35），路径写在 `local.properties` 的 `sdk.dir` | 已用 build-tools 34/35 实测 |
-| 运行设备 | Android **8.0（API 26）及以上**；Android TV / Google TV / 电视盒子；`android.software.leanback` 为 **required**，touchscreen 非必需 | Android TV 官方镜像（API 36 / 1920×1080 / density 320）实测通过 |
+| 运行设备 | **Android 7.0（API 24）及以上**；Android TV / Google TV / 电视盒子 / 普通安卓设备；`android.software.leanback` 为 **可选**（required=false），touchscreen 非必需 | Android TV 官方镜像（API 24 / API 36，1920×1080 / density 320）实测通过 |
 
-Manifest 已声明：`leanback` required + `touchscreen` not required + `LEANBACK_LAUNCHER` 与 `LAUNCHER` 双入口、`android:banner`、
+Manifest 已声明：`leanback` 可选 + `touchscreen` 非必需 + `LEANBACK_LAUNCHER` 与 `LAUNCHER` 双入口、`android:banner`、
 `INTERNET` / `ACCESS_NETWORK_STATE` / `WAKE_LOCK` 权限、`usesCleartextTraffic="true"`、`screenOrientation="landscape"`、
 `launchMode="singleTask"`、`configChanges` 含 `uiMode|screenSize|screenLayout`。
 
@@ -340,13 +361,14 @@ adb logcat -s AndroidRuntime:E
 工程自带 `@Preview(widthDp = 1920, heightDp = 1080)`（媒体库/看图/屏保/设置等），
 **最省事的是在 Android Studio 里直接看 Preview**，不依赖任何设备。
 
-> ⚠ Manifest 里 `android.software.leanback` 是 `required="true"`，**手机镜像不声明 leanback**，
-> 直接 `adb install` 会被特性校验拒绝。请用 TV 镜像（下表第一行）。
+> ✅ 自 1.2.12 起 `android.software.leanback` 改为 `required="false"`，**手机 / 平板镜像不再声明 leanback 也能安装**；
+> Android TV 设备仍通过 `LEANBACK_LAUNCHER` 正常进入，横屏 D-Pad 交互不变。
 
 | 场景 | 做法 |
 |---|---|
 | **推荐：Android TV 镜像** | SDK Manager 安装 `system-images;android-36;android-tv;x86_64`（或 android-35 的 TV 版），新建 AVD 时选 `tv_1080p` 设备模板（1920×1080 / density 320 → 960×540 dp；density 160 → 1920×1080 dp，按实际逻辑画布核对布局） |
-| **只有手机 AVD** | 临时把 `android.software.leanback` 的 `required` 改 `false`（仅本地验证，**不要提交**） |
+| **验证 Android 7.x 兼容性** | `system-images;android-24;android-tv;x86`（1.2.12 已在该镜像实装、启动、UI 复核通过） |
+| **只有手机 AVD** | 1.2.12 起无需改动，直接 `adb install`（leanback 已声明为可选） |
 | **真机电视** | 无需改动，直接安装 |
 
 #### 无头（headless）跑 TV 镜像的四个关键参数
@@ -505,7 +527,7 @@ adb shell input keyevent 88   # MEDIA_NEXT（切下一个视频）
 ├─ gradle.properties               JVM 3G / 开启 parallel + caching
 ├─ local.properties                sdk.dir（本机）
 └─ app/
-   ├─ build.gradle.kts             minSdk 26 / target 34 / compile 35 / Compose BOM 2024.12.01
+   ├─ build.gradle.kts             minSdk 24（Android 7.0）/ target 34 / compile 35 / Compose BOM 2024.12.01
    └─ src/main/
       ├─ AndroidManifest.xml       leanback + 双入口 + banner
       ├─ res/raw/                  9 张占位图：wall_aurora / wall_sunset / wall_ocean / wall_forest / wall_mono / wall_candy / video_mountain / video_city / video_family

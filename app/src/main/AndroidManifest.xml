@@ -7,12 +7,28 @@
     <!-- 在线更新：下载完 APK 后调起系统安装界面（targetSdk 34 必须声明） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
-    <!-- Android TV: leanback required, touchscreen not required, no always-on landscape -->
+    <!--
+      leanback 声明为「可选」而不是「必需」：
+       - Android TV / Google TV 仍然通过 LEANBACK_LAUNCHER 正常进入，横屏 D-Pad 交互不变；
+       - 不少国产 Android 7.x 电视盒子 / 老平板并不实现 android.software.leanback 特性，
+         required=true 会让应用市场和部分安装器直接过滤掉安装包（用户反馈「装不上 7.0」的主因）。
+         minSdk 24 已覆盖 Android 7.0/7.1，这里放开特性声明即可兼容这类设备。
+      touchscreen 同样非必需（遥控器操作）。
+    -->
     <uses-feature
         android:name="android.software.leanback"
-        android:required="true" />
+        android:required="false" />
     <uses-feature
         android:name="android.hardware.touchscreen"
+        android:required="false" />
+    <!--
+      Activity 是 landscape，aapt 会自动推导出一个 required 的
+      android.hardware.screen.landscape 特性并过滤掉竖屏设备。
+      显式声明为非必需，让老平板 / 手机类 Android 7.x 设备也能安装；
+      运行时仍由 screenOrientation="landscape" 强制横屏。
+    -->
+    <uses-feature
+        android:name="android.hardware.screen.landscape"
         android:required="false" />
 
     <application

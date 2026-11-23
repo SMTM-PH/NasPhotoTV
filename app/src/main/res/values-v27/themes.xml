@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      windowLayoutInDisplayCutoutMode 是 API 27（Android 8.1）新增属性。
+      放在 values-v27 后，API 24/25/26 只会加载 values/ 下的基础主题，
+      不会再解析这个属性 —— 这是 Android 7.x 兼容的关键。
+    -->
+    <style name="Theme.NasPhotoTV" parent="Theme.NasPhotoTV.Base">
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

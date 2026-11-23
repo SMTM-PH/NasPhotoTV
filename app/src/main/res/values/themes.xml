@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.NasPhotoTV" parent="@android:style/Theme.Material.NoActionBar">
+    <!--
+      基础主题不含任何 API 26+ 属性，Android 7.0 / 7.1（API 24/25）可直接解析。
+      API 27 才有的刘海屏属性放到 values-v27/themes.xml，避免低版本解析到
+      未定义的 android 属性（部分厂商定制系统会因属性 id 冲突在 inflate 主题时报错）。
+    -->
+    <style name="Theme.NasPhotoTV.Base" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>
     </style>
+
+    <style name="Theme.NasPhotoTV" parent="Theme.NasPhotoTV.Base" />
 </resources>
