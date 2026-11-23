@@ -90,13 +90,16 @@ internal fun ImmersiveHome(
     onZoneChange: (HomeFocusZone) -> Unit,
     onOpenCollection: (HomeCollection) -> Unit,
     onPlayCollection: (HomeCollection) -> Unit,
-    onConfigureDisplay: () -> Unit,
     onOpenAlbumsTab: () -> Unit,
     contentFocus: PendingFocus,
     onUpToTopBar: () -> Unit,
+    loading: Boolean = false,
+    error: String? = null,
 ) {
     if (collections.isEmpty()) {
-        EmptyImmersiveHome(onConfigureDisplay, contentFocus, onUpToTopBar)
+        EmptyImmersiveHome(
+            onOpenAlbumsTab, contentFocus, onUpToTopBar, loading, error,
+        )
         return
     }
     val safeIndex = selectedIndex.coerceIn(0, collections.lastIndex)
@@ -282,15 +285,28 @@ private fun CinemaAction(
 }
 
 @Composable
-private fun EmptyImmersiveHome(onOpenAlbums: () -> Unit, contentFocus: PendingFocus, onUp: () -> Unit) {
+private fun EmptyImmersiveHome(
+    onOpenAlbums: () -> Unit,
+    contentFocus: PendingFocus,
+    onUp: () -> Unit,
+    loading: Boolean,
+    error: String?,
+) {
     val requester = remember { FocusRequester() }
     ConsumeBlockRequest(contentFocus, BLOCK_CONTENT) { requester }
     Column(Modifier.fillMaxSize().padding(TvDimen.ScreenPadding),
         verticalArrangement = Arrangement.Center) {
-        Text("还没有可展示的智能分类", color = TvColor.TextPrimary, fontSize = TvType.Display)
+        val title = when {
+            loading -> "正在读取回忆…"
+            error != null -> "暂时无法读取回忆"
+            else -> "还没有可展示的智能分类"
+        }
+        Text(title, color = TvColor.TextPrimary, fontSize = TvType.Display)
         Spacer(Modifier.height(TvDimen.SpaceS))
-        Text("请在飞牛相册中开启 AI 识别并等待分析完成，识别出的事物与场景会自动出现在这里。",
-            color = TvColor.TextSecondary, fontSize = TvType.Body)
+        Text(
+            error ?: if (loading) "也可以先浏览图库或相册。" else "请在飞牛相册中开启 AI 识别，识别结果会自动出现在这里。",
+            color = TvColor.TextSecondary, fontSize = TvType.Body,
+        )
         Spacer(Modifier.height(TvDimen.SpaceM))
         CinemaAction("浏览相册", Icons.Outlined.Collections, true, requester,
             onOpenAlbums, {}, onUp, {})

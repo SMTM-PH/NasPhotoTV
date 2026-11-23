@@ -322,6 +322,8 @@ object SettingsStore {
         e.putBoolean("ss_enabled", screensaver.enabled)
         e.putInt("ss_idle", screensaver.idleTimeoutSec)
         e.putInt("ss_interval", screensaver.photoIntervalSec)
+        e.putInt("slideshow_interval", screensaver.slideshowIntervalSec)
+        e.putString("slideshow_transition", screensaver.slideshowTransition.name)
         e.putString("ss_clock", screensaver.clockStyle.name)
         e.putString("ss_bg", screensaver.background.name)
         e.putString("ss_mode", screensaver.mode.name)
@@ -379,6 +381,10 @@ object SettingsStore {
             enabled = p.getBoolean("ss_enabled", defaultScreensaver.enabled),
             idleTimeoutSec = p.getInt("ss_idle", 60),
             photoIntervalSec = p.getInt("ss_interval", 10),
+            slideshowIntervalSec = p.getInt("slideshow_interval", 5).coerceIn(3, 30),
+            slideshowTransition = enumOrDefault(
+                p.getString("slideshow_transition", null), ScreensaverSettings.SlideshowTransition.SHOWCASE,
+            ),
             clockStyle = enumOrDefault(p.getString("ss_clock", null), ScreensaverSettings.ClockStyle.CINEMA),
             background = enumOrDefault(p.getString("ss_bg", null), ScreensaverSettings.BackgroundStyle.PHOTO),
             mode = enumOrDefault(p.getString("ss_mode", null), ScreensaverSettings.Mode.CLOCK),

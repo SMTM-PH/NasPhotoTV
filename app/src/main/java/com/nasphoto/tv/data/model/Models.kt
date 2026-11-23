@@ -341,7 +341,15 @@ data class ScreensaverSettings(
     val displayOwnerAccountId: String = "",
     /** 仅这些相册可用于首页回忆与自动屏保，不能从旧轮播来源推断授权。 */
     val displayAlbumIds: Set<String> = emptySet(),
+    val slideshowIntervalSec: Int = 5,
+    val slideshowTransition: SlideshowTransition = SlideshowTransition.SHOWCASE,
 ) {
+    enum class SlideshowTransition(val label: String) {
+        SHOWCASE("叠化并缓慢推近"),
+        DISSOLVE("叠化"),
+        CUT("直接切换"),
+    }
+
     enum class Mode(val label: String) {
         CLOCK("时钟待机"),
         PHOTO_ONLY("纯照片"),

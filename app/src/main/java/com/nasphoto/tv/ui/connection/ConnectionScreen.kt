@@ -64,6 +64,7 @@ fun ConnectionScreen(
     onRetry: () -> Unit,
     onSelectNas: (LanNasDevice) -> Unit,
     modifier: Modifier = Modifier,
+    onManualSetup: () -> Unit = onOpenSettings,
 ) {
     val primaryFocus = remember { FocusRequester() }
     val firstDeviceFocus = remember { FocusRequester() }
@@ -143,6 +144,13 @@ fun ConnectionScreen(
                         color = TvColor.Accent,
                         strokeWidth = 3.dp,
                     )
+                    Spacer(Modifier.height(TvDimen.SpaceM))
+                    ActionButton(
+                        label = "打开设置",
+                        primary = false,
+                        onClick = onOpenSettings,
+                        focusRequester = primaryFocus,
+                    )
                 }
 
                 ConnectionMode.NeedsSetup -> {
@@ -153,7 +161,7 @@ fun ConnectionScreen(
                     )
                     Spacer(Modifier.height(TvDimen.SpaceXs))
                     Text(
-                        text = "保持电视和 NAS 在同一局域网会自动搜索；外网可填反代/中转地址（设置里填完整 URL）。",
+                        text = "保持电视和 NAS 在同一局域网会自动搜索，也可手动连接。",
                         fontSize = TvType.Caption,
                         color = TvColor.TextTertiary,
                     )
@@ -175,11 +183,12 @@ fun ConnectionScreen(
                             )
                         }
                         ActionButton(
-                            label = "打开设置",
+                            label = "手动连接",
                             primary = scan is NasScan.None,
                             focusRequester = primaryFocus,
-                            onClick = onOpenSettings,
+                            onClick = onManualSetup,
                         )
+                        ActionButton("设置", primary = false, onClick = onOpenSettings)
                     }
                 }
 
@@ -277,7 +286,7 @@ private fun LanDiscoverySection(
             )
             Spacer(Modifier.height(TvDimen.SpaceXs))
             Text(
-                text = "确认电视和 NAS 在同一网络；外网访问请在设置里填完整的中转 URL（含协议与子路径）。",
+                text = "确认电视和 NAS 在同一网络；外网访问可手动填写完整 URL。",
                 fontSize = TvType.Tiny,
                 color = TvColor.TextTertiary,
             )

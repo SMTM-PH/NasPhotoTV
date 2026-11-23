@@ -131,12 +131,14 @@ fun LibraryScreen(
     val folderReturnIndices = remember { HashMap<String, Int>() }
 
     // 派生数据（全部空安全）
-    val allItems = remember(state) { allPhotos(state) }
+    val allItems = remember(state.recent, state.albums, state.mediaByAlbum) { allPhotos(state) }
     // 首页固定展示飞牛 AI 场景/事物分类；文件夹相册仍在「相册」Tab。
-    val collections = remember(state) { homeCollections(state) }
+    val collections = remember(state.smartAlbums) { homeCollections(state) }
     val featuredIndex = collections.indexOfFirst { it.id == featuredMediaId }.coerceAtLeast(0)
     val featuredItem = collections.getOrNull(featuredIndex)?.cover
-    val favorites = remember(state, FavoritesStore.ids) { favoriteItems(state) }
+    val favorites = remember(state.recent, state.albums, state.mediaByAlbum, FavoritesStore.ids) {
+        favoriteItems(state)
+    }
     val openedAlbum = openedAlbumId?.let { id ->
         state.albums.firstOrNull { it.id == id } ?: state.folders.firstOrNull { it.id == id }
     }
@@ -268,8 +270,10 @@ fun LibraryScreen(
         Box(Modifier.weight(1f).fillMaxWidth()) {
         // 有照片列表才算「有库」；但要给人物留一条活路 —— 相册接口失败而人脸结果已到时，
         // 整个页面被空状态盖掉，人物 Tab 就永远进不去了。
-        val isEmptyLibrary = state.recent.isEmpty() && state.albums.isEmpty() &&
-                state.people.isEmpty() && state.smartAlbums.isEmpty()
+        val isEmptyLibrary = !state.timelineLoading && state.timelineError == null && state.albumsLoaded && state.albumsError == null &&
+                state.smartAlbumsLoaded && state.peopleLoaded && state.foldersLoaded &&
+                state.recent.isEmpty() && state.albums.isEmpty() &&
+                state.people.isEmpty() && state.smartAlbums.isEmpty() && state.folders.isEmpty()
         when {
                 isEmptyLibrary -> LibraryEmptyState(onOpenSettings = { onNavigate(AppRoute.Settings) })
 
@@ -282,6 +286,7 @@ fun LibraryScreen(
                     onOpenPhoto = onOpenPhoto,
                     onOpenVideo = onOpenVideo,
                     onLoadMedia = onLoadSmartAlbumMedia,
+                    onPlaySlideshow = onPlaySlideshow,
             )
 
             openedAlbum != null -> AlbumDetailPane(
@@ -295,6 +300,7 @@ fun LibraryScreen(
                 onOpenPhoto = onOpenPhoto,
                 onOpenVideo = onOpenVideo,
                 onLoadMedia = onLoadAlbumMedia,
+                onPlaySlideshow = onPlaySlideshow,
             )
 
             openedPerson != null -> PersonDetailPane(
@@ -312,6 +318,8 @@ fun LibraryScreen(
             else -> when (selectedTab) {
                 LibraryTab.ALL -> ImmersiveHome(
                     collections = collections,
+                    loading = !state.smartAlbumsLoaded,
+                    error = state.smartAlbumsError,
                     selectedIndex = featuredIndex,
                     onSelect = { featuredMediaId = it.id },
                     lastZone = homeFocusZone,
@@ -332,14 +340,18 @@ fun LibraryScreen(
                             }
                         }
                     },
-                    onConfigureDisplay = { onNavigate(AppRoute.Settings) },
-                    onOpenAlbumsTab = { selectedTab = LibraryTab.ALBUMS },
+                    onOpenAlbumsTab = {
+                        selectedTab = LibraryTab.ALBUMS
+                        contentFocus.requestBlock(BLOCK_CONTENT)
+                    },
                     contentFocus = contentFocus,
                     onUpToTopBar = { topFocus.request(tabRequesters.getOrNull(topLevelTab(selectedTab).ordinal)) },
                 )
 
                 LibraryTab.CHRONO -> ChronologyTab(
                     allItems = allItems,
+                    loading = state.timelineLoading,
+                    error = state.timelineError,
                     onOpenPhoto = onOpenPhoto,
                     onOpenVideo = onOpenVideo,
                     contentFocus = contentFocus,
@@ -460,6 +472,8 @@ private fun ChronologyTab(
     onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
     contentFocus: PendingFocus,
+    loading: Boolean,
+    error: String?,
 ) {
     var yearKey by rememberSaveable { mutableStateOf<String?>(null) }
     var monthKey by rememberSaveable { mutableStateOf<String?>(null) }
@@ -483,6 +497,10 @@ private fun ChronologyTab(
     BackHandler(enabled = monthBucket != null) { backToMonths() }
     BackHandler(enabled = monthBucket == null && yearBucket != null) { backToYears() }
 
+    var jumpOpen by remember { mutableStateOf(false) }
+    var jumpError by remember { mutableStateOf<String?>(null) }
+    val jumpAction: () -> Unit = { jumpOpen = true; jumpError = null }
+
     val yearTitle = yearBucket?.title.orEmpty()
 
     when {
@@ -503,6 +521,7 @@ private fun ChronologyTab(
             emptyText = "这一年没有能显示的照片",
             innerFocus = innerFocus,
             topFocus = contentFocus,
+            onJump = jumpAction,
             onPick = {
                 monthKey = it.key
                 innerFocus.requestBlock(BLOCK_CONTENT)
@@ -511,14 +530,15 @@ private fun ChronologyTab(
 
         allItems.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             EmptyState(
-                title = "时间线还没有照片",
+                title = if (loading) "正在读取时间线…" else error ?: "时间线还没有照片",
                 subtitle = "NAS 里的照片会自动按年、月归好",
             )
         }
 
         else -> ChronoGrid(
             heading = "按时间浏览",
-            trailing = "${years.size} 个年份 · ${allItems.size} 项",
+            trailing = jumpError ?: error ?: if (loading) "正在读取完整图库…" else "${years.size} 个年份 · ${allItems.size} 项",
+            onJump = jumpAction,
             buckets = years,
             emptyText = "还没有能按时间归类的照片",
             innerFocus = innerFocus,
@@ -526,6 +546,36 @@ private fun ChronologyTab(
             topFocus = contentFocus,
             onPick = {
                 yearKey = it.key
+                innerFocus.requestBlock(BLOCK_CONTENT)
+            },
+        )
+    }
+    if (jumpOpen) {
+        com.nasphoto.tv.ui.settings.TextEntryOverlay(
+            title = "跳到年月",
+            subtitle = "输入 4 位年份或 6 位年月，例如 2026 或 202611",
+            masked = false,
+            initial = "",
+            numericOnly = true,
+            maxLength = 6,
+            emptyHint = "请输入年份或年月",
+            onCancel = { jumpOpen = false; innerFocus.requestBlock(BLOCK_CONTENT) },
+            onDone = { input ->
+                val year = years.firstOrNull { it.title == input.take(4) }
+                val month = if (input.length == 6) {
+                    chronoMonths(year?.items.orEmpty()).firstOrNull {
+                        it.items.firstOrNull()?.dateTaken?.monthValue == input.takeLast(2).toIntOrNull()
+                    }
+                } else null
+                if (year != null && (input.length == 4 || month != null)) {
+                    yearKey = year.key
+                    monthKey = month?.key
+                } else {
+                    jumpError = if (loading) "图库仍在读取，稍后再试" else "这个年月没有照片，请检查输入"
+                    monthKey = null
+                    yearKey = null
+                }
+                jumpOpen = false
                 innerFocus.requestBlock(BLOCK_CONTENT)
             },
         )
@@ -542,11 +592,13 @@ private fun ChronoGrid(
     innerFocus: PendingFocus,
     onPick: (ChronoBucket) -> Unit,
     topFocus: PendingFocus? = null,
+    onJump: (() -> Unit)? = null,
 ) {
     val gridState = rememberLazyGridState()
     val requesters = remember { mutableListOf<FocusRequester>() }
     var focusedIndex by remember { mutableIntStateOf(0) }
     val columns = CHRONO_GRID_COLUMNS
+    val jumpRequester = remember { FocusRequester() }
     val firstCell = { buckets.firstOrNull()?.let { requesterAt(requesters, 0) } }
 
     ConsumeBlockRequest(innerFocus, BLOCK_CONTENT, blockFallback = firstCell)
@@ -557,11 +609,19 @@ private fun ChronoGrid(
     LaunchedEffect(focusedIndex) { scrollGridTo(gridState, focusedIndex, columns, gridBottomInset) }
 
     Column(Modifier.fillMaxSize()) {
-        SectionHeader(
-            title = heading,
-            trailing = trailing,
-            modifier = Modifier.padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceM),
-        )
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceM),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM),
+        ) {
+            SectionHeader(title = heading, trailing = trailing, modifier = Modifier.weight(1f))
+            if (onJump != null) DetailAction(
+                "跳到年月",
+                focusRequester = jumpRequester,
+                modifier = Modifier.verticalNav(onDown = { innerFocus.request(firstCell()) }),
+                onClick = onJump,
+            )
+        }
         if (buckets.isEmpty()) {
             EmptyState(title = emptyText, subtitle = "", modifier = Modifier.fillMaxSize())
         } else {
@@ -580,6 +640,9 @@ private fun ChronoGrid(
                         height = CHRONO_CELL_H,
                         focusRequester = requesterAt(requesters, index),
                         onClick = { onPick(bucket) },
+                        onUp = if (onJump != null && index < columns) {
+                            { innerFocus.request(jumpRequester) }
+                        } else null,
                         onFocusChanged = { focused ->
                             if (focused) focusedIndex = index
                         },
@@ -781,7 +844,7 @@ private fun AlbumsTab(
         )
         if (albums.isEmpty()) {
             EmptyState(
-                title = "还没有相册",
+                title = state.albumsError ?: if (state.albumsLoaded) "还没有相册" else "正在读取相册…",
                 subtitle = "NAS 上的 /photo 目录为空，或仍在扫描",
                 modifier = Modifier.fillMaxSize(),
                 icon = Icons.Outlined.Album,
@@ -1169,6 +1232,7 @@ private fun AlbumDetailPane(
     onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
     onLoadMedia: suspend (String) -> List<MediaItem>?,
+    onPlaySlideshow: ((List<MediaItem>, Int, String) -> Unit)? = null,
 ) {
     // 相册详情改为按需加载：启动时不再预取每个相册的全部媒体。
     // 大相册会分页拉全，几万条 MediaItem 常驻 Java 堆会挤压视频解码缓冲区。
@@ -1177,6 +1241,7 @@ private fun AlbumDetailPane(
         stateKey = "album:${album.id}",
         title = album.name,
         contextTitle = album.name,
+        onPlaySlideshow = onPlaySlideshow,
         loadingText = "正在加载「${album.name}」中的照片与视频…",
         emptyCount = "空文件夹",
         failureTitle = "读取这个相册失败了",
@@ -1200,12 +1265,14 @@ private fun SmartCategoryDetailPane(
     onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
     onLoadMedia: suspend (String) -> List<MediaItem>?,
+    onPlaySlideshow: ((List<MediaItem>, Int, String) -> Unit)? = null,
 ) {
     RemoteMediaDetailPane(
         requestId = album.id,
         stateKey = "smart-category:${album.id}",
         title = album.name,
         contextTitle = "智能分类 · ${album.name}",
+        onPlaySlideshow = onPlaySlideshow,
         loadingText = "正在加载「${album.name}」中的照片与视频…",
         emptyCount = "暂无照片或视频",
         failureTitle = "读取这个智能分类失败了",
@@ -1241,6 +1308,7 @@ private fun RemoteMediaDetailPane(
     onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
     onLoadMedia: suspend (String) -> List<MediaItem>?,
+    onPlaySlideshow: ((List<MediaItem>, Int, String) -> Unit)? = null,
 ) {
     var mediaState by remember(stateKey) { mutableStateOf<DetailMedia>(DetailMedia.Loading) }
     val columns = MEDIA_GRID_COLUMNS
@@ -1249,9 +1317,12 @@ private fun RemoteMediaDetailPane(
         initialFirstVisibleItemIndex = (focusedIndex / columns) * columns,
     )
     val backRequester = remember { FocusRequester() }
+    val playRequester = remember { FocusRequester() }
     val requesters = remember { mutableListOf<FocusRequester>() }
     val innerFocus = remember { PendingFocus() }
     val readyItems = (mediaState as? DetailMedia.Ready)?.items.orEmpty()
+    val photos = remember(readyItems) { readyItems.filter { it.type == MediaType.PHOTO } }
+    val canPlay = onPlaySlideshow != null && photos.isNotEmpty()
 
     LaunchedEffect(stateKey) {
         mediaState = DetailMedia.Loading
@@ -1289,6 +1360,10 @@ private fun RemoteMediaDetailPane(
                 DetailMedia.Empty -> emptyCount
                 is DetailMedia.Ready -> countText(readyItems)
             },
+            playRequester = playRequester.takeIf { canPlay },
+            playAction = if (canPlay) {
+                { onPlaySlideshow(photos, 0, contextTitle) }
+            } else null,
             backFocusRequester = backRequester,
             onBack = onBack,
             onBackFocusChanged = { },
@@ -1319,7 +1394,7 @@ private fun RemoteMediaDetailPane(
                 requesters = requesters,
                 focusedIndex = focusedIndex,
                 onFocused = { focusedIndex = it },
-                onFirstRowUp = { innerFocus.request(backRequester) },
+                onFirstRowUp = { innerFocus.request(if (canPlay) playRequester else backRequester) },
                 onClick = { _, item ->
                     openMedia(item, readyItems, contextTitle, onOpenPhoto, onOpenVideo)
                 },

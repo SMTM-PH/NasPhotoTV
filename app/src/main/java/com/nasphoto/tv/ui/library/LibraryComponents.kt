@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -535,6 +536,8 @@ fun AlbumDetailHeader(
     onBackFocusChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     onDown: () -> Unit = {},
+    playAction: (() -> Unit)? = null,
+    playRequester: FocusRequester? = null,
 ) {
     Row(
         modifier
@@ -549,6 +552,7 @@ fun AlbumDetailHeader(
             onFocusChanged = onBackFocusChanged,
             onConfirm = onBack,
             modifier = Modifier
+                .focusProperties { if (playRequester != null) right = playRequester }
                 .clip(CircleShape)
                 .background(TvColor.Surface)
                 .verticalNav(onDown = onDown)
@@ -583,10 +587,43 @@ fun AlbumDetailHeader(
             fontSize = TvType.Caption,
             maxLines = 1,
         )
+        if (playAction != null) {
+            Spacer(Modifier.weight(1f, fill = true))
+            DetailAction(
+                "播放此相册",
+                focusRequester = playRequester,
+                modifier = Modifier
+                    .focusProperties { if (backFocusRequester != null) left = backFocusRequester }
+                    .verticalNav(onDown = onDown),
+                onClick = playAction,
+            )
+        }
     }
 }
 
 /** 一格「打开文件夹」卡片（相机卷风格），用于首页相册行的末尾 */
+@Composable
+internal fun DetailAction(
+    label: String,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+    onClick: () -> Unit,
+) {
+    TvFocusBox(
+        modifier = modifier.background(TvColor.Surface, RoundedCornerShape(12.dp)),
+        focusRequester = focusRequester,
+        cornerRadiusDp = 12,
+        onConfirm = onClick,
+    ) { focused ->
+        Text(
+            label,
+            color = if (focused) TvColor.Accent else TvColor.TextPrimary,
+            fontSize = TvType.Caption,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+        )
+    }
+}
+
 @Composable
 fun OpenFolderCard(
     width: Int,

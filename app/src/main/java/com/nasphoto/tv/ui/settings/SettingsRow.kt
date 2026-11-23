@@ -240,6 +240,8 @@ fun rowValueText(key: SettingsKey, store: SettingsStore, feedback: SettingsFeedb
             .firstOrNull { it.id == s.albumId && it.id in store.displayAlbumIds }?.name
             ?: "未选择展示相册"
         SettingsKey.SS_INTERVAL -> SettingsStore.formatInterval(s.photoIntervalSec)
+        SettingsKey.SS_SLIDESHOW_INTERVAL -> SettingsStore.formatInterval(s.slideshowIntervalSec)
+        SettingsKey.SS_SLIDESHOW_TRANSITION -> s.slideshowTransition.label
         SettingsKey.SS_CLOCK -> s.clockStyle.label
         SettingsKey.SS_BACKGROUND -> s.background.label
         SettingsKey.SS_MUSIC -> {

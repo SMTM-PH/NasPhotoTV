@@ -9,6 +9,7 @@ import com.nasphoto.tv.data.model.Person
  */
 sealed interface AppRoute {
     data object Library : AppRoute
+    data object Setup : AppRoute
     data object Settings : AppRoute
     data object ScreensaverPreview : AppRoute
 }
@@ -44,6 +45,11 @@ data class LibraryState(
     val smartAlbumsError: String? = null,
     /** Account that owns this snapshot; presentation scope must never cross accounts. */
     val ownerAccountId: String = "",
+    val timelineLoading: Boolean = false,
+    val timelineError: String? = null,
+    val albumsLoaded: Boolean = true,
+    val albumsError: String? = null,
+    val smartAlbumsLoaded: Boolean = true,
 )
 
 /**

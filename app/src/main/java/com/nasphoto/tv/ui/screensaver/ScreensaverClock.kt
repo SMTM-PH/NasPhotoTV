@@ -17,6 +17,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -45,6 +46,7 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -484,13 +486,6 @@ private fun RowScope.DayCell(day: Int?, today: Boolean) {
 // 5. CINEMA 巨幕时钟：对标 Apple TV 航拍屏保 / iPhone 待机显示
 // ---------------------------------------------------------------------------
 
-/** 堆叠构图两行数字的字号（行高压到 0.8，两行才咬得紧） */
-private val CinemaStackedSize = 210.sp
-private val CinemaStackedLine = 168.sp
-
-/** 整行构图的字号：铺满画面中段，细到几乎发光 */
-private val CinemaInlineSize = 260.sp
-
 /**
  * 巨幕时钟：构图随照片轮换（Apple TV 屏保也会为防烧屏移动时钟位置）。
  *
@@ -517,63 +512,55 @@ fun CinemaClock(
             animationSpec = tween(900, easing = FastOutSlowInEasing),
             label = "cinemaLayout",
         ) { stacked ->
-            Box(Modifier.fillMaxSize()) {
-                if (stacked) {
-                    Column(
-                        Modifier
-                            .align(Alignment.TopStart)
-                            .padding(start = TvDimen.ScreenPadding, top = 24.dp),
-                    ) {
-                        Text(text = parts.hour, style = cinemaStackedStyle())
-                        Text(text = parts.minute, style = cinemaStackedStyle())
-                        if (showDate) {
-                            Spacer(Modifier.height(TvDimen.SpaceM))
-                            CinemaCaption(dateLine)
+            Column(
+                Modifier.fillMaxSize().padding(
+                    start = TvDimen.ScreenPadding,
+                    end = TvDimen.ScreenPadding,
+                    top = 24.dp,
+                    bottom = 84.dp,
+                ),
+                horizontalAlignment = if (stacked) Alignment.Start else Alignment.CenterHorizontally,
+            ) {
+                BoxWithConstraints(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = if (stacked) Alignment.CenterStart else Alignment.Center,
+                ) {
+                    val density = LocalDensity.current
+                    if (stacked) {
+                        val size = with(density) { minOf(maxHeight * 0.41f, 210.dp).toSp() }
+                        Column {
+                            Text(parts.hour, style = cinemaStackedStyle(size), maxLines = 1)
+                            Text(parts.minute, style = cinemaStackedStyle(size), maxLines = 1)
                         }
-                    }
-                } else {
-                    Column(
-                        Modifier
-                            .align(Alignment.Center)
-                            .padding(bottom = 40.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(text = parts.hour, style = cinemaInlineStyle())
-                            Text(
-                                text = ":",
-                                style = cinemaInlineStyle().copy(color = TimeWhite.copy(alpha = 0.58f)),
-                            )
-                            Text(text = parts.minute, style = cinemaInlineStyle())
-                        }
-                        if (showDate) {
-                            Spacer(Modifier.height(TvDimen.SpaceXs))
-                            CinemaCaption(dateLine)
-                        }
+                    } else {
+                        val size = with(density) { minOf(maxWidth / 3.4f, maxHeight * 0.8f, 260.dp).toSp() }
+                        val style = cinemaInlineStyle(size)
+                        Text("${parts.hour}:${parts.minute}", style = style, maxLines = 1)
                     }
                 }
+                if (showDate) CinemaCaption(dateLine)
             }
         }
     }
 }
 
 /** 数字共用字形：极细 + 紧行高 + 等宽 + 柔和投影 */
-private fun cinemaStackedStyle(): TextStyle = TextStyle(
-    fontSize = CinemaStackedSize,
+private fun cinemaStackedStyle(size: TextUnit): TextStyle = TextStyle(
+    fontSize = size,
     fontWeight = FontWeight.Thin,
     color = TimeWhite.copy(alpha = 0.94f),
     letterSpacing = (-6).sp,
-    lineHeight = CinemaStackedLine,
+    lineHeight = size,
     fontFeatureSettings = "tnum",
     shadow = softTextShadow(46f, 10f),
 )
 
-private fun cinemaInlineStyle(): TextStyle = TextStyle(
-    fontSize = CinemaInlineSize,
+private fun cinemaInlineStyle(size: TextUnit): TextStyle = TextStyle(
+    fontSize = size,
     fontWeight = FontWeight.Thin,
     color = TimeWhite.copy(alpha = 0.94f),
     letterSpacing = (-8).sp,
-    lineHeight = CinemaInlineSize,
+    lineHeight = size,
     fontFeatureSettings = "tnum",
     shadow = softTextShadow(52f, 12f),
 )

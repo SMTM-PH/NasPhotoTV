@@ -52,6 +52,7 @@ class NasAddressTest {
     fun unsupportedSchemeAndBadPortAreRejected() {
         assertFalse(NasAddressParser.parse("ftp://nas.example.com").valid)
         assertFalse(NasAddressParser.parse("https://nas.example.com:99999").valid)
+        assertFalse(NasAddressParser.parse("https://nas.example.com:99999999999999999999").valid)
         assertFalse(NasAddressParser.parse("https://").valid)
     }
 

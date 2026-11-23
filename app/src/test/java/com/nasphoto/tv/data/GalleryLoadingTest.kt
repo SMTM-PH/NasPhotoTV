@@ -148,6 +148,7 @@ class GalleryLoadingTest {
             calls++
             assertEquals(LIST, path)
             assertEquals("index", params["mode"])
+            assertEquals("1", params["limit"])
             page(listOf(item(1, "2026-01-01"), item(2, "2025-01-01")))
         }
         assertEquals(listOf("1"), gallery.getRecent(1).map { it.id })

@@ -84,7 +84,7 @@ object NasAddressParser {
                 val maybePort = authority.substring(colon + 1)
                 // 只有":"后面全是数字才当端口；否则按裸 IPv6 / 非法字符处理
                 if (maybePort.isNotEmpty() && maybePort.all { it.isDigit() }) {
-                    val value = maybePort.toInt()
+                    val value = maybePort.toIntOrNull() ?: return invalid("端口超出 1–65535")
                     if (value !in 1..65535) return invalid("端口超出 1–65535")
                     host = authority.substring(0, colon)
                     port = value
