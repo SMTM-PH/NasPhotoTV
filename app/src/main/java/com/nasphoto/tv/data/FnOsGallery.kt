@@ -91,7 +91,7 @@ internal class FnOsGallery(
                 listOf(
                     "start_time" to "${start.format(API_DATE)} 00:00:00",
                     "end_time" to "${end.format(API_DATE)} 23:59:59",
-                    "limit" to PAGE_SIZE.toString(),
+                    "limit" to minOf(PAGE_SIZE, requestedLimit).toString(),
                     "offset" to offset.toString(),
                     "mode" to "index",
                 ),

@@ -88,6 +88,7 @@ fun SettingsScreen(
     onOpenLibrary: () -> Unit,
     modifier: Modifier = Modifier,
     screensaverPhotos: List<MediaItem> = emptyList(),
+    onRefreshLibrary: () -> Unit = onClose,
 ) {
     val feedback = remember { SettingsFeedback() }
     val scope = rememberCoroutineScope()
@@ -158,7 +159,7 @@ fun SettingsScreen(
                 SettingsKey.NAS_REFRESH -> {
                     // 回媒体库会触发外壳重新拉取时间线与相册
                     feedback.toast = "正在刷新媒体库…"
-                    onClose()
+                    onRefreshLibrary()
                 }
                 SettingsKey.ABOUT_UPDATE -> {
                     val ctx = com.nasphoto.tv.data.AppContextHolder.context
@@ -631,6 +632,8 @@ private fun stepAction(key: SettingsKey, actions: SettingsActions): ((Boolean) -
     SettingsKey.SS_SOURCE -> { _ -> actions.cycleSource() }
     SettingsKey.SS_ALBUM -> { _ -> actions.cycleAlbum() }
     SettingsKey.SS_INTERVAL -> { _ -> actions.cyclePhotoInterval() }
+    SettingsKey.SS_SLIDESHOW_INTERVAL -> { left -> actions.cycleSlideshowInterval(left) }
+    SettingsKey.SS_SLIDESHOW_TRANSITION -> { left -> actions.cycleSlideshowTransition(left) }
     SettingsKey.SS_CLOCK -> { _ -> actions.cycleClockStyle() }
     SettingsKey.SS_BACKGROUND -> { _ -> actions.cycleBackground() }
     SettingsKey.SS_DATE -> { _ -> actions.toggleDate() }

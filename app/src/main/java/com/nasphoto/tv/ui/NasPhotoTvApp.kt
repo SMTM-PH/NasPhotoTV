@@ -35,17 +35,18 @@ import com.nasphoto.tv.data.FavoritesStore
 import com.nasphoto.tv.data.FnOsMediaRepository
 import com.nasphoto.tv.data.MediaCache
 import com.nasphoto.tv.data.SettingsStore
+import com.nasphoto.tv.data.fn.FnOsStats
 import com.nasphoto.tv.data.fn.FnOsTransport
 import com.nasphoto.tv.data.fn.FnOsTwoFactorChallenge
 import com.nasphoto.tv.data.fn.FnOsTwoFactorRequired
 import com.nasphoto.tv.data.fn.LanNasDevice
-import com.nasphoto.tv.data.model.Album
+import com.nasphoto.tv.data.model.NasConnection
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
-import com.nasphoto.tv.data.model.Person
 import com.nasphoto.tv.data.model.ScreensaverSettings
 import com.nasphoto.tv.ui.connection.ConnectionMode
 import com.nasphoto.tv.ui.connection.ConnectionScreen
+import com.nasphoto.tv.ui.connection.NasSetupScreen
 import com.nasphoto.tv.ui.library.LibraryScreen
 import com.nasphoto.tv.ui.library.folderAlbum
 import com.nasphoto.tv.ui.common.NasImageLoader
@@ -76,6 +77,7 @@ import kotlinx.coroutines.launch
 fun NasPhotoTvApp() {
     NasPhotoTvTheme {
         var route by remember { mutableStateOf<AppRoute>(AppRoute.Library) }
+        var setupDraft by remember { mutableStateOf<NasConnection?>(null) }
         var viewer by remember { mutableStateOf<ViewerRequest?>(null) }
         var player by remember { mutableStateOf<PlayerRequest?>(null) }
 
@@ -148,118 +150,103 @@ fun NasPhotoTvApp() {
             FavoritesStore.load(activeAccountId)
         }
 
-        LaunchedEffect(identityKey, repository, refreshToken, route) {
-            if (route != AppRoute.Library) return@LaunchedEffect
+        var libraryStats by remember(identityKey) { mutableStateOf<FnOsStats?>(null) }
+        var libraryOpened by remember(identityKey) { mutableStateOf(false) }
+        val canLoadLibrary = libraryOpened || route == AppRoute.Library
+        LaunchedEffect(identityKey, repository, refreshToken, canLoadLibrary) {
+            if (!canLoadLibrary) return@LaunchedEffect
+            libraryOpened = true
             if (repository == null) {
                 MediaCache.clear()
                 SettingsStore.updateNas { it.copy(connected = false) }
                 loadState = LibraryLoad.NeedsSetup
                 return@LaunchedEffect
             }
-            loadState = LibraryLoad.Loading
-            try {
-                // 图库与「最近添加」共用媒体池；按服务端时间线读取完整范围，
-                // 不能按开发机样本数量截断，否则大照片库会再次丢失旧年份。
-                val recent = repository.getRecent(FULL_LIBRARY_LIMIT)
-                val albums = repository.getAlbums()
-                // 相册媒体改为进入详情时按需加载（见 LibraryScreen.onLoadAlbumMedia）。
-                // 启动时只补拉「客厅展示」授权的那几个相册，供屏保使用；
-                // 智能分类、人物、屏保池、统计并行请求，首屏不再串行等几十个大相册。
-                var smartAlbumsError: String? = null
-                val approvedAlbumIds = SettingsStore.displayAlbumIds
-                val optional = coroutineScope {
-                    val screensaverDeferred = async {
-                        runCatching { repository.getScreensaverPhotos() }.getOrDefault(emptyList())
-                    }
-                    val peopleDeferred = async {
-                        // 人物列表：NAS 没开 AI 相册时接口会失败或返回空，不能让它拖垮整个媒体库
-                        runCatching { repository.getPeople() }.getOrDefault(emptyList())
-                    }
-                    val smartDeferred = async {
-                        try {
-                            repository.getSmartAlbums()
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Exception) {
-                            smartAlbumsError = "智能分类暂时无法读取 · 请检查飞牛相册的智能识别状态后重试"
-                            emptyList()
-                        }
-                    }
-                    val statsDeferred = async {
-                        runCatching { repository.stats() }.getOrNull()
-                    }
-                    val approvedDeferred = async {
-                        val ids = approvedAlbumIds.intersect(albums.map { it.id }.toSet())
-                        ids.map { id ->
-                            async {
-                                id to runCatching { repository.getMedia(id) }.getOrDefault(emptyList())
-                            }
-                        }.awaitAll().toMap()
-                    }
-                    OptionalLibraryData(
-                        screensaverPhotos = screensaverDeferred.await(),
-                        people = peopleDeferred.await(),
-                        smartAlbums = smartDeferred.await(),
-                        stats = statsDeferred.await(),
-                        approvedMedia = approvedDeferred.await(),
-                    )
-                }
+            if (loadState !is LibraryLoad.Ready) loadState = LibraryLoad.Loading
 
-                // Some repository helpers wrap failures: explicitly propagate cancellation and
-                // reject a late result from an identity that changed while requests were in flight.
-                currentCoroutineContext().ensureActive()
-                if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
-
-                MediaCache.update(
-                    recent = recent,
-                    albums = albums,
-                    screensaverPhotos = optional.screensaverPhotos,
-                    photoCount = optional.stats?.photoCount ?: recent.count { it.type == MediaType.PHOTO },
-                    videoCount = optional.stats?.videoCount ?: recent.count { it.type == MediaType.VIDEO },
-                    people = optional.people,
+            fun publish(update: (LibraryState) -> LibraryState) {
+                if (SettingsStore.nas.mediaIdentityKey() != identityKey) return
+                val current = (loadState as? LibraryLoad.Ready)?.library ?: LibraryState(
+                    connectionName = nas.name.ifBlank { "Home-NAS" },
+                    accountName = nas.activeAccount?.displayName.orEmpty(),
+                    accountCount = nas.accounts.size.coerceAtLeast(1),
                     ownerAccountId = nas.activeAccountId,
-                    ownerIdentityKey = identityKey,
+                    peopleLoaded = false,
+                    foldersLoaded = false,
+                    timelineLoading = true,
+                    albumsLoaded = false,
+                    smartAlbumsLoaded = false,
                 )
-                SettingsStore.updateNas { it.copy(connected = true) }
-                startupTwoFactor = null
-                loadState = LibraryLoad.Ready(
-                    library = LibraryState(
-                        recent = recent,
-                        albums = albums,
-                        ownerAccountId = nas.activeAccountId,
-                        mediaByAlbum = optional.approvedMedia,
-                        connectionName = nas.name.ifBlank { "Home-NAS" },
-                        isOnline = true,
-                        accountName = nas.activeAccount?.displayName.orEmpty(),
-                        accountCount = nas.accounts.size.coerceAtLeast(1),
-                        people = optional.people,
-                        foldersLoaded = false,
-                        peopleLoaded = true,
-                        smartAlbums = optional.smartAlbums,
-                        smartAlbumsError = smartAlbumsError,
-                    ),
-                    screensaverPhotos = optional.screensaverPhotos,
-                )
+                loadState = LibraryLoad.Ready(update(current))
+            }
 
-                // 深层目录树需要逐目录请求，放在图库就绪后继续读取，避免阻塞首页。
-                var foldersError: String? = null
-                val folderAlbums = try {
-                    // 保留 parentId / depth：文件夹 Tab 按层级逐级浏览，不再把根/子/孙目录平铺。
-                    repository.getFolders().map(::folderAlbum)
+            try {
+                // 首屏只等一页媒体。完整时间线与各分类独立更新。
+                var fullResult: List<MediaItem>? = null
+                val firstPage = try {
+                    repository.getRecent(48)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
-                } catch (_: Exception) {
-                    foldersError = "请检查飞牛相册的目录权限和网络连接，在设置中刷新后重试"
-                    emptyList()
+                } catch (_: IllegalStateException) {
+                    // 首批数据格式异常时，尝试按完整时间线分段读取。
+                    repository.getRecent(FULL_LIBRARY_LIMIT).also { fullResult = it }
                 }
                 currentCoroutineContext().ensureActive()
                 if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
-                val current = loadState as? LibraryLoad.Ready ?: return@LaunchedEffect
-                loadState = current.copy(library = current.library.copy(
-                    folders = folderAlbums,
-                    foldersLoaded = true,
-                    foldersError = foldersError,
-                ))
+                SettingsStore.updateNas { it.copy(connected = true) }
+                startupTwoFactor = null
+                publish { it.copy(
+                    recent = if (it.timelineLoading) firstPage else it.recent,
+                    isOnline = true,
+                    timelineLoading = true,
+                    timelineError = null,
+                ) }
+
+                coroutineScope {
+                    launch {
+                        val stats = libraryRequest { repository.stats() }
+                        currentCoroutineContext().ensureActive()
+                        if (SettingsStore.nas.mediaIdentityKey() == identityKey) libraryStats = stats
+                    }
+                    launch {
+                        val albums = libraryRequest { repository.getAlbums() }
+                        currentCoroutineContext().ensureActive()
+                        publish { it.copy(albums = albums ?: it.albums, albumsLoaded = true,
+                            albumsError = if (albums == null) "相册读取失败 · 可在设置中刷新媒体库" else null) }
+                    }
+                    launch {
+                        val recent = fullResult ?: libraryRequest { repository.getRecent(FULL_LIBRARY_LIMIT) }
+                        currentCoroutineContext().ensureActive()
+                        publish { it.copy(
+                            recent = recent ?: it.recent,
+                            timelineLoading = false,
+                            timelineError = if (recent == null) "完整图库读取失败 · 可在设置中刷新媒体库" else null,
+                        ) }
+                    }
+                    launch {
+                        val people = libraryRequest { repository.getPeople() }.orEmpty()
+                        currentCoroutineContext().ensureActive()
+                        publish { it.copy(people = people, peopleLoaded = true) }
+                    }
+                    launch {
+                        val smart = libraryRequest { repository.getSmartAlbums() }
+                        currentCoroutineContext().ensureActive()
+                        publish { it.copy(
+                            smartAlbums = smart.orEmpty(),
+                            smartAlbumsLoaded = true,
+                            smartAlbumsError = if (smart == null) "智能分类暂时无法读取 · 请刷新后重试" else null,
+                        ) }
+                    }
+                    launch {
+                        val folders = libraryRequest { repository.getFolders().map(::folderAlbum) }
+                        currentCoroutineContext().ensureActive()
+                        publish { it.copy(
+                            folders = folders.orEmpty(),
+                            foldersLoaded = true,
+                            foldersError = if (folders == null) "请检查飞牛相册的目录权限和网络连接，在设置中刷新后重试" else null,
+                        ) }
+                    }
+                }
             } catch (e: FnOsTwoFactorRequired) {
                 if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
                 // 密码已通过，只差动态码：WebSocket 由仓库里的 FnOsApi 继续持有
@@ -273,26 +260,39 @@ fun NasPhotoTvApp() {
             }
         }
 
-        // 用户新授权客厅展示相册后，补拉缺失相册的媒体，屏保不必等整库重载。
         val approvedDisplayIds = SettingsStore.displayAlbumIds
-        LaunchedEffect(approvedDisplayIds, repository, identityKey, loadState) {
+        val currentLibrary = (loadState as? LibraryLoad.Ready)?.library
+        val recentCounts = remember(currentLibrary?.recent) {
+            val items = currentLibrary?.recent.orEmpty()
+            val photos = items.count { it.type == MediaType.PHOTO }
+            photos to (items.size - photos)
+        }
+        LaunchedEffect(identityKey, currentLibrary, libraryStats) {
+            val library = currentLibrary ?: return@LaunchedEffect
+            if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
+            MediaCache.update(
+                recent = library.recent,
+                albums = library.albums,
+                screensaverPhotos = emptyList(),
+                photoCount = libraryStats?.photoCount ?: recentCounts.first,
+                videoCount = libraryStats?.videoCount ?: recentCounts.second,
+                people = library.people,
+                ownerAccountId = nas.activeAccountId,
+                ownerIdentityKey = identityKey,
+            )
+        }
+        val displayAlbumIds = currentLibrary?.albums?.map { it.id }?.toSet().orEmpty()
+        LaunchedEffect(approvedDisplayIds, displayAlbumIds, repository, refreshToken) {
             val repo = repository ?: return@LaunchedEffect
-            val ready = loadState as? LibraryLoad.Ready ?: return@LaunchedEffect
-            val missing = approvedDisplayIds - ready.library.mediaByAlbum.keys
-            if (missing.isEmpty()) return@LaunchedEffect
             val fetched = coroutineScope {
-                missing.map { id ->
-                    async {
-                        id to runCatching { repo.getMedia(id) }.getOrDefault(emptyList())
-                    }
-                }.awaitAll()
-            }.toMap()
+                approvedDisplayIds.intersect(displayAlbumIds).map { id ->
+                    async { id to libraryRequest { repo.getMedia(id) }.orEmpty() }
+                }.awaitAll().toMap()
+            }
             currentCoroutineContext().ensureActive()
             if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
             val current = loadState as? LibraryLoad.Ready ?: return@LaunchedEffect
-            loadState = current.copy(
-                library = current.library.copy(mediaByAlbum = current.library.mediaByAlbum + fetched),
-            )
+            loadState = current.copy(library = current.library.copy(mediaByAlbum = fetched))
         }
 
         // 客厅照片严格来自当前账号明确授权的相册；空、失效、切账号均不回退。
@@ -336,15 +336,8 @@ fun NasPhotoTvApp() {
 
         // 首次连接页搜到 NAS：先填地址和端口，再进设置补账号密码
         val selectDiscoveredNas: (LanNasDevice) -> Unit = { device ->
-            SettingsStore.updateNas {
-                it.copy(
-                    host = device.host,
-                    port = device.port,
-                    scheme = "https",
-                    basePath = "",
-                )
-            }
-            route = AppRoute.Settings
+            setupDraft = nas.copy(host = device.host, port = device.port, scheme = "https", basePath = "")
+            route = AppRoute.Setup
         }
 
         // 显式预览不改变自动屏保开关，退出计时重新起算
@@ -467,11 +460,23 @@ fun NasPhotoTvApp() {
                             modifier = Modifier.fillMaxSize(),
                         )
 
+                        r is AppRoute.Setup -> NasSetupScreen(
+                            connection = setupDraft ?: nas,
+                            onBack = { setupDraft = null; route = AppRoute.Library },
+                            onConnect = { connection ->
+                                SettingsStore.updateNas { connection }
+                                setupDraft = null
+                                refreshToken += 1
+                                route = AppRoute.Library
+                            },
+                        )
+
                         r is AppRoute.Settings -> SettingsScreen(
                             store = SettingsStore,
                             onClose = { route = AppRoute.Library },
                             onPreviewScreensaver = enterScreensaver,
                             onOpenLibrary = { route = AppRoute.Library },
+                            onRefreshLibrary = { refreshToken += 1; route = AppRoute.Library },
                             modifier = Modifier.fillMaxSize(),
                             screensaverPhotos = saverPhotos,
                         )
@@ -537,6 +542,10 @@ fun NasPhotoTvApp() {
                                 mode = ConnectionMode.NeedsSetup,
                                 host = nas.displayAddress,
                                 onOpenSettings = { route = AppRoute.Settings },
+                                onManualSetup = {
+                                    setupDraft = nas
+                                    route = AppRoute.Setup
+                                },
                                 onRetry = { refreshToken += 1 },
                                 onSelectNas = selectDiscoveredNas,
                                 modifier = Modifier.fillMaxSize(),
@@ -642,14 +651,13 @@ fun NasPhotoTvApp() {
 /** 图库必须覆盖完整时间范围，不能按开发机的照片数量截断旧年份。 */
 private const val FULL_LIBRARY_LIMIT = Int.MAX_VALUE
 
-/** 与媒体库主数据无关、可并行拉取的附属数据 */
-private data class OptionalLibraryData(
-    val screensaverPhotos: List<MediaItem>,
-    val people: List<Person>,
-    val smartAlbums: List<Album>,
-    val stats: com.nasphoto.tv.data.fn.FnOsStats?,
-    val approvedMedia: Map<String, List<MediaItem>>,
-)
+private suspend fun <T> libraryRequest(block: suspend () -> T): T? = try {
+    block()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: Exception) {
+    null
+}
 
 /** 首屏两步验证提示：challenge 决定文案，busy/error 跟随验证请求更新 */
 private data class StartupTwoFactor(
@@ -663,8 +671,5 @@ private sealed interface LibraryLoad {
     data object NeedsSetup : LibraryLoad
     data object Loading : LibraryLoad
     data class Error(val message: String) : LibraryLoad
-    data class Ready(
-        val library: LibraryState,
-        val screensaverPhotos: List<MediaItem>,
-    ) : LibraryLoad
+    data class Ready(val library: LibraryState) : LibraryLoad
 }

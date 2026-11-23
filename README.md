@@ -7,9 +7,20 @@ Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`�
 
 > 🍎 **Apple TV 版**：原生 tvOS 分支已同步至 1.2.12，支持 tvOS 17+。构建、真机签名与分发说明见 [apple/README.md](apple/README.md)。
 
-- 版本：`1.2.12`（versionCode 18）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.12)
+- 版本：`1.2.13`（versionCode 19）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.13)
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ **minSdk 24（Android 7.0）**、compileSdk 35、targetSdk 34；`java.time` 由 core library desugaring 提供
 - 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
+
+---
+
+## 1.2.13 更新（2026-11-23）
+
+- **缩短启动等待**：首批最多 48 项媒体就绪后即可浏览，完整时间线、相册、人物与目录在后台补齐。
+- **修复屏保日期裁切**：电影时钟按可用空间缩放，为日期和遥控器提示留出位置。
+- **首次连接**：保留局域网自动发现，新增遥控器可操作的独立连接页，端口和访问码可在高级选项中填写。
+- **相册放映与定位**：新增「播放此相册」和「跳到年月」，可设置停留时间、切换效果和背景音乐。
+
+详见 [发布说明](docs/releases/v1.2.13.md)。
 
 ---
 

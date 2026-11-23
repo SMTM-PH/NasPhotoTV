@@ -63,6 +63,8 @@ enum class SettingsKey(
     SS_DATE(SettingsGroup.SCREENSAVER, "显示日期", "显示星期与日期"),
     SS_NIGHT_DIM(SettingsGroup.SCREENSAVER, "夜间自动调暗", "降低亮度，保护面板"),
     SS_KEN_BURNS(SettingsGroup.SCREENSAVER, "Ken Burns 动效", "照片缓慢推拉，防烧屏"),
+    SS_SLIDESHOW_INTERVAL(SettingsGroup.SCREENSAVER, "幻灯片停留", "相册放映中每张照片播放多久"),
+    SS_SLIDESHOW_TRANSITION(SettingsGroup.SCREENSAVER, "幻灯片切换", "相册放映的换片效果"),
     SS_MUSIC(SettingsGroup.SCREENSAVER, "背景音乐", "幻灯片/屏保时循环播放；可用手机上传音乐"),
     SS_PREVIEW(SettingsGroup.SCREENSAVER, "预览屏保", "仅全屏预览，不开启自动屏保"),
 
@@ -248,6 +250,23 @@ class SettingsActions(
     fun toggleDate() = store.updateScreensaver { it.copy(showDate = !it.showDate) }
     fun toggleNightDim() = store.updateScreensaver { it.copy(nightDim = !it.nightDim) }
     fun toggleKenBurns() = store.updateScreensaver { it.copy(kenBurns = !it.kenBurns) }
+
+    fun cycleSlideshowInterval(reverse: Boolean) {
+        val steps = listOf(3, 5, 10, 15, 30)
+        store.updateScreensaver { settings ->
+            val index = steps.indexOf(settings.slideshowIntervalSec).coerceAtLeast(0)
+            val offset = if (reverse) -1 else 1
+            settings.copy(slideshowIntervalSec = steps[(index + offset + steps.size) % steps.size])
+        }
+    }
+
+    fun cycleSlideshowTransition(reverse: Boolean) {
+        val options = ScreensaverSettings.SlideshowTransition.entries
+        store.updateScreensaver { settings ->
+            val offset = if (reverse) -1 else 1
+            settings.copy(slideshowTransition = options[(settings.slideshowTransition.ordinal + offset + options.size) % options.size])
+        }
+    }
 
     fun previewScreensaver() {
         onPreviewScreensaver()

@@ -172,7 +172,7 @@ class DesignPreviewActivity : ComponentActivity() {
                                 },
                             )
                         }
-                        AppRoute.Settings -> SettingsScreen(
+                        AppRoute.Setup, AppRoute.Settings -> SettingsScreen(
                             store = SettingsStore,
                             onClose = { route = AppRoute.Library },
                             onPreviewScreensaver = { route = AppRoute.ScreensaverPreview },

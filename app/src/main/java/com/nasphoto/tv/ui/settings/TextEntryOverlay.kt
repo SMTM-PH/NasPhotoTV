@@ -96,6 +96,7 @@ fun TextEntryOverlay(
     /** 纯数字键盘（两步验证动态码）：只画 0-9 / 删除 / 完成，不显示字母与符号 */
     numericOnly: Boolean = false,
     maxLength: Int = MaxLength,
+    emptyHint: String? = null,
 ) {
     var value by remember { mutableStateOf(initial.take(maxLength)) }
     var caps by remember { mutableStateOf(false) }
@@ -391,7 +392,7 @@ fun TextEntryOverlay(
                         when {
                             value.isEmpty() -> {
                                 Text(
-                                    if (numericOnly) {
+                                    emptyHint ?: if (numericOnly) {
                                         "输入 6 位动态验证码 · 用遥控器 ↑↓←→ 选数字，ENTER 确认"
                                     } else {
                                         "按下方键位输入 · 「系统输入法」键唤起系统键盘"

@@ -1,6 +1,10 @@
 package com.nasphoto.tv.ui.viewer
 
 import com.nasphoto.tv.ui.common.SlideshowMusicEffect
+import com.nasphoto.tv.data.SettingsStore
+import com.nasphoto.tv.data.model.ScreensaverSettings.SlideshowTransition
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
@@ -107,7 +111,6 @@ private const val ChromeAutoHideMs = 3000L
 private const val HudAutoHideMs = 1500L
 
 /** 幻灯片每张停留时长 */
-private const val SlideshowIntervalMs = 5000L
 
 /** 换页前预加载下一张的最长等待：地址失效 / 网络极差时不能把幻灯片卡死 */
 private const val SlideshowPreloadTimeoutMs = 8_000L
@@ -202,6 +205,8 @@ fun PhotoViewerScreen(
         return
     }
 
+    val slideshowSettings = SettingsStore.screensaver
+    val slideshowIntervalMs = slideshowSettings.slideshowIntervalSec * 1_000
     val state = rememberPhotoViewerState(items = items, initialIndex = initialIndex, startSlideshow = startSlideshow)
     // 幻灯片播放时循环播放背景音乐（无音乐文件时自动静默）
     SlideshowMusicEffect(active = state.slideshowPlaying)
@@ -270,10 +275,10 @@ fun PhotoViewerScreen(
     // 先把下一张解码进 Coil 内存缓存再换页：网络不好时舞台上仍是上一张照片，
     // 不会出现「渐变占位 + 锯齿破图图标」的间隙，也不必靠转圈熬过等待。
     val preloadContext = LocalContext.current
-    LaunchedEffect(state.slideshowPlaying) {
+    LaunchedEffect(state.slideshowPlaying, slideshowIntervalMs) {
         if (!state.slideshowPlaying) return@LaunchedEffect
         while (true) {
-            delay(SlideshowIntervalMs)
+            delay(slideshowIntervalMs.toLong())
             if (!state.slideshowPlaying) return@LaunchedEffect
             val next = state.peekNextPhoto() ?: continue
             withTimeoutOrNull(SlideshowPreloadTimeoutMs) {
@@ -333,7 +338,9 @@ fun PhotoViewerScreen(
                 // 会把整个 Stage 撑大，舞台内的坐标随之偏移。
                 modifier = Modifier.fillMaxSize(),
                 transitionSpec = {
-                    if (state.slideshowPlaying) {
+                    if (state.slideshowPlaying && slideshowSettings.slideshowTransition == SlideshowTransition.CUT) {
+                        EnterTransition.None togetherWith ExitTransition.None
+                    } else if (state.slideshowPlaying) {
                         // 幻灯片：showcase 风格的缓慢叠化，不做左右滑。
                         // 两张照片在叠化期间同时在树上，HOLD 占位让上一张一直可见，
                         // 配合预加载后新图已解码，观感是「直接换成下一张」而不是闪一下黑底。
@@ -354,8 +361,10 @@ fun PhotoViewerScreen(
             ) { item ->
                 if (item == null) return@AnimatedContent
                 ShowcaseZoom(
-                    enabled = state.slideshowPlaying && !state.zoomed,
+                    enabled = state.slideshowPlaying && !state.zoomed &&
+                        slideshowSettings.slideshowTransition == SlideshowTransition.SHOWCASE,
                     key = item.id,
+                    intervalMs = slideshowIntervalMs,
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     StageContent(
@@ -392,6 +401,7 @@ fun PhotoViewerScreen(
             // ================= 右上：幻灯片状态 =================
             if (state.chromeVisible) SlideshowIndicator(
                 state = state,
+                intervalMs = slideshowIntervalMs,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(end = TvDimen.ScreenPadding, top = TvDimen.SpaceM),
@@ -473,7 +483,7 @@ fun PhotoViewerScreen(
 }
 
 /**
- * 幻灯片 showcase 推拉：每张照片在停留的 5 秒里从 1.0 缓缓放到 1.05，
+ * 幻灯片 showcase 推拉：每张照片在停留期间从 1.0 缓缓放到 1.05，
  * 配合叠化换页就是「画面在呼吸」的观感。暂停 / 放大查看时立刻回到 1.0，
  * 不会干扰 2× 放大平移，也不会让全景平移的坐标失准。
  */
@@ -481,16 +491,17 @@ fun PhotoViewerScreen(
 private fun ShowcaseZoom(
     enabled: Boolean,
     key: Any,
+    intervalMs: Int,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     val scale = remember { Animatable(1f) }
-    LaunchedEffect(enabled, key) {
+    LaunchedEffect(enabled, key, intervalMs) {
         if (enabled) {
             scale.snapTo(1f)
             scale.animateTo(
                 ShowcaseZoomFactor,
-                tween(durationMillis = SlideshowIntervalMs.toInt(), easing = LinearEasing),
+                tween(durationMillis = intervalMs, easing = LinearEasing),
             )
         } else {
             scale.snapTo(1f)
@@ -838,7 +849,7 @@ private fun VideoStage(item: MediaItem) {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun SlideshowIndicator(state: PhotoViewerState, modifier: Modifier = Modifier) {
+private fun SlideshowIndicator(state: PhotoViewerState, intervalMs: Int, modifier: Modifier = Modifier) {
     if (!state.slideshowPlaying) return
     Row(
         modifier = modifier
@@ -860,18 +871,17 @@ private fun SlideshowIndicator(state: PhotoViewerState, modifier: Modifier = Mod
             maxLines = 1,
             softWrap = false,
         )
-        // 5 秒进度条
-        SlideshowProgressBar()
+        SlideshowProgressBar(intervalMs)
     }
 }
 
 @Composable
-private fun SlideshowProgressBar() {
+private fun SlideshowProgressBar(intervalMs: Int) {
     val progress = remember { Animatable(0f) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(intervalMs) {
         while (true) {
             progress.snapTo(0f)
-            progress.animateTo(1f, tween(SlideshowIntervalMs.toInt(), easing = LinearEasing))
+            progress.animateTo(1f, tween(intervalMs, easing = LinearEasing))
         }
     }
     Spacer(Modifier.width(TvDimen.SpaceS))
