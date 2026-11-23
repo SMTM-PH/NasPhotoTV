@@ -240,7 +240,7 @@ struct HomeView: View {
     }
 
     static func folderCollection(_ folder: NasFolder) -> Collection {
-        Collection(kind: .folder, rawId: folder.id, name: folder.name, coverUrl: "",
+        Collection(kind: .folder, rawId: folder.id, name: folder.name, coverUrl: folder.coverUrl,
                    itemCount: folder.photoCount + folder.videoCount,
                    subtitle: folder.path, isPerson: false)
     }
@@ -605,7 +605,14 @@ private struct CollectionCard: View {
                         Spacer()
                     }
                 } else {
-                    RemoteImage(url: collection.coverUrl)
+                    ZStack {
+                        if collection.kind == .folder && collection.coverUrl.isEmpty {
+                            RoundedRectangle(cornerRadius: Tv.Dimen.radiusM).fill(Tv.Color.surfaceHigh)
+                            Image(systemName: "folder").foregroundStyle(Tv.Color.textSecondary)
+                        } else {
+                            RemoteImage(url: collection.coverUrl)
+                        }
+                    }
                         .frame(height: 180)
                         .frame(maxWidth: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: Tv.Dimen.radiusM))
@@ -680,8 +687,16 @@ struct CollectionDetailView: View {
                                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 300))]) {
                                     ForEach(children) { folder in
                                         NavigationLink(value: HomeView.folderCollection(folder)) {
-                                            Label(folder.name, systemImage: "folder")
-                                                .lineLimit(2)
+                                            VStack(alignment: .leading, spacing: Tv.Dimen.spaceXs) {
+                                                if !folder.coverUrl.isEmpty {
+                                                    RemoteImage(url: folder.coverUrl)
+                                                        .frame(height: 120)
+                                                        .clipped()
+                                                }
+                                                Label(folder.name, systemImage: "folder")
+                                                    .lineLimit(1)
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .leading)
                                         }
                                     }
                                 }
@@ -779,6 +794,9 @@ private struct SettingsTab: View {
                 }
 
                 section("播放设置") {
+                    row("视频默认旋转", value: settings.playback.rotation.title) {
+                        settings.playback.rotation = settings.playback.rotation.next
+                    }
                     row("竖屏视频画面", value: settings.playback.videoFit.title) {
                         settings.playback.videoFit = settings.playback.videoFit.next
                     }

@@ -17,14 +17,32 @@ struct VideoPlayerView: View {
 
     @State private var index = 0
     @State private var controlsVisible = true
+    @State private var rotation: VideoRotation = .upright
     @State private var controlsNonce = 0
 
     private var current: MediaItem? { items.indices.contains(index) ? items[index] : nil }
 
     private var isPortrait: Bool {
-        let sides = current?.resolution.split(separator: "x").compactMap { Int($0) } ?? []
-        if sides.count == 2, sides[0] > 0, sides[1] > 0 { return sides[1] > sides[0] }
-        return model.presentationSize.height > model.presentationSize.width
+        // AVPlayer 已应用轨道的 preferredTransform，优先用其呈现尺寸。
+        let presented = model.presentationSize
+        let size = presented.width > 0 && presented.height > 0
+            ? presented
+            : current?.pixelSize.map { CGSize(width: $0.0, height: $0.1) } ?? .zero
+        return rotation.swapsAxes ? size.width > size.height : size.height > size.width
+    }
+
+    private var videoSurface: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            PlayerLayerView(player: model.player, gravity: videoGravity)
+                .frame(width: rotation.swapsAxes ? height : width,
+                       height: rotation.swapsAxes ? width : height)
+                .rotationEffect(.degrees(Double(rotation.rawValue)))
+                .position(x: width / 2, y: height / 2)
+        }
+        .ignoresSafeArea()
+        .clipped()
     }
 
     private var videoGravity: AVLayerVideoGravity {
@@ -44,8 +62,7 @@ struct VideoPlayerView: View {
                 }
                 .ignoresSafeArea()
             }
-            PlayerLayerView(player: model.player, gravity: videoGravity)
-                .ignoresSafeArea()
+            videoSurface
 
             if model.buffering {
                 ProgressView()
@@ -149,6 +166,10 @@ struct VideoPlayerView: View {
                         settings.playback.videoFit = settings.playback.videoFit.next
                         showControls()
                     }
+                    Button("旋转 · \(rotation.title)") {
+                        rotation = rotation.next
+                        showControls()
+                    }
                     if items.count > 1 {
                         Button("上一个") { step(-1) }
                             .buttonStyle(.plain)
@@ -157,7 +178,7 @@ struct VideoPlayerView: View {
                             .buttonStyle(.plain)
                             .foregroundColor(Tv.Color.textSecondary)
                     }
-                    Text("ENTER 播放/暂停 · ←→ 快进 10 秒 · BACK 返回")
+                    Text("←→ 快退 / 快进 10 秒")
                         .font(.system(size: Tv.Font.tiny))
                         .foregroundColor(Tv.Color.textTertiary)
                 }
@@ -214,6 +235,7 @@ struct VideoPlayerView: View {
 
     private func loadCurrent() {
         guard let item = current else { return }
+        rotation = settings.playback.rotation
         var headers: [String: String] = [:]
         if let token = FnOsTransport.shared.token { headers["AccessToken"] = token }
         model.load(item, headers: headers, loop: settings.playback.loopMode)
@@ -268,6 +290,7 @@ final class VideoPlayerModel: ObservableObject {
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var statusObservation: NSKeyValueObservation?
+    private var sizeObservation: NSKeyValueObservation?
     private var loopMode = false
 
     func load(_ item: MediaItem, headers: [String: String], loop: Bool) {
@@ -292,6 +315,12 @@ final class VideoPlayerModel: ObservableObject {
         player.replaceCurrentItem(with: playerItem)
         player.actionAtItemEnd = .pause
 
+        sizeObservation = playerItem.observe(\.presentationSize) { [weak self] observed, _ in
+            DispatchQueue.main.async {
+                guard let self, self.player.currentItem === observed else { return }
+                self.presentationSize = observed.presentationSize
+            }
+        }
         statusObservation = playerItem.observe(\.status) { [weak self] observed, _ in
             DispatchQueue.main.async {
                 guard let self, self.player.currentItem === observed else { return }
@@ -367,6 +396,8 @@ final class VideoPlayerModel: ObservableObject {
         if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }
         statusObservation?.invalidate()
         statusObservation = nil
+        sizeObservation?.invalidate()
+        sizeObservation = nil
     }
 
     private static func describe(_ error: Error?) -> String {

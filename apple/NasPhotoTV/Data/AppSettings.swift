@@ -60,12 +60,21 @@ enum VideoFit: String, CaseIterable, Codable {
     }
 }
 
+enum VideoRotation: Int, Codable {
+    case upright = 0, clockwise = 90, inverted = 180, counterclockwise = 270
+
+    var next: VideoRotation { VideoRotation(rawValue: (rawValue + 90) % 360) ?? .upright }
+    var swapsAxes: Bool { self == .clockwise || self == .counterclockwise }
+    var title: String { "\(rawValue)°" }
+}
+
 struct PlaybackSettings: Equatable, Codable {
     /// 播完自动播下一个
     var autoPlayNext: Bool = true
     /// 单条循环
     var loopMode: Bool = false
     var videoFit: VideoFit = .automatic
+    var rotation: VideoRotation = .upright
 
     init() {}
 
@@ -74,6 +83,7 @@ struct PlaybackSettings: Equatable, Codable {
         autoPlayNext = try values.decodeIfPresent(Bool.self, forKey: .autoPlayNext) ?? true
         loopMode = try values.decodeIfPresent(Bool.self, forKey: .loopMode) ?? false
         videoFit = try values.decodeIfPresent(VideoFit.self, forKey: .videoFit) ?? .automatic
+        rotation = try values.decodeIfPresent(VideoRotation.self, forKey: .rotation) ?? .upright
     }
 }
 

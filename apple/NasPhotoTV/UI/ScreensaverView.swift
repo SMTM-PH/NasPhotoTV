@@ -10,22 +10,16 @@ struct ScreensaverView: View {
     @ObservedObject var settings: AppSettings
     var onExit: () -> Void
 
-    @State private var photoIndex = 0
+    @State private var displayedPhoto: (index: Int, image: UIImage)?
+    @State private var outgoingPhoto: (index: Int, image: UIImage)?
     @State private var now = Date()
 
     private let clockTimer: Publishers.Autoconnect<Timer.TimerPublisher>
-    private let photoTimer: Publishers.Autoconnect<Timer.TimerPublisher>
-
     init(photos: [MediaItem], settings: AppSettings, onExit: @escaping () -> Void) {
         self.photos = photos
         self.settings = settings
         self.onExit = onExit
         self.clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-        self.photoTimer = Timer.publish(
-            every: TimeInterval(max(5, settings.screensaver.photoIntervalSec)),
-            on: .main,
-            in: .common,
-        ).autoconnect()
     }
 
     private var style: ClockStyle { ClockStyle(raw: settings.screensaver.clockStyle) }
@@ -34,13 +28,19 @@ struct ScreensaverView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            if !photos.isEmpty {
-                let item = photos[photoIndex % photos.count]
-                RemoteImage(url: item.thumbnailUrl)
-                    .ignoresSafeArea()
-                    .id(item.id)
-                    .scaleEffect(settings.screensaver.kenBurns && !photoIndex.isMultiple(of: 2) ? 1.06 : 1.0)
-                    .animation(.easeInOut(duration: 0.8), value: item.id)
+            if let photo = displayedPhoto {
+                GeometryReader { geometry in
+                    ZStack {
+                        if let outgoingPhoto {
+                            photoLayer(outgoingPhoto, size: geometry.size)
+                        }
+                        photoLayer(photo, size: geometry.size)
+                            .id(photo.index)
+                            .transition(.asymmetric(insertion: .opacity, removal: .identity))
+                            .zIndex(1)
+                    }
+                }
+                .ignoresSafeArea()
                 LinearGradient(
                     colors: [.black.opacity(0.55), .clear, .black.opacity(0.55)],
                     startPoint: .top, endPoint: .bottom,
@@ -82,10 +82,7 @@ struct ScreensaverView: View {
             MusicEffect(active: true)
         }
         .onReceive(clockTimer) { date in now = date }
-        .onReceive(photoTimer) { _ in
-            guard photos.count > 1 else { return }
-            photoIndex = (photoIndex + 1) % photos.count
-        }
+        .task(id: settings.screensaver.photoIntervalSec) { await playPhotos() }
         .onMoveCommand { direction in
             switch direction {
             case .left: settings.screensaver.clockStyle = style.previous.rawValue
@@ -95,6 +92,39 @@ struct ScreensaverView: View {
         }
         .onPlayPauseCommand { onExit() }
         .onExitCommand { onExit() }
+    }
+
+    private func photoLayer(_ photo: (index: Int, image: UIImage), size: CGSize) -> some View {
+        Image(uiImage: photo.image)
+            .resizable()
+            .aspectRatio(contentMode: .fill)
+            .frame(width: size.width, height: size.height)
+            .scaleEffect(settings.screensaver.kenBurns && !photo.index.isMultiple(of: 2) ? 1.06 : 1.0)
+            .clipped()
+    }
+
+    private func playPhotos() async {
+        guard !photos.isEmpty else { return }
+        let interval = max(5, settings.screensaver.photoIntervalSec)
+        var candidate = displayedPhoto.map { ($0.index + 1) % photos.count } ?? 0
+        while !Task.isCancelled {
+            let item = photos[candidate]
+            let seconds = displayedPhoto == nil ? 0 : interval
+            async let delay: Void = Task.sleep(for: .seconds(seconds))
+            let decoded = await MediaImageLoader.image(at: item.thumbnailUrl)
+            guard (try? await delay) != nil, !Task.isCancelled else { return }
+            if let decoded, candidate != displayedPhoto?.index {
+                let photo = (index: candidate, image: decoded)
+                outgoingPhoto = displayedPhoto
+                withAnimation(.easeInOut(duration: 0.8)) { displayedPhoto = photo } completion: {
+                    if displayedPhoto?.index == photo.index { outgoingPhoto = nil }
+                }
+                if photos.count == 1 { return }
+            } else if displayedPhoto == nil {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
+            candidate = (candidate + 1) % photos.count
+        }
     }
 
     private var auroraBackground: some View {

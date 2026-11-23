@@ -5,7 +5,7 @@
 Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`，单 Activity、纯 Compose、无 TV 专用库；
 屏保待机显示对标 iPhone 的 StandBy —— 大号时钟 + 照片氛围 + 天气 + 防烧屏。
 
-> 🍎 **Apple TV 版**：原生 tvOS 1.2.8，支持 tvOS 17+。构建、真机签名与分发说明见 [apple/README.md](apple/README.md)。
+> 🍎 **Apple TV 版**：原生 tvOS 分支已同步至 1.2.12，支持 tvOS 17+。构建、真机签名与分发说明见 [apple/README.md](apple/README.md)。
 
 - 版本：`1.2.12`（versionCode 18）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.12)
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ **minSdk 24（Android 7.0）**、compileSdk 35、targetSdk 34；`java.time` 由 core library desugaring 提供
