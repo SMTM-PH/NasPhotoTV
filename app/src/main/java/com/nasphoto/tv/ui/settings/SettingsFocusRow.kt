@@ -3,7 +3,6 @@ package com.nasphoto.tv.ui.settings
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -31,11 +30,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.zIndex
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
+import com.nasphoto.tv.ui.theme.tvFocusRing
 
 /**
  * ================= 设置页的可聚焦行（settings-dev 维护） =================
@@ -89,11 +88,7 @@ fun SettingsFocusRow(
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .clip(shape)
             .background(if (focused) TvColor.SurfaceSoft else TvColor.Stage)
-            .border(
-                width = if (focused) TvDimen.FocusRingWidth else 1.dp,
-                color = if (focused) TvColor.FocusRing else TvColor.Stage,
-                shape = shape,
-            )
+            .tvFocusRing(TvDimen.RadiusM, if (focused) 1f else 0f)
             .semantics(mergeDescendants = true) {
                 role = Role.Button
                 onClick { onConfirm(); true }

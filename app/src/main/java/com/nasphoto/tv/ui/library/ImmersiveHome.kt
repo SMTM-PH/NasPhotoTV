@@ -228,7 +228,7 @@ internal fun ImmersiveHome(
                         val shape = RoundedCornerShape(TvDimen.CinemaThumbnailRadius)
                         TvFocusBox(
                             focusRequester = thumbnailRequester(media.id), cornerRadiusDp = 8,
-                            focusedScale = 1.04f, focusRingColor = TvColor.Accent,
+                            focusedScale = 1.04f,
                             onFocusChanged = { focused -> if (focused) {
                                 onZoneChange(HomeFocusZone.STRIP)
                                 onSelect(media)

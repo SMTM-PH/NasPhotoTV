@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.nasphoto.tv.data.MediaCache
 import com.nasphoto.tv.data.SettingsStore
+import com.nasphoto.tv.data.SlideshowProfile
 import com.nasphoto.tv.data.model.NasAccount
 import com.nasphoto.tv.data.model.PortraitFit
 import com.nasphoto.tv.data.model.ScreensaverSettings
@@ -252,19 +253,18 @@ class SettingsActions(
     fun toggleKenBurns() = store.updateScreensaver { it.copy(kenBurns = !it.kenBurns) }
 
     fun cycleSlideshowInterval(reverse: Boolean) {
-        val steps = listOf(3, 5, 10, 15, 30)
         store.updateScreensaver { settings ->
-            val index = steps.indexOf(settings.slideshowIntervalSec).coerceAtLeast(0)
-            val offset = if (reverse) -1 else 1
-            settings.copy(slideshowIntervalSec = steps[(index + offset + steps.size) % steps.size])
+            settings.copy(
+                slideshowIntervalSec = SlideshowProfile.from(settings).stepInterval(reverse).intervalSec,
+            )
         }
     }
 
     fun cycleSlideshowTransition(reverse: Boolean) {
-        val options = ScreensaverSettings.SlideshowTransition.entries
         store.updateScreensaver { settings ->
-            val offset = if (reverse) -1 else 1
-            settings.copy(slideshowTransition = options[(settings.slideshowTransition.ordinal + offset + options.size) % options.size])
+            settings.copy(
+                slideshowTransition = SlideshowProfile.from(settings).stepTransition(reverse).transition,
+            )
         }
     }
 

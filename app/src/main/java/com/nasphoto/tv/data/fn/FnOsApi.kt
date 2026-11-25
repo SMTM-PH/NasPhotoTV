@@ -143,6 +143,10 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
 
     // ------------------------------------------------------------------ 对外
 
+    internal suspend fun authenticate() {
+        ensureSession(force = false)
+    }
+
     /** 登录 + stat：连接测试用（每次都重新登录，确保验证的是当前凭据） */
     suspend fun testConnection(): FnOsProbeResult {
         val started = System.nanoTime()

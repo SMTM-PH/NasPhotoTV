@@ -12,6 +12,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.nasphoto.tv.data.SettingsStore
 import com.nasphoto.tv.data.SlideshowMusic
+import com.nasphoto.tv.data.SlideshowProfile
 
 /**
  * 幻灯片背景音乐：把用户上传的音频循环播放。
@@ -20,11 +21,11 @@ import com.nasphoto.tv.data.SlideshowMusic
  * 组件销毁或 active 变 false 时立即释放播放器，不会在后台偷偷出声。
  */
 @Composable
-fun SlideshowMusicEffect(active: Boolean) {
+fun SlideshowMusicEffect(active: Boolean, profile: SlideshowProfile? = null) {
     val context = LocalContext.current
-    val enabled = SettingsStore.screensaver.musicEnabled
-    val track = remember(active, enabled) {
-        if (active && enabled) SlideshowMusic.latest(context) else null
+    val enabled = profile?.musicEnabled ?: SettingsStore.screensaver.musicEnabled
+    val track = remember(context, active, enabled, profile?.trackName) {
+        if (active && enabled) SlideshowMusic.selected(context, profile?.trackName) else null
     }
     val volume = SettingsStore.screensaver.musicVolume
 

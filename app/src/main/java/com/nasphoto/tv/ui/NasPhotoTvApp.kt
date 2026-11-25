@@ -97,7 +97,11 @@ fun NasPhotoTvApp() {
         var refreshToken by remember { mutableIntStateOf(0) }
         val uiScope = rememberCoroutineScope()
         // Reset during composition, before effects run: the previous identity is never Ready for a new one.
-        var loadState by remember(identityKey) { mutableStateOf<LibraryLoad>(LibraryLoad.Loading) }
+        var loadState by remember(identityKey) {
+            mutableStateOf<LibraryLoad>(
+                if (nas.isConfigured) LibraryLoad.Ready(connectingLibrary(nas)) else LibraryLoad.NeedsSetup,
+            )
+        }
         // 账号开启两步验证时，首屏登录只走到「半程」，这里保存等待输入动态码的状态
         var startupTwoFactor by remember(identityKey) {
             mutableStateOf<StartupTwoFactor?>(null)
@@ -162,47 +166,48 @@ fun NasPhotoTvApp() {
                 loadState = LibraryLoad.NeedsSetup
                 return@LaunchedEffect
             }
-            if (loadState !is LibraryLoad.Ready) loadState = LibraryLoad.Loading
-
             fun publish(update: (LibraryState) -> LibraryState) {
                 if (SettingsStore.nas.mediaIdentityKey() != identityKey) return
-                val current = (loadState as? LibraryLoad.Ready)?.library ?: LibraryState(
-                    connectionName = nas.name.ifBlank { "Home-NAS" },
-                    accountName = nas.activeAccount?.displayName.orEmpty(),
-                    accountCount = nas.accounts.size.coerceAtLeast(1),
-                    ownerAccountId = nas.activeAccountId,
-                    peopleLoaded = false,
-                    foldersLoaded = false,
-                    timelineLoading = true,
-                    albumsLoaded = false,
-                    smartAlbumsLoaded = false,
-                )
+                val current = (loadState as? LibraryLoad.Ready)?.library ?: connectingLibrary(nas)
                 loadState = LibraryLoad.Ready(update(current))
             }
 
+            publish { it.copy(isConnecting = true, timelineLoading = true, timelineError = null) }
             try {
-                // 首屏只等一页媒体。完整时间线与各分类独立更新。
-                var fullResult: List<MediaItem>? = null
-                val firstPage = try {
-                    repository.getRecent(48)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: IllegalStateException) {
-                    // 首批数据格式异常时，尝试按完整时间线分段读取。
-                    repository.getRecent(FULL_LIBRARY_LIMIT).also { fullResult = it }
-                }
+                repository.authenticate()
                 currentCoroutineContext().ensureActive()
                 if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
                 SettingsStore.updateNas { it.copy(connected = true) }
                 startupTwoFactor = null
                 publish { it.copy(
-                    recent = if (it.timelineLoading) firstPage else it.recent,
                     isOnline = true,
-                    timelineLoading = true,
-                    timelineError = null,
+                    isConnecting = false,
                 ) }
 
                 coroutineScope {
+                    launch {
+                        val smart = libraryRequest { repository.getSmartAlbums() }
+                        currentCoroutineContext().ensureActive()
+                        publish { it.copy(
+                            smartAlbums = smart.orEmpty(),
+                            smartAlbumsLoaded = true,
+                            smartAlbumsError = if (smart == null) "智能分类暂时无法读取 · 请刷新后重试" else null,
+                        ) }
+                    }
+                    launch {
+                        if ((loadState as? LibraryLoad.Ready)?.library?.recent.isNullOrEmpty()) {
+                            val preview = libraryRequest { repository.getRecentPreview(48) }
+                            currentCoroutineContext().ensureActive()
+                            if (preview != null) publish { it.copy(recent = preview) }
+                        }
+                        val recent = libraryRequest { repository.getRecent(FULL_LIBRARY_LIMIT) }
+                        currentCoroutineContext().ensureActive()
+                        publish { it.copy(
+                            recent = recent ?: it.recent,
+                            timelineLoading = false,
+                            timelineError = if (recent == null) "完整图库读取失败 · 可在设置中刷新媒体库" else null,
+                        ) }
+                    }
                     launch {
                         val stats = libraryRequest { repository.stats() }
                         currentCoroutineContext().ensureActive()
@@ -215,27 +220,9 @@ fun NasPhotoTvApp() {
                             albumsError = if (albums == null) "相册读取失败 · 可在设置中刷新媒体库" else null) }
                     }
                     launch {
-                        val recent = fullResult ?: libraryRequest { repository.getRecent(FULL_LIBRARY_LIMIT) }
-                        currentCoroutineContext().ensureActive()
-                        publish { it.copy(
-                            recent = recent ?: it.recent,
-                            timelineLoading = false,
-                            timelineError = if (recent == null) "完整图库读取失败 · 可在设置中刷新媒体库" else null,
-                        ) }
-                    }
-                    launch {
                         val people = libraryRequest { repository.getPeople() }.orEmpty()
                         currentCoroutineContext().ensureActive()
                         publish { it.copy(people = people, peopleLoaded = true) }
-                    }
-                    launch {
-                        val smart = libraryRequest { repository.getSmartAlbums() }
-                        currentCoroutineContext().ensureActive()
-                        publish { it.copy(
-                            smartAlbums = smart.orEmpty(),
-                            smartAlbumsLoaded = true,
-                            smartAlbumsError = if (smart == null) "智能分类暂时无法读取 · 请刷新后重试" else null,
-                        ) }
                     }
                     launch {
                         val folders = libraryRequest { repository.getFolders().map(::folderAlbum) }
@@ -251,7 +238,6 @@ fun NasPhotoTvApp() {
                 if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
                 // 密码已通过，只差动态码：WebSocket 由仓库里的 FnOsApi 继续持有
                 startupTwoFactor = StartupTwoFactor(challenge = e.challenge)
-                loadState = LibraryLoad.Loading
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
                 if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
@@ -269,7 +255,7 @@ fun NasPhotoTvApp() {
         }
         LaunchedEffect(identityKey, currentLibrary, libraryStats) {
             val library = currentLibrary ?: return@LaunchedEffect
-            if (SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
+            if (!library.isOnline || SettingsStore.nas.mediaIdentityKey() != identityKey) return@LaunchedEffect
             MediaCache.update(
                 recent = library.recent,
                 albums = library.albums,
@@ -448,6 +434,7 @@ fun NasPhotoTvApp() {
                             initialIndex = v.initialIndex,
                             contextTitle = v.contextTitle,
                             startSlideshow = v.startSlideshow,
+                            slideshowProfile = SettingsStore.albumSlideshow(v.slideshowKey),
                             onClose = { viewer = null },
                             onOpenVideo = { item, list ->
                                 viewer = null
@@ -489,9 +476,14 @@ fun NasPhotoTvApp() {
                                     onOpenPhoto = { items, index, title ->
                                         viewer = ViewerRequest(items, index, title)
                                     },
-                                    onPlaySlideshow = { items, index, title ->
-                                        viewer = ViewerRequest(items, index, title, startSlideshow = true)
+                                    onOpenCollectionViewer = { viewer = it },
+                                    onLoadPlaceAlbums = {
+                                        repository?.let { repo -> libraryRequest { repo.getPlaceAlbums(refreshToken) } }
                                     },
+                                    onLoadPlaceMedia = { id ->
+                                        repository?.let { repo -> libraryRequest { repo.getPlaceMedia(id, refreshToken) } }
+                                    },
+                                    placeRevision = refreshToken,
                                     onOpenVideo = { items, index, title ->
                                         player = PlayerRequest(items, index, title)
                                     },
@@ -551,15 +543,6 @@ fun NasPhotoTvApp() {
                                 modifier = Modifier.fillMaxSize(),
                             )
 
-                            is LibraryLoad.Loading -> ConnectionScreen(
-                                mode = ConnectionMode.Loading,
-                                host = nas.displayAddress,
-                                onOpenSettings = { route = AppRoute.Settings },
-                                onRetry = { refreshToken += 1 },
-                                onSelectNas = selectDiscoveredNas,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-
                             is LibraryLoad.Error -> ConnectionScreen(
                                 mode = ConnectionMode.Error(state.message),
                                 host = nas.displayAddress,
@@ -570,7 +553,7 @@ fun NasPhotoTvApp() {
                             )
                         }
 
-                        // 两步验证覆盖层：整页 Loading 之上弹数字键盘，不改路由
+                        // 两步验证覆盖在连接中的首页，不改路由
                         startupTwoFactor?.let { prompt ->
                             // key = 错误信息：验证码错误后重建输入层，用户不用先删掉 6 位旧数字
                             key(prompt.error) {
@@ -651,6 +634,19 @@ fun NasPhotoTvApp() {
 /** 图库必须覆盖完整时间范围，不能按开发机的照片数量截断旧年份。 */
 private const val FULL_LIBRARY_LIMIT = Int.MAX_VALUE
 
+private fun connectingLibrary(nas: NasConnection) = LibraryState(
+    connectionName = nas.name.ifBlank { "Home-NAS" },
+    accountName = nas.activeAccount?.displayName.orEmpty(),
+    accountCount = nas.accounts.size.coerceAtLeast(1),
+    ownerAccountId = nas.activeAccountId,
+    peopleLoaded = false,
+    foldersLoaded = false,
+    timelineLoading = true,
+    albumsLoaded = false,
+    smartAlbumsLoaded = false,
+    isConnecting = true,
+)
+
 private suspend fun <T> libraryRequest(block: suspend () -> T): T? = try {
     block()
 } catch (cancelled: CancellationException) {
@@ -669,7 +665,6 @@ private data class StartupTwoFactor(
 /** 媒体库的加载状态：所有内容都来自 NAS，没有就绪数据时显示对应引导页 */
 private sealed interface LibraryLoad {
     data object NeedsSetup : LibraryLoad
-    data object Loading : LibraryLoad
     data class Error(val message: String) : LibraryLoad
     data class Ready(val library: LibraryState) : LibraryLoad
 }

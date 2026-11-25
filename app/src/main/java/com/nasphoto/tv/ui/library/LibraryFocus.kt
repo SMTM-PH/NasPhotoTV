@@ -25,17 +25,13 @@ import androidx.compose.runtime.withFrameMillis
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -45,6 +41,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.nasphoto.tv.ui.theme.TvColor
+import com.nasphoto.tv.ui.theme.tvFocusRing
 import com.nasphoto.tv.ui.theme.TvDimen
 
 /**
@@ -154,7 +151,6 @@ fun TvFocusBox(
     onConfirm: (() -> Unit)? = null,
     onUp: (() -> Unit)? = null,
     onDown: (() -> Unit)? = null,
-    focusRingColor: Color = TvColor.FocusRing,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -178,16 +174,7 @@ fun TvFocusBox(
             scaleX = scale
             scaleY = scale
         }
-        .drawWithContent {
-            drawContent()
-            if (glow > 0f) {
-                drawRoundRect(
-                    color = focusRingColor.copy(alpha = glow),
-                    cornerRadius = CornerRadius(cornerRadiusDp.dp.toPx()),
-                    style = Stroke(width = TvDimen.FocusRingWidth.toPx()),
-                )
-            }
-        }
+        .tvFocusRing(cornerRadiusDp.dp, glow)
         .then(
             if (focused) {
                 Modifier.shadow(

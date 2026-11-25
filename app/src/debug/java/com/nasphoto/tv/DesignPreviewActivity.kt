@@ -152,6 +152,7 @@ class DesignPreviewActivity : ComponentActivity() {
                             initialIndex = activeViewer.initialIndex,
                             contextTitle = activeViewer.contextTitle,
                             startSlideshow = activeViewer.startSlideshow,
+                            slideshowProfile = SettingsStore.albumSlideshow(activeViewer.slideshowKey),
                             onClose = { viewer = null },
                         )
                     } else when (route) {
@@ -161,9 +162,7 @@ class DesignPreviewActivity : ComponentActivity() {
                                 onOpenPhoto = { items, index, title ->
                                     viewer = ViewerRequest(items, index, title)
                                 },
-                                onPlaySlideshow = { items, index, title ->
-                                    viewer = ViewerRequest(items, index, title, startSlideshow = true)
-                                },
+                                onOpenCollectionViewer = { viewer = it },
                                 onOpenVideo = { _, _, _ -> },
                                 onNavigate = { route = it },
                                 onLoadPersonPhotos = { sample.recent },

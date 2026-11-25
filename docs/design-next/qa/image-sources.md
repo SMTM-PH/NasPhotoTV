@@ -1,6 +1,6 @@
 # 设计预览摄影素材来源
 
-这些照片仅打包到 `app/src/debug/res/raw`，用于离线设计评审。正式 Release 不包含示例照片。截图中的「本地示例图库」「设计预览」和相册内容不是用户 NAS 数据。
+完整示例照片打包到 `app/src/debug/res/raw`，用于离线设计评审。正式包仅包含放映动效预览用的两张 720 像素缩略图。`slideshow_preview_lake.jpg` 源自 Luca Bravo 的 `design_wall_aurora.jpg`，`slideshow_preview_ocean.jpg` 源自 Sean Oulashin 的 `design_wall_ocean.jpg`。截图中的「本地示例图库」「设计预览」和相册内容均为示例。
 
 下载及许可核对日期：2026-11-04（北京时间）。
 

@@ -118,9 +118,13 @@ class PhotoViewerState(
         val n = items.size
         if (n <= 0) return
         val clamped = target.coerceIn(0, n - 1)
-        if (clamped == index) return
-        direction = if (animateDirectional) (if (clamped > index) 1 else -1) else 0
-        index = clamped
+        showPage(clamped, if (animateDirectional) (if (clamped > index) 1 else -1) else 0)
+    }
+
+    internal fun showPage(target: Int, direction: Int) {
+        if (target !in items.indices || target == index) return
+        this.direction = direction
+        index = target
         resetPan()
     }
 
@@ -172,24 +176,23 @@ class PhotoViewerState(
         return true
     }
 
-    /** 下一张照片距当前的步长（找不到照片时返回 null，视频封面不会停在自动播放里） */
-    private fun nextPhotoStep(): Int? {
-        if (items.isEmpty()) return null
-        return (1..items.size).firstOrNull {
-            items[(index + it) % items.size].type == MediaType.PHOTO
+    /** 从指定位置向前找下一张照片，跳过视频并在末尾回到开头。 */
+    internal fun nextPhotoIndex(after: Int = index): Int? {
+        val count = items.size
+        if (count == 0) return null
+        return (1..count).firstNotNullOfOrNull { step ->
+            ((after + step) % count).takeIf { items[it].type == MediaType.PHOTO }
         }
     }
 
-    /** 只看不动 index：UI 用它提前把下一张解码进缓存，网络差时换页不再露占位/黑屏 */
+    /** 查看下一张照片，保留当前索引。 */
     fun peekNextPhoto(): MediaItem? {
-        val step = nextPhotoStep() ?: return null
-        return items[(index + step) % items.size]
+        return nextPhotoIndex()?.let(items::get)
     }
 
     /** 幻灯片 tick：自动下一张 */
     fun advanceSlideshow() {
-        val step = nextPhotoStep() ?: return
-        go(step)
+        nextPhotoIndex()?.let { showPage(it, direction = 1) }
     }
 
     // ---------------- 放大平移 ----------------

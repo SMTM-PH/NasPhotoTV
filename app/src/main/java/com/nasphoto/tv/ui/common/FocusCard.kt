@@ -2,9 +2,7 @@ package com.nasphoto.tv.ui.common
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -21,8 +19,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -30,9 +26,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
+import com.nasphoto.tv.ui.theme.tvFocusRing
 
 /**
  * ================= 电视端可聚焦卡片（Lead 提供的公共组件，供各页面复用） =================
@@ -46,9 +42,7 @@ fun FocusCard(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = TvDimen.RadiusM,
     focusedScale: Float = TvDimen.FocusScale,
-    shape: Shape = RoundedCornerShape(cornerRadius),
     focusRequester: FocusRequester? = null,
-    borderColor: Color = TvColor.FocusRing,
     onFocusChanged: ((Boolean) -> Unit)? = null,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
@@ -64,6 +58,7 @@ fun FocusCard(
         label = "focusRing",
     )
     val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(cornerRadius)
 
     Box(
         modifier = modifier
@@ -86,6 +81,7 @@ fun FocusCard(
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .clip(shape)
             .background(TvColor.Surface)
+            .tvFocusRing(cornerRadius, ringAlpha)
             .onFocusChanged { state ->
                 if (focused != state.isFocused) {
                     focused = state.isFocused
@@ -105,12 +101,5 @@ fun FocusCard(
             },
     ) {
         content(focused)
-        if (ringAlpha > 0f) {
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .border(BorderStroke(TvDimen.FocusRingWidth, borderColor.copy(alpha = ringAlpha)), shape),
-            )
-        }
     }
 }

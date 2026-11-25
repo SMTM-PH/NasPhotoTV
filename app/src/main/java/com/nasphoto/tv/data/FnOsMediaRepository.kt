@@ -40,9 +40,12 @@ class FnOsMediaRepository(
     private val albumCache = mutableMapOf<String, List<MediaItem>>()
     private val smartAlbums = FnOsSmartAlbums(api::getJson, api::postJson, ::parseMedia, ::absolute)
     private val gallery = FnOsGallery(api::getJson, ::parseMedia)
+    private val mapPlaces = FnOsMapPlaces(api::getJson, ::parseMedia, baseUrl)
     private val folders = FnOsFolders(api::getJson, ::parseMedia, api::postJson, baseUrl)
 
     suspend fun probe(): FnOsProbeResult = api.testConnection()
+
+    internal suspend fun authenticate() = api.authenticate()
 
     /**
      * 账号开启两步验证时，密码登录只算「半程」：调用这里提交 6 位动态码，
@@ -61,6 +64,13 @@ class FnOsMediaRepository(
 
     override suspend fun getRecent(limit: Int): List<MediaItem> =
         gallery.getRecent(limit).also { recentCache = it }
+
+    internal suspend fun getRecentPreview(limit: Int): List<MediaItem> =
+        gallery.getRecentPreview(limit)
+
+    internal suspend fun getPlaceAlbums(revision: Int): List<Album> = mapPlaces.getAlbums(revision)
+
+    internal suspend fun getPlaceMedia(id: String, revision: Int): List<MediaItem> = mapPlaces.getMedia(id, revision)
 
     override suspend fun getAlbums(): List<Album> {
         val own = api.getJson(
@@ -383,6 +393,7 @@ class FnOsMediaRepository(
             starred = json.optInt("isCollect", 0) == 1,
             extension = extension,
             filePath = firstNonBlank(json, "filePath", "path", "showFilePath"),
+            location = parseFnOsPhotoLocation(json),
         )
     }
 

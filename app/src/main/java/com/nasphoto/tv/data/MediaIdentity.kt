@@ -9,15 +9,19 @@ import java.util.Locale
  * change identity; endpoint, account and authentication changes invalidate old media.
  * The key contains a digest, never the credentials themselves, and is not persisted.
  */
-fun NasConnection.mediaIdentityKey(): String {
+fun NasConnection.mediaIdentityKey(): String = identityDigest(includeCredentials = true)
+
+internal fun NasConnection.albumSlideshowOwnerKey(): String = identityDigest(includeCredentials = false)
+
+private fun NasConnection.identityDigest(includeCredentials: Boolean): String {
     val fields = listOf(
         scheme.trim().lowercase(Locale.ROOT),
         host.trim().lowercase(Locale.ROOT),
         port.toString(),
         basePath.trim().lowercase(Locale.ROOT),
         activeAccountId,
-        username, password, accessCode,
-    )
+        username,
+    ) + if (includeCredentials) listOf(password, accessCode) else emptyList()
     val source = buildString { fields.forEach { append(it.length).append(':').append(it) } }
     val digest = MessageDigest.getInstance("SHA-256").digest(source.toByteArray(Charsets.UTF_8))
     val hex = "0123456789abcdef"

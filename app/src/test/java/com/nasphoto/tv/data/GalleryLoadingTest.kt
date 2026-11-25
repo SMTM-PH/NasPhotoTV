@@ -15,6 +15,19 @@ import org.junit.Test
 
 class GalleryLoadingTest {
     @Test
+    fun startupPreviewReadsExactlyOnePageEvenWhenItContainsFewerThanRequested() = runBlocking<Unit> {
+        val offsets = mutableListOf<String>()
+        val gallery = gallery { path, params ->
+            assertEquals(LIST, path)
+            offsets += params.getValue("offset")
+            page(listOf(item(1, "2026-01-01")))
+        }
+
+        assertEquals(listOf("1"), gallery.getRecentPreview(48).map { it.id })
+        assertEquals(listOf("0"), offsets)
+    }
+
+    @Test
     fun loadsEveryYearBackTo2000DespiteShortPagesAndAbsentPagingMetadata() = runBlocking<Unit> {
         val requestedYears = mutableListOf<Int>()
         val offsets = mutableListOf<Int>()

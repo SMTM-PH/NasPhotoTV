@@ -48,6 +48,23 @@ object SettingsStore {
     var nas: NasConnection by mutableStateOf(defaultNas)
         private set
 
+    private var albumSlideshows by mutableStateOf<Map<String, SlideshowProfile>>(emptyMap())
+
+    fun albumSlideshowKey(collectionId: String): String =
+        "album_slideshow/${nas.albumSlideshowOwnerKey()}/$collectionId"
+
+    fun albumSlideshow(key: String?): SlideshowProfile? = key?.let(albumSlideshows::get)
+
+    fun setAlbumSlideshow(key: String, profile: SlideshowProfile?) {
+        if (profile == null) {
+            albumSlideshows = albumSlideshows - key
+            prefs()?.edit()?.remove(key)?.apply()
+        } else {
+            albumSlideshows = albumSlideshows + (key to profile)
+            prefs()?.edit()?.putString(key, profile.encode())?.apply()
+        }
+    }
+
     /** 在线更新偏好（1.2.7）：启动静默检查、自定义更新源与下载镜像。 */
     var update: UpdateSettings by mutableStateOf(UpdateSettings())
         private set
@@ -351,6 +368,10 @@ object SettingsStore {
     /** 从磁盘恢复；没有存档时保持默认值 */
     fun restore() {
         val p = prefs() ?: return
+        albumSlideshows = p.all.mapNotNull { (key, value) ->
+            if (!key.startsWith("album_slideshow/") || value !is String) null
+            else SlideshowProfile.decode(value)?.let { key to it }
+        }.toMap()
         if (!p.contains("ss_idle") && !p.contains("nas_host")) return
         val restoredAccounts = restoreAccounts(p)
         val storedActive = p.getString("nas_active", "") ?: ""

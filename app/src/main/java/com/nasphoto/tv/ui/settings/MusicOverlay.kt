@@ -13,18 +13,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.focusable
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -35,11 +36,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.nasphoto.tv.data.MusicUploadServer
 import com.nasphoto.tv.data.SettingsStore
 import com.nasphoto.tv.data.SlideshowMusic
+import com.nasphoto.tv.data.SlideshowProfile
 import com.nasphoto.tv.ui.library.TvFocusBox
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
@@ -51,37 +51,39 @@ import com.nasphoto.tv.ui.theme.TvType
  * 面板打开期间启动上传服务，关闭时立即停止 —— 平时不占端口。
  */
 @Composable
-fun MusicOverlay(store: SettingsStore, feedback: SettingsFeedback, onClose: () -> Unit) {
+fun MusicOverlay(
+    store: SettingsStore,
+    feedback: SettingsFeedback,
+    onClose: () -> Unit,
+    albumProfile: SlideshowProfile? = null,
+    onAlbumProfileChange: ((SlideshowProfile) -> SlideshowProfile) -> Unit = {},
+) {
     val context = LocalContext.current
-    val server = remember { MusicUploadServer(context) }
+    val server = remember(context) { MusicUploadServer(context) }
+    var serverReady by remember(server) { mutableStateOf(false) }
     var refresh by remember { mutableIntStateOf(0) }
     val closeFocus = remember { FocusRequester() }
 
-    DisposableEffect(Unit) {
-        server.start()
+    DisposableEffect(server) {
+        serverReady = server.start()
         onDispose { server.stop() }
     }
-    DisposableEffect(Unit) {
-        runCatching { closeFocus.requestFocus() }
-        onDispose { }
-    }
 
-    val s = store.screensaver
-    val urls = server.urls
+    val musicEnabled = albumProfile?.musicEnabled ?: store.screensaver.musicEnabled
+    val urls = remember(server, serverReady, refresh) {
+        if (serverReady) server.urls else emptyList()
+    }
     val tracks = remember(refresh, feedback.musicVersion) { SlideshowMusic.tracks(context) }
 
-    Dialog(
-        onDismissRequest = onClose,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            dismissOnBackPress = false,
-            dismissOnClickOutside = false,
-        ),
-    ) {
+    SettingsDialog(onClose) {
+        LaunchedEffect(Unit) {
+            withFrameMillis { }
+            closeFocus.requestFocus()
+        }
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = TvDimen.ScreenPadding)
+                .padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceM)
                 .onPreviewKeyEvent { e ->
                     if (e.type == KeyEventType.KeyDown && (e.key == Key.Back || e.key == Key.Escape)) {
                         onClose(); true
@@ -99,7 +101,11 @@ fun MusicOverlay(store: SettingsStore, feedback: SettingsFeedback, onClose: () -
                 Text("幻灯片背景音乐", fontSize = TvType.Section, fontWeight = FontWeight.SemiBold, color = TvColor.TextPrimary)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "手机连同一个 Wi‑Fi，用浏览器打开下面的地址，选一个音频文件上传即可；电视播放幻灯片/屏保时循环播放。",
+                    if (albumProfile == null) {
+                        "手机连同一个 Wi‑Fi，用浏览器打开下面的地址上传音频。幻灯片和屏保会循环播放。"
+                    } else {
+                        "手机连同一个 Wi‑Fi，用浏览器打开下面的地址上传音频，再为此相册选一首。"
+                    },
                     fontSize = TvType.Tiny, color = TvColor.TextTertiary,
                 )
                 Spacer(Modifier.height(TvDimen.SpaceM))
@@ -114,16 +120,38 @@ fun MusicOverlay(store: SettingsStore, feedback: SettingsFeedback, onClose: () -
 
                 Spacer(Modifier.height(TvDimen.SpaceM))
                 Text(
-                    if (s.musicEnabled) "背景音乐：开" else "背景音乐：关",
-                    fontSize = TvType.Body, color = if (s.musicEnabled) TvColor.Accent else TvColor.TextSecondary,
+                    if (musicEnabled) "背景音乐：开" else "背景音乐：关",
+                    fontSize = TvType.Body, color = if (musicEnabled) TvColor.Accent else TvColor.TextSecondary,
                 )
                 Spacer(Modifier.height(TvDimen.SpaceM))
 
-                Text("已上传（最新一个会被使用）", fontSize = TvType.Caption, color = TvColor.TextSecondary)
+                Text(
+                    if (albumProfile == null) "已上传（播放最新一首）" else "此相册的配乐",
+                    fontSize = TvType.Caption,
+                    color = TvColor.TextSecondary,
+                )
                 Spacer(Modifier.height(6.dp))
+                if (albumProfile != null) {
+                    val choices = listOf(null) + tracks.map { it.name }
+                    choices.forEach { name ->
+                        val selected = name == albumProfile.trackName
+                        TvFocusBox(
+                            modifier = Modifier.fillMaxWidth(),
+                            cornerRadiusDp = 12,
+                            onConfirm = { onAlbumProfileChange { it.copy(trackName = name, musicEnabled = true) } },
+                        ) { focused ->
+                            val label = name ?: "最新上传"
+                            Pill(if (selected) "✓  $label" else label, focused)
+                        }
+                    }
+                    val selectedName = albumProfile.trackName
+                    if (selectedName != null && tracks.none { it.name == selectedName }) {
+                        Text("已选曲目不可用，请重新选择", fontSize = TvType.Tiny, color = TvColor.TextSecondary)
+                    }
+                }
                 if (tracks.isEmpty()) {
                     Text("还没有上传音乐", fontSize = TvType.Caption, color = TvColor.TextTertiary)
-                } else {
+                } else if (albumProfile == null) {
                     tracks.take(6).forEachIndexed { i, f ->
                         Text(
                             "${if (i == 0) "▶ " else "   "}${f.name}",
@@ -137,12 +165,16 @@ fun MusicOverlay(store: SettingsStore, feedback: SettingsFeedback, onClose: () -
                 Row(horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM), verticalAlignment = Alignment.CenterVertically) {
                     TvFocusBox(
                         onConfirm = {
-                            store.updateScreensaver { it.copy(musicEnabled = !it.musicEnabled) }
+                            if (albumProfile == null) {
+                                store.updateScreensaver { it.copy(musicEnabled = !it.musicEnabled) }
+                            } else {
+                                onAlbumProfileChange { it.copy(musicEnabled = !it.musicEnabled) }
+                            }
                             feedback.musicVersion++
                         },
                         cornerRadiusDp = 12,
                         focusedScale = 1.04f,
-                    ) { focused -> Pill(if (s.musicEnabled) "关闭音乐" else "开启音乐", focused) }
+                    ) { focused -> Pill(if (musicEnabled) "关闭音乐" else "开启音乐", focused) }
                     TvFocusBox(
                         onConfirm = { refresh++; feedback.musicVersion++ },
                         cornerRadiusDp = 12,

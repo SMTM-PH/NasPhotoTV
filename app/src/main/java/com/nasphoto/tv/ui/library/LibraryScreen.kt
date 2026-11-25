@@ -40,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -58,6 +59,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import com.nasphoto.tv.ui.common.MediaImage
 import com.nasphoto.tv.data.SettingsStore
@@ -70,6 +73,8 @@ import com.nasphoto.tv.data.model.Person
 import com.nasphoto.tv.data.model.pixelSize
 import com.nasphoto.tv.ui.AppRoute
 import com.nasphoto.tv.ui.LibraryState
+import com.nasphoto.tv.ui.settings.SlideshowSettingsOverlay
+import com.nasphoto.tv.ui.ViewerRequest
 import com.nasphoto.tv.ui.theme.NasPhotoTvTheme
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvImage
@@ -108,7 +113,12 @@ fun LibraryScreen(
     /** 普通相册按需加载，避免启动时把所有相册的全部照片都拉进内存。 */
     onLoadAlbumMedia: suspend (albumId: String) -> List<MediaItem>? = { emptyList() },
     modifier: Modifier = Modifier,
-    onPlaySlideshow: (List<MediaItem>, Int, String) -> Unit = onOpenPhoto,
+    onOpenCollectionViewer: (ViewerRequest) -> Unit = {
+        onOpenPhoto(it.items, it.initialIndex, it.contextTitle)
+    },
+    onLoadPlaceAlbums: (suspend () -> List<Album>?)? = null,
+    onLoadPlaceMedia: (suspend (String) -> List<MediaItem>?)? = null,
+    placeRevision: Int = 0,
 ) {
     var selectedTab by rememberSaveable(state.selectedTabIndex) {
         mutableStateOf(initialTabOf(state.selectedTabIndex))
@@ -118,6 +128,8 @@ fun LibraryScreen(
     var openedAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
     var openedPersonId by rememberSaveable { mutableStateOf<String?>(null) }
     var openedSmartAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
+    var openedPlaceId by rememberSaveable { mutableStateOf<String?>(null) }
+    var placeFocusIndex by rememberSaveable { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     // 从人物详情 BACK 回来时要落回原来那张脸，否则一排人里跳回第一个很别扭
     var peopleFocusIndex by rememberSaveable { mutableStateOf(0) }
@@ -144,12 +156,34 @@ fun LibraryScreen(
     }
     val openedPerson = openedPersonId?.let { id -> state.people.firstOrNull { it.id == id } }
     val openedSmartAlbum = openedSmartAlbumId?.let { id -> state.smartAlbums.firstOrNull { it.id == id } }
+    val showingPlaces = selectedTab == LibraryTab.PLACES
+    val mapIndex by produceState<MapPlaces>(
+        MapPlaces.Loading, showingPlaces, state.isOnline, placeRevision,
+    ) {
+        if (showingPlaces && state.isOnline && onLoadPlaceAlbums != null) {
+            value = MapPlaces.Loading
+            value = onLoadPlaceAlbums()?.let(MapPlaces::Ready) ?: MapPlaces.Unavailable
+        } else {
+            value = if (onLoadPlaceAlbums != null) MapPlaces.Loading else MapPlaces.NotRequested
+        }
+    }
+    val mapPlaces = (mapIndex as? MapPlaces.Ready)?.albums.orEmpty()
+    val placeTimeline = state.recent.takeIf { showingPlaces && mapPlaces.isEmpty() }
+    val localPlaces by produceState<List<PlaceAlbum>?>(null, placeTimeline) {
+        value = placeTimeline?.let { timeline -> withContext(Dispatchers.Default) { placeAlbums(timeline) } }
+    }
+    val placeCards = remember(mapPlaces, localPlaces) {
+        mapPlaces.ifEmpty { localPlaces.orEmpty().map { it.album } }
+    }
+    val readingPlaces = mapIndex == MapPlaces.Loading ||
+        mapPlaces.isEmpty() && (state.timelineLoading || localPlaces == null)
+    val openedPlace = openedPlaceId?.let { id -> placeCards.firstOrNull { it.id == id } }
 
     // ---- 顶栏焦点 ----
     val tabRequesters = remember { TOP_LEVEL_TABS.map { FocusRequester() } }
     val actionRequesters = remember { List(TOP_ACTION_COUNT) { FocusRequester() } }
     val accountRequester = remember { FocusRequester() }
-    val categoryRequesters = remember { List(4) { FocusRequester() } }
+    val categoryRequesters = remember { ALBUM_TABS.map { FocusRequester() } }
     val topFocus = remember { PendingFocus() }   // 顶栏精确落点
     val contentFocus = remember { PendingFocus() } // 主内容精确落点
     var lastTab by remember { mutableIntStateOf(topLevelTab(selectedTab).ordinal) }
@@ -175,6 +209,11 @@ fun LibraryScreen(
         contentFocus.requestBlock(BLOCK_CONTENT)
     }
 
+    BackHandler(enabled = openedPlace != null) {
+        openedPlaceId = null
+        contentFocus.requestBlock(BLOCK_CONTENT)
+    }
+
     BackHandler(enabled = openedAlbum != null) {
         openedAlbumId = null
         // 遥控器 BACK 走这里（不是详情页里的返回按钮）。相册网格已随详情页销毁，
@@ -190,13 +229,14 @@ fun LibraryScreen(
         contentFocus.requestBlock(BLOCK_CONTENT)
     }
 
-    BackHandler(enabled = openedAlbum == null && openedPerson == null && openedSmartAlbum == null && selectedTab != LibraryTab.ALL) {
+    BackHandler(enabled = openedAlbum == null && openedPerson == null && openedSmartAlbum == null &&
+        openedPlace == null && selectedTab != LibraryTab.ALL) {
         if (selectedTab == LibraryTab.FOLDER && folderNavId != null) {
             val parentId = state.folders.firstOrNull { it.id == folderNavId }
                 ?.parentId?.takeIf { it.isNotBlank() }
             upFolder(parentId)
         } else {
-            selectedTab = if (selectedTab == LibraryTab.PEOPLE || selectedTab == LibraryTab.SMART)
+            selectedTab = if (selectedTab == LibraryTab.PEOPLE || selectedTab == LibraryTab.SMART || selectedTab == LibraryTab.PLACES)
                 LibraryTab.ALBUMS else LibraryTab.ALL
             lastTab = topLevelTab(selectedTab).ordinal
             contentFocus.requestBlock(BLOCK_CONTENT)
@@ -206,10 +246,11 @@ fun LibraryScreen(
     // 进入相册/人物/智能分类详情时切换成沉浸式全屏：去掉顶栏与底部提示，
     // 用封面铺满整屏做背景（窗口本身已全屏，见 MainActivity），
     // 让大屏真正用来展示照片，而不是被控件挤成一小块网格。
-    val detailOpen = openedAlbum != null || openedPerson != null || openedSmartAlbum != null
+    val detailOpen = openedAlbum != null || openedPerson != null || openedSmartAlbum != null || openedPlace != null
     val detailCover = when {
         openedAlbum != null -> openedAlbum?.coverUrl.orEmpty()
         openedSmartAlbum != null -> openedSmartAlbum?.coverUrl.orEmpty()
+        openedPlace != null -> openedPlace.coverUrl
         openedPerson != null -> openedPerson?.coverUrl.orEmpty()
         else -> ""
     }
@@ -226,6 +267,7 @@ fun LibraryScreen(
                 selectedTab = topLevelTab(selectedTab),
                 connectionName = state.connectionName,
                 isOnline = state.isOnline,
+                isConnecting = state.isConnecting,
                 accountName = state.accountName,
                 accountCount = state.accountCount,
                 onAccountClick = { onNavigate(AppRoute.Settings) },
@@ -236,6 +278,7 @@ fun LibraryScreen(
                     openedAlbumId = null
                     openedPersonId = null
                     openedSmartAlbumId = null
+                    openedPlaceId = null
                 },
                 onTabFocus = { lastTab = it },
                 onActionFocus = { lastAction = it },
@@ -246,21 +289,33 @@ fun LibraryScreen(
                     openedAlbumId = null
                     openedPersonId = null
                     openedSmartAlbumId = null
+                    openedPlaceId = null
                 },
                 onScreensaver = { onNavigate(AppRoute.ScreensaverPreview) },
                 onSettings = { onNavigate(AppRoute.Settings) },
                 onTabDown = {
                     if (topLevelTab(selectedTab) == LibraryTab.ALBUMS) {
-                        val index = listOf(LibraryTab.ALBUMS, LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.SMART).indexOf(selectedTab).coerceAtLeast(0)
+                        val index = ALBUM_TABS.indexOf(selectedTab).coerceAtLeast(0)
                         categoryRequesters[index].requestFocus()
                     } else contentFocus.requestBlock(BLOCK_CONTENT)
                 },
             )
+            if (state.isConnecting) {
+                Text(
+                    "正在连接 NAS…",
+                    modifier = Modifier.padding(
+                        horizontal = TvDimen.ScreenPadding,
+                        vertical = TvDimen.SpaceXs,
+                    ),
+                    color = TvColor.TextSecondary,
+                    fontSize = TvType.Caption,
+                )
+            }
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
         Column(Modifier.fillMaxSize()) {
-        if (selectedTab in listOf(LibraryTab.ALBUMS, LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.SMART) && openedAlbum == null && openedPerson == null) {
+        if (selectedTab in ALBUM_TABS && !detailOpen) {
                 AlbumCategoryBar(selectedTab, categoryRequesters,
                     onUp = { tabRequesters[LibraryTab.ALBUMS.ordinal].requestFocus() }, onSelect = {
                     selectedTab = it
@@ -275,7 +330,8 @@ fun LibraryScreen(
                 state.recent.isEmpty() && state.albums.isEmpty() &&
                 state.people.isEmpty() && state.smartAlbums.isEmpty() && state.folders.isEmpty()
         when {
-                isEmptyLibrary -> LibraryEmptyState(onOpenSettings = { onNavigate(AppRoute.Settings) })
+                isEmptyLibrary && selectedTab != LibraryTab.PLACES ->
+                    LibraryEmptyState(onOpenSettings = { onNavigate(AppRoute.Settings) })
 
                 openedSmartAlbum != null -> SmartCategoryDetailPane(
                     album = openedSmartAlbum,
@@ -286,7 +342,7 @@ fun LibraryScreen(
                     onOpenPhoto = onOpenPhoto,
                     onOpenVideo = onOpenVideo,
                     onLoadMedia = onLoadSmartAlbumMedia,
-                    onPlaySlideshow = onPlaySlideshow,
+                    onOpenCollectionViewer = onOpenCollectionViewer,
             )
 
             openedAlbum != null -> AlbumDetailPane(
@@ -300,7 +356,30 @@ fun LibraryScreen(
                 onOpenPhoto = onOpenPhoto,
                 onOpenVideo = onOpenVideo,
                 onLoadMedia = onLoadAlbumMedia,
-                onPlaySlideshow = onPlaySlideshow,
+                onOpenCollectionViewer = onOpenCollectionViewer,
+            )
+
+            openedPlace != null -> RemoteMediaDetailPane(
+                requestId = openedPlace.id,
+                stateKey = "place:${openedPlace.id}",
+                title = openedPlace.name,
+                contextTitle = "地点 · ${openedPlace.name}",
+                loadingText = "正在整理此地点的照片与视频…",
+                emptyCount = "暂无照片或视频",
+                failureTitle = "读取这个地点失败",
+                failureSubtitle = "返回地点列表后可以重新打开",
+                emptyTitle = "这个地点暂时没有媒体",
+                emptySubtitle = "图库更新后会同步到地点列表",
+                emptyIcon = Icons.Outlined.Place,
+                onBack = {
+                    openedPlaceId = null
+                    contentFocus.requestBlock(BLOCK_CONTENT)
+                },
+                onOpenPhoto = onOpenPhoto,
+                onOpenVideo = onOpenVideo,
+                onLoadMedia = onLoadPlaceMedia,
+                localMedia = localPlaces?.firstOrNull { it.album.id == openedPlace.id }?.media,
+                onOpenCollectionViewer = onOpenCollectionViewer,
             )
 
             openedPerson != null -> PersonDetailPane(
@@ -331,12 +410,17 @@ fun LibraryScreen(
                     onPlayCollection = { collection ->
                         val id = collection.smartAlbumId
                         if (id == null) {
-                            onPlaySlideshow(collection.items, 0, collection.title)
+                            onOpenCollectionViewer(ViewerRequest(collection.items, 0, collection.title, startSlideshow = true))
                         } else {
                             scope.launch {
                                 val items = onLoadSmartAlbumMedia(id)
                                 if (items.isNullOrEmpty()) openedSmartAlbumId = id
-                                else onPlaySlideshow(items, 0, collection.title)
+                                else onOpenCollectionViewer(
+                                    ViewerRequest(
+                                        items, 0, collection.title, startSlideshow = true,
+                                        slideshowKey = SettingsStore.albumSlideshowKey("smart-category:$id"),
+                                    ),
+                                )
                             }
                         }
                     },
@@ -357,14 +441,23 @@ fun LibraryScreen(
                     contentFocus = contentFocus,
                 )
 
-                LibraryTab.ALBUMS -> AlbumsTab(
-                    state = state,
-                    onOpenAlbum = { openedAlbumId = it.id },
-                    contentFocus = contentFocus,
-                    restoreIndex = albumsFocusIndex,
-                    onFocusAlbum = { albumsFocusIndex = it },
-                    onFirstRowUp = { categoryRequesters[0].requestFocus() },
-                )
+                LibraryTab.ALBUMS -> {
+                    val albums = remember(state.albums) { folderAlbums(state) }
+                    AlbumGrid(
+                        albums = albums,
+                        title = "相册",
+                        count = "${albums.size} 个文件夹",
+                        emptyTitle = state.albumsError ?: if (state.albumsLoaded) "还没有相册" else "正在读取相册…",
+                        emptySubtitle = "NAS 上的 /photo 目录为空，或仍在扫描",
+                        icon = Icons.Outlined.Album,
+                        coverFor = { albumCoverUrl(state, it) },
+                        onOpenAlbum = { openedAlbumId = it.id },
+                        contentFocus = contentFocus,
+                        restoreIndex = albumsFocusIndex,
+                        onFocusAlbum = { albumsFocusIndex = it },
+                        onFirstRowUp = { categoryRequesters[0].requestFocus() },
+                    )
+                }
 
                 LibraryTab.FOLDER -> FoldersTab(
                     folders = state.folders,
@@ -399,6 +492,32 @@ fun LibraryScreen(
                     restoreIndex = peopleFocusIndex,
                     onFocusPerson = { peopleFocusIndex = it },
                     onUpToTopBar = { categoryRequesters[2].requestFocus() },
+                )
+
+                LibraryTab.PLACES -> AlbumGrid(
+                    albums = placeCards,
+                    title = "地点",
+                    count = when {
+                        readingPlaces -> "正在读取地点…"
+                        else -> "${placeCards.size} 个地点 · ${placeCards.sumOf { it.itemCount.toLong() }} 项"
+                    },
+                    emptyTitle = when {
+                        readingPlaces -> "正在读取地点…"
+                        mapIndex == MapPlaces.Unavailable -> "暂时无法读取飞牛地图"
+                        state.timelineError != null -> "暂时无法读取图库地点"
+                        else -> "还没有带地点的照片或视频"
+                    },
+                    emptySubtitle = if (mapIndex == MapPlaces.Unavailable || state.timelineError != null) {
+                        "可在设置中刷新媒体库"
+                    } else {
+                        "带拍摄地点的媒体会自动归到这里"
+                    },
+                    icon = Icons.Outlined.Place,
+                    onOpenAlbum = { openedPlaceId = it.id },
+                    contentFocus = contentFocus,
+                    restoreIndex = placeFocusIndex,
+                    onFocusAlbum = { placeFocusIndex = it },
+                    onFirstRowUp = { categoryRequesters[ALBUM_TABS.indexOf(LibraryTab.PLACES)].requestFocus() },
                 )
 
                 LibraryTab.RECENT -> RecentTab(
@@ -809,8 +928,14 @@ private fun ChronoDayStrip(
 // ============================== Tab 3：相册网格 ==============================
 
 @Composable
-private fun AlbumsTab(
-    state: LibraryState,
+private fun AlbumGrid(
+    albums: List<Album>,
+    title: String,
+    count: String,
+    emptyTitle: String,
+    emptySubtitle: String,
+    icon: ImageVector,
+    coverFor: (Album) -> String = { it.coverUrl },
     onOpenAlbum: (Album) -> Unit,
     contentFocus: PendingFocus,
     /** 从相册详情 BACK 回来时要落回的相册索引（外层 rememberSaveable 记住的落点） */
@@ -819,7 +944,6 @@ private fun AlbumsTab(
     onFocusAlbum: (Int) -> Unit = {},
     onFirstRowUp: () -> Unit,
 ) {
-    val albums = remember(state) { folderAlbums(state) }
     val columns = ALBUM_GRID_COLUMNS
     // 恢复位置可能已滚出可视区，而 LazyGrid 只组合可见项：让网格直接初始化在恢复位置
     // 所在行，目标卡片才在组合树里，requestFocus 才有意义（与 PeopleTab 同款处理）。
@@ -838,16 +962,16 @@ private fun AlbumsTab(
 
     Column(Modifier.fillMaxSize()) {
         SectionHeader(
-            title = "相册",
-            trailing = "${albums.size} 个文件夹",
+            title = title,
+            trailing = count,
             modifier = Modifier.padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceM),
         )
         if (albums.isEmpty()) {
             EmptyState(
-                title = state.albumsError ?: if (state.albumsLoaded) "还没有相册" else "正在读取相册…",
-                subtitle = "NAS 上的 /photo 目录为空，或仍在扫描",
+                title = emptyTitle,
+                subtitle = emptySubtitle,
                 modifier = Modifier.fillMaxSize(),
-                icon = Icons.Outlined.Album,
+                icon = icon,
             )
         } else {
             LazyVerticalGrid(
@@ -861,11 +985,14 @@ private fun AlbumsTab(
                 itemsIndexed(albums, key = { _, it -> it.id }) { index, album ->
                     AlbumCard(
                         album = album,
-                        coverUrl = albumCoverUrl(state, album),
+                        coverUrl = coverFor(album),
                         width = ALBUM_CELL_W,
                         height = ALBUM_CELL_H,
                         focusRequester = requesterAt(requesters, index),
-                        onClick = { onOpenAlbum(album) },
+                        onClick = {
+                            onFocusAlbum(index)
+                            onOpenAlbum(album)
+                        },
                         onFocusChanged = { focused ->
                             if (focused) {
                                 focusedIndex = index
@@ -874,6 +1001,9 @@ private fun AlbumsTab(
                         },
                         onUp = if (index < columns) onFirstRowUp else null,
                         onDown = null,
+                        secondaryText = album.subtitle.takeIf {
+                            album.type == AlbumType.SMART_PLACE && it.isNotBlank()
+                        }?.let { "${album.itemCount} 项 · $it" },
                     )
                 }
             }
@@ -1232,7 +1362,7 @@ private fun AlbumDetailPane(
     onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
     onLoadMedia: suspend (String) -> List<MediaItem>?,
-    onPlaySlideshow: ((List<MediaItem>, Int, String) -> Unit)? = null,
+    onOpenCollectionViewer: ((ViewerRequest) -> Unit)? = null,
 ) {
     // 相册详情改为按需加载：启动时不再预取每个相册的全部媒体。
     // 大相册会分页拉全，几万条 MediaItem 常驻 Java 堆会挤压视频解码缓冲区。
@@ -1241,7 +1371,7 @@ private fun AlbumDetailPane(
         stateKey = "album:${album.id}",
         title = album.name,
         contextTitle = album.name,
-        onPlaySlideshow = onPlaySlideshow,
+        onOpenCollectionViewer = onOpenCollectionViewer,
         loadingText = "正在加载「${album.name}」中的照片与视频…",
         emptyCount = "空文件夹",
         failureTitle = "读取这个相册失败了",
@@ -1265,14 +1395,14 @@ private fun SmartCategoryDetailPane(
     onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
     onLoadMedia: suspend (String) -> List<MediaItem>?,
-    onPlaySlideshow: ((List<MediaItem>, Int, String) -> Unit)? = null,
+    onOpenCollectionViewer: ((ViewerRequest) -> Unit)? = null,
 ) {
     RemoteMediaDetailPane(
         requestId = album.id,
         stateKey = "smart-category:${album.id}",
         title = album.name,
         contextTitle = "智能分类 · ${album.name}",
-        onPlaySlideshow = onPlaySlideshow,
+        onOpenCollectionViewer = onOpenCollectionViewer,
         loadingText = "正在加载「${album.name}」中的照片与视频…",
         emptyCount = "暂无照片或视频",
         failureTitle = "读取这个智能分类失败了",
@@ -1307,10 +1437,12 @@ private fun RemoteMediaDetailPane(
     onBack: () -> Unit,
     onOpenPhoto: (List<MediaItem>, Int, String) -> Unit,
     onOpenVideo: (List<MediaItem>, Int, String) -> Unit,
-    onLoadMedia: suspend (String) -> List<MediaItem>?,
-    onPlaySlideshow: ((List<MediaItem>, Int, String) -> Unit)? = null,
+    onLoadMedia: (suspend (String) -> List<MediaItem>?)? = null,
+    localMedia: List<MediaItem>? = null,
+    onOpenCollectionViewer: ((ViewerRequest) -> Unit)? = null,
 ) {
-    var mediaState by remember(stateKey) { mutableStateOf<DetailMedia>(DetailMedia.Loading) }
+    var remoteMedia by remember(stateKey) { mutableStateOf<DetailMedia>(DetailMedia.Loading) }
+    val mediaState = if (localMedia == null) remoteMedia else DetailMedia.Ready(localMedia)
     val columns = MEDIA_GRID_COLUMNS
     var focusedIndex by rememberSaveable(stateKey) { mutableIntStateOf(0) }
     val gridState = rememberLazyGridState(
@@ -1318,15 +1450,27 @@ private fun RemoteMediaDetailPane(
     )
     val backRequester = remember { FocusRequester() }
     val playRequester = remember { FocusRequester() }
+    val slideshowSettingsRequester = remember { FocusRequester() }
+    var slideshowSettingsOpen by remember(stateKey) { mutableStateOf(false) }
+    var playbackReturn by rememberSaveable(stateKey) { mutableStateOf<PlaybackReturn?>(null) }
     val requesters = remember { mutableListOf<FocusRequester>() }
     val innerFocus = remember { PendingFocus() }
     val readyItems = (mediaState as? DetailMedia.Ready)?.items.orEmpty()
     val photos = remember(readyItems) { readyItems.filter { it.type == MediaType.PHOTO } }
-    val canPlay = onPlaySlideshow != null && photos.isNotEmpty()
+    val nas = SettingsStore.nas
+    val slideshowKey = remember(nas, stateKey) { SettingsStore.albumSlideshowKey(stateKey) }
+    val playAction = onOpenCollectionViewer?.takeIf { photos.isNotEmpty() }?.let { open ->
+        { returnTo: PlaybackReturn ->
+            playbackReturn = returnTo
+            open(ViewerRequest(photos, 0, contextTitle, startSlideshow = true, slideshowKey = slideshowKey))
+        }
+    }
 
     LaunchedEffect(stateKey) {
-        mediaState = DetailMedia.Loading
-        mediaState = when (val loaded = onLoadMedia(requestId)) {
+        if (localMedia != null) return@LaunchedEffect
+        val load = onLoadMedia ?: return@LaunchedEffect
+        remoteMedia = DetailMedia.Loading
+        remoteMedia = when (val loaded = load(requestId)) {
             null -> DetailMedia.Failed
             else -> if (loaded.isEmpty()) DetailMedia.Empty else DetailMedia.Ready(loaded)
         }
@@ -1334,7 +1478,11 @@ private fun RemoteMediaDetailPane(
     BackHandler { onBack() }
 
     val firstTarget = {
-        if (mediaState is DetailMedia.Ready) {
+        if (playAction != null && playbackReturn == PlaybackReturn.PLAY) {
+            playRequester
+        } else if (playAction != null && playbackReturn == PlaybackReturn.SETTINGS) {
+            slideshowSettingsRequester
+        } else if (mediaState is DetailMedia.Ready) {
             val last = readyItems.lastIndex.coerceAtLeast(0)
             requesterAt(requesters, focusedIndex.coerceIn(0, last))
         } else {
@@ -1348,6 +1496,7 @@ private fun RemoteMediaDetailPane(
             runCatching { target.requestFocus() }
         }
         innerFocus.request(target)
+        if (mediaState is DetailMedia.Ready) playbackReturn = null
     }
     ConsumeBlockRequest(innerFocus, BLOCK_CONTENT, blockFallback = firstTarget)
 
@@ -1360,10 +1509,10 @@ private fun RemoteMediaDetailPane(
                 DetailMedia.Empty -> emptyCount
                 is DetailMedia.Ready -> countText(readyItems)
             },
-            playRequester = playRequester.takeIf { canPlay },
-            playAction = if (canPlay) {
-                { onPlaySlideshow(photos, 0, contextTitle) }
-            } else null,
+            playRequester = playRequester.takeIf { playAction != null },
+            playAction = playAction?.let { { it(PlaybackReturn.PLAY) } },
+            slideshowSettingsRequester = slideshowSettingsRequester.takeIf { playAction != null },
+            slideshowSettingsAction = if (playAction != null) ({ slideshowSettingsOpen = true }) else null,
             backFocusRequester = backRequester,
             onBack = onBack,
             onBackFocusChanged = { },
@@ -1394,13 +1543,40 @@ private fun RemoteMediaDetailPane(
                 requesters = requesters,
                 focusedIndex = focusedIndex,
                 onFocused = { focusedIndex = it },
-                onFirstRowUp = { innerFocus.request(if (canPlay) playRequester else backRequester) },
-                onClick = { _, item ->
-                    openMedia(item, readyItems, contextTitle, onOpenPhoto, onOpenVideo)
+                onFirstRowUp = { innerFocus.request(if (playAction != null) playRequester else backRequester) },
+                onClick = { index, item ->
+                    focusedIndex = index
+                    openMedia(item, readyItems, contextTitle, { items, index, context ->
+                        if (onOpenCollectionViewer == null) onOpenPhoto(items, index, context)
+                        else onOpenCollectionViewer(ViewerRequest(items, index, context, slideshowKey = slideshowKey))
+                    }, onOpenVideo)
                 },
             )
         }
     }
+    if (slideshowSettingsOpen && playAction != null) {
+        SlideshowSettingsOverlay(
+            collectionTitle = title,
+            slideshowKey = slideshowKey,
+            onClose = {
+                slideshowSettingsOpen = false
+                innerFocus.request(slideshowSettingsRequester)
+            },
+            onPlay = {
+                slideshowSettingsOpen = false
+                playAction(PlaybackReturn.SETTINGS)
+            },
+        )
+    }
+}
+
+private enum class PlaybackReturn { PLAY, SETTINGS }
+
+private sealed interface MapPlaces {
+    data object NotRequested : MapPlaces
+    data object Loading : MapPlaces
+    data object Unavailable : MapPlaces
+    data class Ready(val albums: List<Album>) : MapPlaces
 }
 
 /** 按需加载的四种状态。 */
@@ -1792,8 +1968,9 @@ private fun LibraryEmptyPreview() {
 }
 
 private val TOP_LEVEL_TABS = listOf(LibraryTab.ALL, LibraryTab.CHRONO, LibraryTab.ALBUMS)
+private val ALBUM_TABS = listOf(LibraryTab.ALBUMS, LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.PLACES, LibraryTab.SMART)
 private fun topLevelTab(tab: LibraryTab): LibraryTab = when (tab) {
-    LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.SMART -> LibraryTab.ALBUMS
+    LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.PLACES, LibraryTab.SMART -> LibraryTab.ALBUMS
     LibraryTab.RECENT -> LibraryTab.CHRONO
     else -> tab
 }
@@ -1802,7 +1979,7 @@ private fun topLevelTab(tab: LibraryTab): LibraryTab = when (tab) {
 private fun AlbumCategoryBar(selected: LibraryTab, requesters: List<FocusRequester>, onUp: () -> Unit, onSelect: (LibraryTab) -> Unit, onDown: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceXs),
         horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM)) {
-        listOf(LibraryTab.ALBUMS, LibraryTab.FOLDER, LibraryTab.PEOPLE, LibraryTab.SMART).forEachIndexed { index, tab ->
+        ALBUM_TABS.forEachIndexed { index, tab ->
             TvFocusBox(focusRequester = requesters[index], onUp = onUp,
                 onConfirm = { onSelect(tab) }, onDown = onDown,
                 modifier = Modifier.padding(horizontal = TvDimen.SpaceS, vertical = TvDimen.SpaceXs)) {

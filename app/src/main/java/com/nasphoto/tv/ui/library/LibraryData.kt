@@ -33,6 +33,7 @@ enum class LibraryTab(val label: String) {
     PEOPLE("人物"),
     RECENT("最近添加"),
     SMART("收藏"),
+    PLACES("地点"),
 }
 
 /** 一次横向行的数据模型：标题 + 媒体列表（用于「最近添加」等） */

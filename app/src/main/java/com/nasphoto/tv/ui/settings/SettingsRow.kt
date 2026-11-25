@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -71,8 +72,10 @@ fun SettingsRow(
     onStepLeft: (() -> Unit)? = null,
     onStepRight: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    valueOverride: String? = null,
+    hintOverride: String? = null,
 ) {
-    val value = rowValueText(key, store, feedback)
+    val value = valueOverride ?: rowValueText(key, store, feedback)
     val toggle = toggleState(key, store)
     val action = isActionRow(key)
 
@@ -102,7 +105,7 @@ fun SettingsRow(
             val trailing: @Composable () -> Unit = {
                 when {
                     toggle != null -> TvSwitch(checked = toggle, focused = rowFocused)
-                    action -> ActionTail(key, feedback, rowFocused)
+                    action -> ActionTail(key, value, feedback, rowFocused)
                     else -> ValueChip(
                         text = value,
                         focused = rowFocused,
@@ -159,7 +162,7 @@ fun SettingsRow(
                             exit = fadeOut(tween(100)) + shrinkVertically(tween(100)),
                         ) {
                             Text(
-                                text = key.hint,
+                                text = hintOverride ?: key.hint,
                                 fontSize = TvType.Tiny,
                                 color = TvColor.TextMuted,
                                 maxLines = 1,
@@ -320,7 +323,7 @@ private val ACTION_KEYS = setOf(
 )
 
 @Composable
-private fun ActionTail(key: SettingsKey, feedback: SettingsFeedback, focused: Boolean) {
+private fun ActionTail(key: SettingsKey, value: String, feedback: SettingsFeedback, focused: Boolean) {
     val tint = if (focused) TvColor.TextPrimary else TvColor.TextSecondary
     when (key) {
         SettingsKey.SS_DISPLAY_ALBUMS -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -363,6 +366,19 @@ private fun ActionTail(key: SettingsKey, feedback: SettingsFeedback, focused: Bo
             Icon(Icons.Outlined.PlayCircleOutline, null, Modifier.size(18.dp), tint = TvColor.TextTertiary)
             Spacer(Modifier.width(TvDimen.SpaceXs))
             Text("全屏", fontSize = TvType.Tiny, color = TvColor.TextTertiary)
+            Spacer(Modifier.width(TvDimen.SpaceXs))
+            Chevron(tint)
+        }
+
+        SettingsKey.SS_MUSIC -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                value,
+                modifier = Modifier.widthIn(max = 148.dp),
+                fontSize = TvType.Caption,
+                color = tint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Spacer(Modifier.width(TvDimen.SpaceXs))
             Chevron(tint)
         }

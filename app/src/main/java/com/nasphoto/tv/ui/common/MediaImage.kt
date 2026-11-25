@@ -1,8 +1,11 @@
 package com.nasphoto.tv.ui.common
 
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.content.Context
 import android.os.Build
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
@@ -19,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -148,6 +152,8 @@ fun MediaImage(
     cornerRadiusDp: Int = 0,
     /** 见 [MediaPlaceholder]：全屏舞台 / 屏保传 [MediaPlaceholder.HOLD] 保留上一张画面 */
     placeholder: MediaPlaceholder = MediaPlaceholder.SPINNER,
+    decodedImage: Drawable? = null,
+    onDecoded: ((Drawable) -> Unit)? = null,
 ) {
     val boxModifier = if (cornerRadiusDp > 0) {
         modifier.clip(RoundedCornerShape(cornerRadiusDp.dp))
@@ -155,7 +161,17 @@ fun MediaImage(
         modifier
     }
 
-    if (!url.startsWith("http://") && !url.startsWith("https://") &&
+    if (decodedImage is BitmapDrawable) {
+        Image(
+            bitmap = decodedImage.bitmap.asImageBitmap(),
+            contentDescription = contentDescription,
+            modifier = boxModifier,
+            contentScale = contentScale,
+        )
+        return
+    }
+
+    if (decodedImage == null && !url.startsWith("http://") && !url.startsWith("https://") &&
         !url.startsWith("android.resource://")) {
         when (placeholder) {
             MediaPlaceholder.SPINNER -> Placeholder(colorForUrl(url), boxModifier)
@@ -172,14 +188,15 @@ fun MediaImage(
     val effectiveWidth = effectiveImageWidth(targetWidth, LocalDensity.current.density)
     SubcomposeAsyncImage(
         model = ImageRequest.Builder(context)
-            .data(url)
+            .data(decodedImage ?: url)
             .size(effectiveWidth)
-            .crossfade(true)
+            .crossfade(decodedImage == null)
             .build(),
         imageLoader = NasImageLoader.get(context),
         contentDescription = contentDescription,
         modifier = boxModifier,
         contentScale = contentScale,
+        onSuccess = onDecoded?.let { callback -> { state -> callback(state.result.drawable) } },
         loading = {
             when (placeholder) {
                 MediaPlaceholder.SPINNER -> SpinnerPlaceholder(tint)

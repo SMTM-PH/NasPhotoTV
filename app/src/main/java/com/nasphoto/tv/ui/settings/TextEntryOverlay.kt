@@ -44,18 +44,22 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.nasphoto.tv.ui.common.ScreenIdleGuard
+import com.nasphoto.tv.ui.theme.ProvideTvDesignDensity
+import com.nasphoto.tv.ui.theme.tvFocusRing
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
 import com.nasphoto.tv.ui.theme.TvType
@@ -106,7 +110,6 @@ fun TextEntryOverlay(
     var cursorCol by remember { mutableIntStateOf(0) }
     val rootFocus = remember { FocusRequester() }
     val imeField = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
 
     val append: (String) -> Unit = { text ->
         val cleaned = if (numericOnly) text.filter { it.isDigit() } else text
@@ -205,9 +208,6 @@ fun TextEntryOverlay(
             delay(10_000)
         }
     }
-    DisposableEffect(Unit) {
-        onDispose { keyboard?.hide() }
-    }
 
     fun moveCursor(dr: Int, dc: Int) {
         val r = (cursorRow + dr).coerceIn(0, allRows.lastIndex)
@@ -219,14 +219,11 @@ fun TextEntryOverlay(
     // 必须用 Dialog 承载，而不是同层 Box：
     // 下层页面（设置列表 / 媒体库导航）自己的 focusRequester 会在组合后抢回焦点，
     // 遥控器按键就跑到遮罩底下的页面去了。Dialog 是独立窗口，底层收不到按键事件。
-    Dialog(
-        onDismissRequest = onCancel,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            dismissOnBackPress = false,
-            dismissOnClickOutside = false,
-        ),
-    ) {
+    TextEntryDialog(onCancel) {
+        val keyboard = LocalSoftwareKeyboardController.current
+        DisposableEffect(keyboard) {
+            onDispose { keyboard?.hide() }
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -321,8 +318,11 @@ fun TextEntryOverlay(
                         fontSize = TvType.Section,
                         fontWeight = FontWeight.SemiBold,
                         color = TvColor.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
-                    Spacer(Modifier.weight(1f))
+                    Spacer(Modifier.width(TvDimen.SpaceXs))
                     Text(
                         text = when {
                             numericOnly -> "${value.length}/$maxLength 位"
@@ -331,10 +331,18 @@ fun TextEntryOverlay(
                         },
                         fontSize = TvType.Tiny,
                         color = TvColor.TextTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 Spacer(Modifier.height(6.dp))
-                Text(text = subtitle, fontSize = TvType.Tiny, color = TvColor.TextTertiary)
+                Text(
+                    text = subtitle,
+                    fontSize = TvType.Tiny,
+                    color = TvColor.TextTertiary,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
 
                 Spacer(Modifier.height(TvDimen.SpaceM))
 
@@ -399,6 +407,8 @@ fun TextEntryOverlay(
                                     },
                                     fontSize = 19.sp,
                                     color = TvColor.TextTertiary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
 
@@ -474,6 +484,23 @@ fun TextEntryOverlay(
     }
 }
 
+@Composable
+private fun TextEntryDialog(onCancel: () -> Unit, content: @Composable () -> Unit) {
+    Dialog(
+        onDismissRequest = onCancel,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+        ),
+    ) {
+        // Dialog has its own Compose root. Fit the TV design canvas to its measured window
+        // and reserve extra vertical space for the title and instructions at larger font scales.
+        val extraTextHeight = (LocalDensity.current.fontScale - 1f).coerceAtLeast(0f) * 96f
+        ProvideTvDesignDensity(designHeightDp = 540f + extraTextHeight, content = content)
+    }
+}
+
 /**
  * 自绘键盘的键位：**不可聚焦**（焦点在浮层根节点上），高亮由虚拟光标驱动；
  * 鼠标 / 触摸点击 = 选中并触发。
@@ -492,11 +519,8 @@ private fun VirtualKeyChip(
             .size(width = width, height = 44.dp)
             .clip(shape)
             .background(if (selected) TvColor.Accent else TvColor.SurfaceHigh)
-            .border(
-                width = if (selected) 2.dp else 1.dp,
-                color = if (selected) Color.White.copy(alpha = 0.92f) else TvColor.Divider,
-                shape = shape,
-            )
+            .border(1.dp, TvColor.Divider, shape)
+            .tvFocusRing(12.dp, if (selected) 1f else 0f)
             .pointerInput(label) {
                 detectTapGestures {
                     onSelect()

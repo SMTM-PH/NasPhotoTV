@@ -28,11 +28,14 @@ object SlideshowMusic {
 
     /** 已上传的音频，按修改时间倒序（最新在前）。 */
     fun tracks(context: Context): List<File> =
-        dir(context).listFiles()?.filter { it.isFile && it.length() > 0 }
+        dir(context).listFiles()?.filter { it.isFile && it.length() > 0 && !it.name.endsWith(".uploading") }
             ?.sortedByDescending { it.lastModified() }
             .orEmpty()
 
     fun latest(context: Context): File? = tracks(context).firstOrNull()
+
+    fun selected(context: Context, trackName: String?): File? =
+        if (trackName == null) latest(context) else tracks(context).firstOrNull { it.name == trackName }
 
     fun delete(context: Context, file: File) {
         runCatching { if (file.parentFile == dir(context)) file.delete() }

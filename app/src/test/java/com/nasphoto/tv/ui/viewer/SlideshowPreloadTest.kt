@@ -61,6 +61,25 @@ class SlideshowPreloadTest {
     }
 
     @Test
+    fun slideshowCanLookPastAnUnavailablePhotoWithoutChangingTheVisiblePhoto() {
+        val state = PhotoViewerState(
+            items = listOf(photo("shown"), photo("unavailable"), video("clip"), photo("next")),
+            initialIndex = 0,
+        )
+        assertEquals(1, state.nextPhotoIndex())
+        assertEquals(3, state.nextPhotoIndex(after = 1))
+        assertEquals("shown", state.current?.id)
+    }
+
+    @Test
+    fun preparedPageKeepsTheRequestedDirectionAcrossTheLoopBoundary() {
+        val state = PhotoViewerState(items = listOf(photo("first"), photo("last")), initialIndex = 1)
+        state.showPage(0, direction = 1)
+        assertEquals("first", state.current?.id)
+        assertEquals(1, state.direction)
+    }
+
+    @Test
     fun allVideosHaveNoNextPhoto() {
         val state = PhotoViewerState(
             items = listOf(video("v0"), video("v1")),

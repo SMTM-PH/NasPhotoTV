@@ -15,8 +15,8 @@ android {
         // java.time 等 API 26 才有的类由 core library desugaring 提供。
         minSdk = 24
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.2.13"
+        versionCode = 20
+        versionName = "1.2.14"
     }
 
     signingConfigs {

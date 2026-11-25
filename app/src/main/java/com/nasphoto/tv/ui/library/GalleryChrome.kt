@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -45,8 +46,18 @@ internal fun GalleryTopBar(
     onHome: () -> Unit, onScreensaver: () -> Unit, onSettings: () -> Unit,
     accountName: String, accountCount: Int, onAccountClick: () -> Unit,
     onAccountDown: () -> Unit, accountFocusRequester: FocusRequester?,
-    onTabDown: (Int) -> Unit, modifier: Modifier = Modifier,
+    onTabDown: (Int) -> Unit, modifier: Modifier = Modifier, isConnecting: Boolean = false,
 ) {
+    val status = when {
+        isConnecting -> "正在连接 NAS"
+        isOnline -> "在线"
+        else -> "离线"
+    }
+    val statusColor = when {
+        isConnecting -> TvColor.TextTertiary
+        isOnline -> TvColor.Accent
+        else -> TvColor.Danger
+    }
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val compact = maxWidth < 1200.dp
         Row(
@@ -61,7 +72,7 @@ internal fun GalleryTopBar(
                 onConfirm = onHome, onFocusChanged = { if (it) onActionFocus(0) },
                 onDown = { tabFocusRequesters.getOrNull(selectedTab.ordinal)?.requestFocus() },
                 modifier = Modifier.height(TvDimen.CinemaHeaderHeight)
-                    .semantics { contentDescription = "首页 · $connectionName · ${if (isOnline) "在线" else "离线"}" }
+                    .semantics { contentDescription = "首页 · $connectionName · $status" }
                     .padding(horizontal = TvDimen.SpaceXs)) {
                 Row(Modifier.fillMaxHeight(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs)) {
@@ -71,7 +82,7 @@ internal fun GalleryTopBar(
                         fontSize = if (compact) TvType.Body else TvType.CardTitle,
                         fontWeight = FontWeight.Bold, maxLines = 1)
                     Box(Modifier.size(6.dp).clip(CircleShape)
-                        .background(if (isOnline) TvColor.Accent else TvColor.Danger))
+                        .background(statusColor))
                 }
             }
             Row(Modifier.weight(1f),
@@ -81,8 +92,13 @@ internal fun GalleryTopBar(
                         cornerRadiusDp = 10, focusedScale = 1.025f,
                         onFocusChanged = { if (it) onTabFocus(index) },
                         onConfirm = { onTabClick(tab) }, onDown = { onTabDown(index) },
-                        modifier = Modifier.weight(1f).height(TvDimen.CinemaHeaderHeight)) { focused ->
-                        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.weight(1f).height(TvDimen.CinemaHeaderHeight)
+                            .semantics { selected = tab == selectedTab }) { focused ->
+                        Column(
+                            Modifier.fillMaxSize().background(
+                                if (focused) TvColor.SurfaceSoft else Color.Transparent,
+                                RoundedCornerShape(10.dp),
+                            ), horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center) {
                             Text(tab.label, color = if (focused || tab == selectedTab) TvColor.TextPrimary else TvColor.TextSecondary,
                                 fontSize = if (compact) TvType.Caption else TvType.Body,

@@ -50,6 +50,7 @@ data class LibraryState(
     val albumsLoaded: Boolean = true,
     val albumsError: String? = null,
     val smartAlbumsLoaded: Boolean = true,
+    val isConnecting: Boolean = false,
 )
 
 /**
@@ -60,6 +61,7 @@ data class ViewerRequest(
     val initialIndex: Int,
     val contextTitle: String,
     val startSlideshow: Boolean = false,
+    val slideshowKey: String? = null,
 )
 
 /**

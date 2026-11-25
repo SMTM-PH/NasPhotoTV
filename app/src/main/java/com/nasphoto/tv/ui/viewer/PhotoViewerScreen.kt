@@ -1,10 +1,12 @@
 package com.nasphoto.tv.ui.viewer
 
+import android.content.Context
+import android.graphics.drawable.Drawable
 import com.nasphoto.tv.ui.common.SlideshowMusicEffect
 import com.nasphoto.tv.data.SettingsStore
+import com.nasphoto.tv.data.SlideshowProfile
+import com.nasphoto.tv.data.SlideshowProfile.Frame
 import com.nasphoto.tv.data.model.ScreensaverSettings.SlideshowTransition
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
@@ -76,6 +78,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -83,6 +88,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.request.ImageRequest
+import coil.request.SuccessResult
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.data.model.isPanoramaPhoto
@@ -110,16 +116,8 @@ private const val ChromeAutoHideMs = 3000L
  */
 private const val HudAutoHideMs = 1500L
 
-/** 幻灯片每张停留时长 */
-
-/** 换页前预加载下一张的最长等待：地址失效 / 网络极差时不能把幻灯片卡死 */
-private const val SlideshowPreloadTimeoutMs = 8_000L
-
-/** 幻灯片换页叠化时长（showcase 风格：缓慢淡入淡出，不做左右滑） */
-private const val SlideshowCrossfadeMs = 900
-
-/** 幻灯片单张缓慢推拉的终值，配合叠化做「会呼吸」的 showcase 观感 */
-private const val ShowcaseZoomFactor = 1.05f
+private const val PhotoLoadTimeoutMs = 8_000L
+private const val PhotoLoadHintDelayMs = 600L
 
 /** 放大平移的步进（0.5 倍：一次方向键平移半张图） */
 private const val PanStep = 0.5f
@@ -149,22 +147,21 @@ private val ChromeScrim = Brush.verticalGradient(
     1.0f to TvColor.Bg,
 )
 
-/**
- * 把下一张照片解码进 Coil 的内存缓存，换页时舞台可以直接显示，不用等网络。
- *
- * 请求尺寸必须和舞台上的 [MediaImage] 完全一致（Coil 内存缓存键包含尺寸），
- * 全景图按 4K 宽度请求，否则白预加载一场。失败只忽略：幻灯片仍会在超时后换页，
- * 由 HOLD 占位保留上一张画面，不会卡死。
- */
-private suspend fun preloadSlideshowPhoto(context: android.content.Context, item: MediaItem) {
-    val url = item.url
-    if (url.isBlank()) return
+private data class PageRequest(val index: Int, val item: MediaItem, val direction: Int)
+
+private data class StageFrame(val item: MediaItem, val image: Drawable? = null)
+
+/** 保留解码结果供舞台直接绘制，即使这张图超过 Coil 的内存缓存额度。 */
+private suspend fun decodeStageImage(context: Context, item: MediaItem): Drawable? {
+    if (item.url.isBlank()) return null
     val target = if (item.isPanoramaPhoto()) PanoramaTargetWidth else FullScreenTargetWidth
     val request = ImageRequest.Builder(context)
-        .data(url)
+        .data(item.url)
         .size(target)
         .build()
-    runCatching { NasImageLoader.get(context).execute(request) }
+    return withTimeoutOrNull(PhotoLoadTimeoutMs) {
+        (NasImageLoader.get(context).execute(request) as? SuccessResult)?.drawable
+    }
 }
 
 /**
@@ -195,6 +192,7 @@ fun PhotoViewerScreen(
     onOpenVideo: (MediaItem, List<MediaItem>) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
     startSlideshow: Boolean = false,
+    slideshowProfile: SlideshowProfile? = null,
 ) {
     // ---- 空列表直接退出（不能崩） ----
     LaunchedEffect(items.isEmpty()) {
@@ -205,11 +203,11 @@ fun PhotoViewerScreen(
         return
     }
 
-    val slideshowSettings = SettingsStore.screensaver
-    val slideshowIntervalMs = slideshowSettings.slideshowIntervalSec * 1_000
+    val slideshowSettings = slideshowProfile ?: SlideshowProfile.from(SettingsStore.screensaver)
+    val slideshowIntervalMs = slideshowSettings.intervalSec * 1_000
     val state = rememberPhotoViewerState(items = items, initialIndex = initialIndex, startSlideshow = startSlideshow)
     // 幻灯片播放时循环播放背景音乐（无音乐文件时自动静默）
-    SlideshowMusicEffect(active = state.slideshowPlaying)
+    SlideshowMusicEffect(active = state.slideshowPlaying, profile = slideshowSettings)
     val filmState = rememberLazyListState()
     val imageFocus = remember { FocusRequester() }
     val tabFocus = remember { FocusRequester() }
@@ -248,6 +246,77 @@ fun PhotoViewerScreen(
     var filmEnter by remember { mutableIntStateOf(0) }
     var controlsInteraction by remember { mutableIntStateOf(0) }
     var photoHint by remember { mutableIntStateOf(0) }
+    var pendingPage by remember { mutableStateOf<PageRequest?>(null) }
+    var failedPage by remember { mutableStateOf<PageRequest?>(null) }
+    var preparedFrame by remember { mutableStateOf<StageFrame?>(null) }
+    var loadingPage by remember { mutableStateOf<PageRequest?>(null) }
+    var pageError by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+
+    fun showPage(request: PageRequest, decodedImage: Drawable? = null) {
+        failedPage = null
+        preparedFrame = StageFrame(request.item, decodedImage)
+        state.showPage(request.index, request.direction)
+    }
+
+    fun requestPage(index: Int, direction: Int) {
+        val item = state.items.getOrNull(index) ?: return
+        state.pauseSlideshow()
+        failedPage = null
+        pageError = null
+        if (index == state.index) {
+            pendingPage = null
+            return
+        }
+        val request = PageRequest(index, item, direction)
+        if (item.type == MediaType.PHOTO) {
+            pendingPage = request
+        } else {
+            pendingPage = null
+            showPage(request)
+        }
+        photoHint += 1
+    }
+
+    fun stepPage(direction: Int) {
+        val count = state.items.size
+        if (count == 0) return
+        val requested = pendingPage ?: failedPage
+        val from = requested?.takeIf { state.items.getOrNull(it.index) == it.item }?.index ?: state.index
+        requestPage((from + direction).mod(count), direction)
+    }
+
+    fun pickPage(index: Int) = requestPage(index, if (index > state.index) 1 else -1)
+
+    LaunchedEffect(pendingPage, state.slideshowPlaying) {
+        val request = pendingPage ?: return@LaunchedEffect
+        if (state.slideshowPlaying) {
+            pendingPage = null
+            return@LaunchedEffect
+        }
+        val image = decodeStageImage(context, request.item)
+        if (pendingPage != request || state.slideshowPlaying) return@LaunchedEffect
+        pendingPage = null
+        if (state.items.getOrNull(request.index) != request.item) return@LaunchedEffect
+        if (image != null) {
+            showPage(request, image)
+        } else {
+            failedPage = request
+            pageError = "这张照片暂时无法读取"
+        }
+    }
+    LaunchedEffect(pendingPage) {
+        loadingPage = null
+        val request = pendingPage ?: return@LaunchedEffect
+        delay(PhotoLoadHintDelayMs)
+        loadingPage = request
+    }
+    LaunchedEffect(pageError) {
+        if (pageError != null) {
+            delay(2_500)
+            pageError = null
+        }
+    }
     LaunchedEffect(toolbarEnter) {
         if (toolbarEnter == 0) return@LaunchedEffect
         repeat(2) { withFrameMillis {} }
@@ -271,22 +340,20 @@ fun PhotoViewerScreen(
         if (!inToolbar && !state.infoExpanded) state.hideChromeIfIdle()
     }
 
-    // ---- 幻灯片自动播放：每 5 秒下一张，到末尾循环 ----
-    // 先把下一张解码进 Coil 内存缓存再换页：网络不好时舞台上仍是上一张照片，
-    // 不会出现「渐变占位 + 锯齿破图图标」的间隙，也不必靠转圈熬过等待。
-    val preloadContext = LocalContext.current
+    // 解码成功才换页。失败留在当前照片，下一轮从失败项之后继续找。
     LaunchedEffect(state.slideshowPlaying, slideshowIntervalMs) {
         if (!state.slideshowPlaying) return@LaunchedEffect
+        var cursor = state.index
         while (true) {
             delay(slideshowIntervalMs.toLong())
-            if (!state.slideshowPlaying) return@LaunchedEffect
-            val next = state.peekNextPhoto() ?: continue
-            withTimeoutOrNull(SlideshowPreloadTimeoutMs) {
-                preloadSlideshowPhoto(preloadContext, next)
+            val index = state.nextPhotoIndex(after = cursor) ?: continue
+            cursor = index
+            if (index == state.index) continue
+            val item = state.items.getOrNull(index) ?: continue
+            val image = decodeStageImage(context, item) ?: continue
+            if (state.slideshowPlaying && state.items.getOrNull(index) == item) {
+                showPage(PageRequest(index, item, direction = 1), image)
             }
-            if (!state.slideshowPlaying) return@LaunchedEffect
-            // 期间用户可能已手动翻页 / 暂停，只有还停在同一张时才推进
-            if (state.peekNextPhoto()?.id == next.id) state.advanceSlideshow()
         }
     }
 
@@ -327,25 +394,17 @@ fun PhotoViewerScreen(
                 .background(StageBackground),
             contentAlignment = Alignment.Center,
         ) {
-            // 切换动画只负责「换页」：
-            // - targetState 改成「当前项」这个对象本身，动画闭包里拿到的永远是要显示的这一张，
-            //   不会再出现「闭包按旧 index 取 item、而 state.index 已经变了」的错位；
-            // - 内容里不再自己叠加 graphicsLayer 的 alpha / 缩放动画，
-            //   避免出现过一次 appear 值停在 0 就永远黑屏的舞台。
+            // 动画期间每一帧都有自己的媒体项和已解码图像，独立于正在变化的索引。
             AnimatedContent(
-                targetState = state.current,
+                targetState = state.current?.let { item ->
+                    preparedFrame?.takeIf { it.item == item } ?: StageFrame(item)
+                },
                 // 固定成屏幕大小：AnimatedContent 默认按内容测量，全景舞台比屏幕宽时
                 // 会把整个 Stage 撑大，舞台内的坐标随之偏移。
                 modifier = Modifier.fillMaxSize(),
                 transitionSpec = {
-                    if (state.slideshowPlaying && slideshowSettings.slideshowTransition == SlideshowTransition.CUT) {
-                        EnterTransition.None togetherWith ExitTransition.None
-                    } else if (state.slideshowPlaying) {
-                        // 幻灯片：showcase 风格的缓慢叠化，不做左右滑。
-                        // 两张照片在叠化期间同时在树上，HOLD 占位让上一张一直可见，
-                        // 配合预加载后新图已解码，观感是「直接换成下一张」而不是闪一下黑底。
-                        fadeIn(tween(SlideshowCrossfadeMs, easing = FastOutSlowInEasing))
-                            .togetherWith(fadeOut(tween(SlideshowCrossfadeMs, easing = FastOutSlowInEasing)))
+                    if (state.slideshowPlaying) {
+                        slideshowTransition(slideshowSettings.transition)
                     } else {
                         // 手动翻页：按切换方向从左右滑入滑出 + 淡入
                         val d = if (state.direction >= 0) 1 else -1
@@ -357,34 +416,59 @@ fun PhotoViewerScreen(
                     }
                 },
                 contentAlignment = Alignment.Center,
+                contentKey = { it?.item },
                 label = "viewerSlide",
-            ) { item ->
-                if (item == null) return@AnimatedContent
-                ShowcaseZoom(
-                    enabled = state.slideshowPlaying && !state.zoomed &&
-                        slideshowSettings.slideshowTransition == SlideshowTransition.SHOWCASE,
-                    key = item.id,
-                    intervalMs = slideshowIntervalMs,
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    StageContent(
-                        item = item,
-                        active = item == state.current,
-                        state = state,
-                        imageFocus = imageFocus,
-                        onOpenVideo = { currentOnOpenVideo(item, items) },
-                        onToggleChrome = { state.toggleChrome() },
-                        onPauseSlideshow = { state.pauseSlideshow() },
-                        onNext = { state.go(1); photoHint += 1 },
-                        onPrev = { state.go(-1); photoHint += 1 },
-                        onEnterToolbar = {
-                            state.showChrome()
-                            toolbarEnter += 1
-                        },
-                        onToggleInfo = { state.toggleInfo() },
-                        onFocusChanged = { },
-                        inToolbar = { inToolbar },
-                    )
+            ) { frame ->
+                if (frame == null) return@AnimatedContent
+                val item = frame.item
+                val photoFrame = if (state.slideshowPlaying && !state.zoomed && item.type == MediaType.PHOTO) {
+                    slideshowSettings.frame
+                } else {
+                    Frame.NONE
+                }
+                val aspectRatio = frame.image?.let { image ->
+                    val width = image.intrinsicWidth
+                    val height = image.intrinsicHeight
+                    if (width > 0 && height > 0) width.toFloat() / height else null
+                } ?: item.pixelSize()?.let { (width, height) -> width.toFloat() / height } ?: (16f / 9f)
+                SlideshowPhotoFrame(photoFrame, aspectRatio, Modifier.fillMaxSize()) {
+                    ShowcaseZoom(
+                        enabled = state.slideshowPlaying && !state.zoomed &&
+                            slideshowSettings.transition == SlideshowTransition.SHOWCASE,
+                        key = item.id,
+                        intervalMs = slideshowIntervalMs,
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        StageContent(
+                            item = item,
+                            decodedImage = frame.image,
+                            onDecoded = if (photoFrame != Frame.NONE && frame.image == null) {
+                                { drawable ->
+                                    if (state.slideshowPlaying && state.current == item) {
+                                        preparedFrame = StageFrame(item, drawable)
+                                    }
+                                }
+                            } else {
+                                null
+                            },
+                            active = item == state.current,
+                            state = state,
+                            fitPanorama = photoFrame != Frame.NONE,
+                            imageFocus = imageFocus,
+                            onOpenVideo = { currentOnOpenVideo(item, items) },
+                            onToggleChrome = { state.toggleChrome() },
+                            onPauseSlideshow = { state.pauseSlideshow() },
+                            onNext = { stepPage(1) },
+                            onPrev = { stepPage(-1) },
+                            onEnterToolbar = {
+                                state.showChrome()
+                                toolbarEnter += 1
+                            },
+                            onToggleInfo = { state.toggleInfo() },
+                            onFocusChanged = { },
+                            inToolbar = { inToolbar },
+                        )
+                    }
                 }
             }
 
@@ -415,6 +499,20 @@ fun PhotoViewerScreen(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(end = TvDimen.ScreenPadding, top = TvDimen.SpaceL + TvDimen.SpaceL),
+            )
+            val photoLoadMessage = pageError ?: "正在读取照片…".takeIf {
+                pendingPage != null && loadingPage == pendingPage
+            }
+            if (photoLoadMessage != null) Text(
+                text = photoLoadMessage,
+                color = TvColor.TextPrimary,
+                fontSize = TvType.Caption,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = TvDimen.SpaceL)
+                    .background(TvColor.BgElevated, RoundedCornerShape(TvDimen.RadiusM))
+                    .padding(horizontal = TvDimen.SpaceM, vertical = TvDimen.SpaceS)
+                    .semantics { liveRegion = LiveRegionMode.Polite },
             )
         }
 
@@ -461,9 +559,9 @@ fun PhotoViewerScreen(
                 FilmStrip(
                     state = state,
                     listState = filmState,
-                    onSelect = { state.goTo(it); photoHint += 1 },
+                    onSelect = ::pickPage,
                     onConfirm = { idx ->
-                        state.goTo(idx)
+                        pickPage(idx)
                         state.hideAllChrome()
                         runCatching { imageFocus.requestFocus() }
                     },
@@ -482,42 +580,6 @@ fun PhotoViewerScreen(
     }
 }
 
-/**
- * 幻灯片 showcase 推拉：每张照片在停留期间从 1.0 缓缓放到 1.05，
- * 配合叠化换页就是「画面在呼吸」的观感。暂停 / 放大查看时立刻回到 1.0，
- * 不会干扰 2× 放大平移，也不会让全景平移的坐标失准。
- */
-@Composable
-private fun ShowcaseZoom(
-    enabled: Boolean,
-    key: Any,
-    intervalMs: Int,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    val scale = remember { Animatable(1f) }
-    LaunchedEffect(enabled, key, intervalMs) {
-        if (enabled) {
-            scale.snapTo(1f)
-            scale.animateTo(
-                ShowcaseZoomFactor,
-                tween(durationMillis = intervalMs, easing = LinearEasing),
-            )
-        } else {
-            scale.snapTo(1f)
-        }
-    }
-    Box(
-        modifier.graphicsLayer {
-            scaleX = scale.value
-            scaleY = scale.value
-        },
-        contentAlignment = Alignment.Center,
-    ) {
-        content()
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 舞台内容：图片（全屏 Fit / 2× 放大平移）或视频封面
 // ---------------------------------------------------------------------------
@@ -526,8 +588,11 @@ private fun ShowcaseZoom(
 @Composable
 private fun StageContent(
     item: MediaItem,
+    decodedImage: Drawable?,
+    onDecoded: ((Drawable) -> Unit)?,
     active: Boolean,
     state: PhotoViewerState,
+    fitPanorama: Boolean,
     imageFocus: FocusRequester,
     onOpenVideo: () -> Unit,
     onToggleChrome: () -> Unit,
@@ -661,6 +726,8 @@ private fun StageContent(
 
             item.isLive && item.liveUrl.isNotBlank() -> LivePhotoStage(
                 item = item,
+                decodedImage = decodedImage,
+                onDecoded = onDecoded,
                 active = active,
                 zoomed = zoomed,
                 panX = state.panX,
@@ -669,12 +736,13 @@ private fun StageContent(
                 onPlayingChanged = { state.livePlaying = it },
             )
 
-            item.isPanoramaPhoto() -> PanoramaStage(
+            item.isPanoramaPhoto() && !fitPanorama -> PanoramaStage(
                 item = item,
                 offset = state.panoramaOffset,
+                decodedImage = decodedImage,
             )
 
-            else -> PhotoStage(item = item, zoomed = zoomed, panX = state.panX, panY = state.panY)
+            else -> PhotoStage(item, zoomed, state.panX, state.panY, decodedImage, onDecoded)
         }
     }
 }
@@ -686,6 +754,8 @@ private fun StageContent(
 @Composable
 private fun LivePhotoStage(
     item: MediaItem,
+    decodedImage: Drawable?,
+    onDecoded: ((Drawable) -> Unit)?,
     active: Boolean,
     zoomed: Boolean,
     panX: Float,
@@ -694,7 +764,7 @@ private fun LivePhotoStage(
     onPlayingChanged: (Boolean) -> Unit,
 ) {
     Box(Modifier.fillMaxSize()) {
-        PhotoStage(item = item, zoomed = zoomed, panX = panX, panY = panY)
+        PhotoStage(item, zoomed, panX, panY, decodedImage, onDecoded)
         if (!zoomed) {
             LivePhotoVideo(
                 url = item.liveUrl,
@@ -719,7 +789,14 @@ private fun LivePhotoStage(
  * panX/panY ∈ [-0.5, 0.5] 映射成 ±0.5 屏平移，拖到底也刚好不会露出黑边。
  */
 @Composable
-private fun PhotoStage(item: MediaItem, zoomed: Boolean, panX: Float, panY: Float) {
+private fun PhotoStage(
+    item: MediaItem,
+    zoomed: Boolean,
+    panX: Float,
+    panY: Float,
+    decodedImage: Drawable?,
+    onDecoded: ((Drawable) -> Unit)? = null,
+) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         MediaImage(
             url = item.url,
@@ -736,6 +813,8 @@ private fun PhotoStage(item: MediaItem, zoomed: Boolean, panX: Float, panY: Floa
             contentScale = ContentScale.Fit,
             targetWidth = FullScreenTargetWidth,
             placeholder = MediaPlaceholder.HOLD,
+            decodedImage = decodedImage,
+            onDecoded = onDecoded,
         )
         if (zoomed) {
             ZoomHint(
@@ -755,17 +834,17 @@ private fun PhotoStage(item: MediaItem, zoomed: Boolean, panX: Float, panY: Floa
  * 普通照片不会走到这里：宽高比 < 1.9 的都在 [PhotoStage]。
  */
 @Composable
-private fun PanoramaStage(item: MediaItem, offset: Float) {
+private fun PanoramaStage(item: MediaItem, offset: Float, decodedImage: Drawable?) {
     val size = item.pixelSize()
     if (size == null) {
-        PhotoStage(item = item, zoomed = false, panX = 0f, panY = 0f)
+        PhotoStage(item, zoomed = false, panX = 0f, panY = 0f, decodedImage)
         return
     }
     val aspect = size.first.toFloat() / size.second
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val imageWidth = maxHeight * aspect
         if (imageWidth <= maxWidth) {
-            PhotoStage(item = item, zoomed = false, panX = 0f, panY = 0f)
+            PhotoStage(item, zoomed = false, panX = 0f, panY = 0f, decodedImage)
         } else {
             val travel = imageWidth - maxWidth
             // 用 Layout 显式摆放：Box 对齐对「比父级宽」的子项会把它居中，
@@ -779,6 +858,7 @@ private fun PanoramaStage(item: MediaItem, offset: Float) {
                         contentScale = ContentScale.FillBounds,
                         targetWidth = PanoramaTargetWidth,
                         placeholder = MediaPlaceholder.HOLD,
+                        decodedImage = decodedImage,
                     )
                 },
                 modifier = Modifier.fillMaxSize(),

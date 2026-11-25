@@ -170,9 +170,8 @@ private fun ThumbCell(
     FocusCard(
         onClick = onClick,
         modifier = Modifier.size(width = 112.dp, height = 64.dp),
-        cornerRadius = TvDimen.RadiusM,
+        cornerRadius = TvDimen.RadiusM - 2.dp,
         focusedScale = TvDimen.FocusScale,
-        shape = shape,
         focusRequester = focusRequester,
         onFocusChanged = { if (it) onFocused() },
     ) { focused ->

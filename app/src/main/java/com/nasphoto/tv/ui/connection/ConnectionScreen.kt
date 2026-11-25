@@ -48,12 +48,11 @@ import kotlinx.coroutines.delay
 /** 媒体库入口的三种非就绪状态 */
 sealed interface ConnectionMode {
     data object NeedsSetup : ConnectionMode
-    data object Loading : ConnectionMode
     data class Error(val message: String) : ConnectionMode
 }
 
 /**
- * 首次使用 / 正在连接 / 连接失败时的入口页。
+ * 首次使用或连接失败时的入口页。
  * 不展示任何假数据：要么去设置里填账号，要么重试。
  */
 @Composable
@@ -132,27 +131,6 @@ fun ConnectionScreen(
             Spacer(Modifier.height(TvDimen.SpaceS))
 
             when (mode) {
-                ConnectionMode.Loading -> {
-                    Text(
-                        text = if (host.isBlank()) "正在连接飞牛 NAS…" else "正在连接 $host…",
-                        fontSize = TvType.Body,
-                        color = TvColor.TextSecondary,
-                    )
-                    Spacer(Modifier.height(TvDimen.SpaceL))
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(36.dp),
-                        color = TvColor.Accent,
-                        strokeWidth = 3.dp,
-                    )
-                    Spacer(Modifier.height(TvDimen.SpaceM))
-                    ActionButton(
-                        label = "打开设置",
-                        primary = false,
-                        onClick = onOpenSettings,
-                        focusRequester = primaryFocus,
-                    )
-                }
-
                 ConnectionMode.NeedsSetup -> {
                     Text(
                         text = "还没有连接飞牛 NAS",

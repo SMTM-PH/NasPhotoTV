@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -53,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nasphoto.tv.data.FavoritesStore
 import com.nasphoto.tv.data.model.Album
+import com.nasphoto.tv.data.model.AlbumType
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.ui.common.MediaImage
@@ -93,11 +95,12 @@ fun LibraryTopBar(
     /** Tab 按 DOWN 时通知外层（去主内容） */
     onTabDown: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
+    isConnecting: Boolean = false,
 ) {
     GalleryTopBar(tabs, selectedTab, connectionName, isOnline, onTabClick, onTabFocus,
         onActionFocus, tabFocusRequesters, actionFocusRequesters, onHome, onScreensaver,
         onSettings, accountName, accountCount, onAccountClick, onAccountDown,
-        accountFocusRequester, onTabDown, modifier)
+        accountFocusRequester, onTabDown, modifier, isConnecting)
 }
 
 // ============================== 区块标题 ==============================
@@ -289,7 +292,7 @@ fun AlbumCard(
         Column(Modifier.fillMaxSize().blockPointer()) {
             Box(Modifier.fillMaxWidth().weight(1f)) {
                 MediaImage(coverUrl, album.name, Modifier.fillMaxSize(), targetWidth = TvImage.AlbumCoverPx)
-                if (album.isSmart) Text(smartGroupTitle(album.type), color = TvColor.TextPrimary,
+                if (album.isSmart && album.type != AlbumType.SMART_PLACE) Text(smartGroupTitle(album.type), color = TvColor.TextPrimary,
                     fontSize = TvType.Caption,
                     modifier = Modifier.padding(TvDimen.SpaceS).clip(RoundedCornerShape(TvDimen.RadiusS))
                         .background(TvColor.Bg.copy(alpha = 0.8f)).padding(TvDimen.SpaceXs))
@@ -538,6 +541,8 @@ fun AlbumDetailHeader(
     onDown: () -> Unit = {},
     playAction: (() -> Unit)? = null,
     playRequester: FocusRequester? = null,
+    slideshowSettingsAction: (() -> Unit)? = null,
+    slideshowSettingsRequester: FocusRequester? = null,
 ) {
     Row(
         modifier
@@ -593,10 +598,24 @@ fun AlbumDetailHeader(
                 "播放此相册",
                 focusRequester = playRequester,
                 modifier = Modifier
-                    .focusProperties { if (backFocusRequester != null) left = backFocusRequester }
+                    .focusProperties {
+                        if (backFocusRequester != null) left = backFocusRequester
+                        if (slideshowSettingsRequester != null) right = slideshowSettingsRequester
+                    }
                     .verticalNav(onDown = onDown),
                 onClick = playAction,
             )
+            if (slideshowSettingsAction != null) {
+                Spacer(Modifier.width(TvDimen.SpaceS))
+                DetailAction(
+                    "放映设置",
+                    focusRequester = slideshowSettingsRequester,
+                    modifier = Modifier
+                        .focusProperties { if (playRequester != null) left = playRequester }
+                        .verticalNav(onDown = onDown),
+                    onClick = slideshowSettingsAction,
+                )
+            }
         }
     }
 }
@@ -610,7 +629,9 @@ internal fun DetailAction(
     onClick: () -> Unit,
 ) {
     TvFocusBox(
-        modifier = modifier.background(TvColor.Surface, RoundedCornerShape(12.dp)),
+        modifier = modifier
+            .heightIn(min = TvDimen.CinemaHeaderHeight)
+            .background(TvColor.Surface, RoundedCornerShape(12.dp)),
         focusRequester = focusRequester,
         cornerRadiusDp = 12,
         onConfirm = onClick,
@@ -619,7 +640,8 @@ internal fun DetailAction(
             label,
             color = if (focused) TvColor.Accent else TvColor.TextPrimary,
             fontSize = TvType.Caption,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            maxLines = 1,
+            modifier = Modifier.align(Alignment.Center).padding(horizontal = 14.dp, vertical = 8.dp),
         )
     }
 }

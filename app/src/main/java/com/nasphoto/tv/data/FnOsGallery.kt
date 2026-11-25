@@ -20,14 +20,18 @@ internal class FnOsGallery(
 ) {
     suspend fun getRecent(limit: Int): List<MediaItem> {
         if (limit <= 0) return emptyList()
-        return if (limit == Int.MAX_VALUE) loadLibrary() else {
-            loadRange(
-                start = LocalDate.of(1970, 1, 1),
-                end = LocalDate.of(2099, 12, 31),
-                requestedLimit = limit,
-            )
-        }
+        return if (limit == Int.MAX_VALUE) loadLibrary() else recentRange(limit, singlePage = false)
     }
+
+    suspend fun getRecentPreview(limit: Int): List<MediaItem> = recentRange(limit, singlePage = true)
+
+    private suspend fun recentRange(limit: Int, singlePage: Boolean): List<MediaItem> =
+        loadRange(
+            start = LocalDate.of(1970, 1, 1),
+            end = LocalDate.of(2099, 12, 31),
+            requestedLimit = limit,
+            singlePage = singlePage,
+        )
 
     private suspend fun loadLibrary(): List<MediaItem> {
         val timeline = getJson(TIMELINE, emptyList())
@@ -81,6 +85,7 @@ internal class FnOsGallery(
         end: LocalDate,
         expectedCount: Long? = null,
         requestedLimit: Int = Int.MAX_VALUE,
+        singlePage: Boolean = false,
     ): List<MediaItem> {
         val collected = LinkedHashMap<String, MediaItem>()
         var offset = 0L
@@ -112,6 +117,7 @@ internal class FnOsGallery(
                 }
                 collected.putIfAbsent(item.id, item)
             }
+            if (singlePage) break
             // 原始条目占用服务端位置，解析失败或边界重复都不能让 offset 回退。
             offset += page.length()
             if (collected.size >= requestedLimit || expectedCount != null && collected.size.toLong() >= expectedCount) break

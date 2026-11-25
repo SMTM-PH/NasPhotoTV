@@ -1,6 +1,7 @@
 package com.nasphoto.tv.data.model
 
 import java.time.LocalDate
+import kotlin.math.abs
 
 /**
  * 媒体类型。目前原型支持图片与视频；音频预留。
@@ -38,7 +39,25 @@ data class MediaItem(
     val extension: String = "",
     /** NAS 上的完整文件路径；文件夹卡片的封面可按目录前缀从这里兜底 */
     val filePath: String = "",
+    val location: PhotoLocation? = null,
 )
+
+data class PhotoLocation(
+    val countryCode: String,
+    val locality: String,
+    val region: String,
+    val latitude: Double?,
+    val longitude: Double?,
+)
+
+internal fun locationAreaTitle(latitudeTenths: Int, longitudeTenths: Int): String {
+    fun label(value: Int, positive: String, negative: String): String {
+        val direction = if (value < 0) negative else positive
+        val magnitude = abs(value)
+        return "$direction${magnitude / 10}.${magnitude % 10}°"
+    }
+    return label(latitudeTenths, "北纬", "南纬") + " · " + label(longitudeTenths, "东经", "西经")
+}
 
 /** 常见 RAW 原始格式（相机直出） */
 val RAW_EXTENSIONS: Set<String> = setOf(
