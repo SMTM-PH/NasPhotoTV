@@ -25,10 +25,12 @@ import com.nasphoto.tv.data.fn.toFnOsAccess
  */
 
 enum class SettingsGroup(val title: String) {
-    NAS("NAS 连接"),
-    ACCOUNTS("账号切换"),
-    SCREENSAVER("屏保与待机"),
-    PLAYBACK("视频播放"),
+    APPEARANCE("外观"),
+    SCREENSAVER("屏保"),
+    SLIDESHOW("放映"),
+    PLAYBACK("视频"),
+    NAS("NAS"),
+    ACCOUNTS("账号"),
     ABOUT("关于"),
 }
 
@@ -38,6 +40,12 @@ enum class SettingsKey(
     val title: String,
     val hint: String,
 ) {
+    APPEARANCE_MODE(
+        SettingsGroup.APPEARANCE,
+        "外观模式",
+        "← → 切换：跟随系统 / 浅色·画廊白 / 深色·影院黑；看图、播放与屏保始终为深色",
+    ),
+
     NAS_DEVICE(SettingsGroup.NAS, "名称", "显示在顶栏与本机的 NAS 名称"),
     NAS_HOST(SettingsGroup.NAS, "地址", "IP / 域名，或完整地址 http(s)://域名:端口/子路径"),
     NAS_PORT(SettingsGroup.NAS, "端口", "直连 5667；反代填网关端口（如 443 / 80）"),
@@ -55,18 +63,18 @@ enum class SettingsKey(
     SS_DISPLAY_ALBUMS(SettingsGroup.SCREENSAVER, "客厅展示相册", "用于首页回忆和屏保；按确认逐相册选择"),
     SS_ENABLED(SettingsGroup.SCREENSAVER, "屏保", "关闭后空闲也不再进入待机显示"),
     SS_IDLE(SettingsGroup.SCREENSAVER, "静止后进入", "多久没有操作就进入屏保"),
-    SS_MODE(SettingsGroup.SCREENSAVER, "屏保画面", "时钟待机 / 纯照片；屏保里 ← → 换样式"),
+    SS_MODE(SettingsGroup.SCREENSAVER, "屏保画面", "按 ← → 切换时钟待机、纯照片和照片墙"),
     SS_SOURCE(SettingsGroup.SCREENSAVER, "轮播内容", "仅在客厅展示相册内筛选人物 / 最近 / 随机 / 相册"),
     SS_ALBUM(SettingsGroup.SCREENSAVER, "轮播相册", "只可选择已授权的客厅展示相册"),
-    SS_INTERVAL(SettingsGroup.SCREENSAVER, "照片停留", "每张照片播放多久"),
+    SS_INTERVAL(SettingsGroup.SCREENSAVER, "照片停留", "屏保轮播多久更新一次"),
     SS_CLOCK(SettingsGroup.SCREENSAVER, "时钟样式", "五种表盘，切换实时预览（纯照片模式下不显示）"),
     SS_BACKGROUND(SettingsGroup.SCREENSAVER, "背景", "时钟待机的背景：照片轮播 / 极光动态 / 纯黑极简"),
     SS_DATE(SettingsGroup.SCREENSAVER, "显示日期", "显示星期与日期"),
     SS_NIGHT_DIM(SettingsGroup.SCREENSAVER, "夜间自动调暗", "降低亮度，保护面板"),
-    SS_KEN_BURNS(SettingsGroup.SCREENSAVER, "Ken Burns 动效", "照片缓慢推拉，防烧屏"),
-    SS_SLIDESHOW_INTERVAL(SettingsGroup.SCREENSAVER, "幻灯片停留", "相册放映中每张照片播放多久"),
-    SS_SLIDESHOW_TRANSITION(SettingsGroup.SCREENSAVER, "幻灯片切换", "相册放映的换片效果"),
-    SS_MUSIC(SettingsGroup.SCREENSAVER, "背景音乐", "幻灯片/屏保时循环播放；可用手机上传音乐"),
+    SS_KEN_BURNS(SettingsGroup.SCREENSAVER, "照片推拉", "让照片缓慢推近"),
+    SS_SLIDESHOW_INTERVAL(SettingsGroup.SLIDESHOW, "幻灯片停留", "相册放映中每张照片播放多久"),
+    SS_SLIDESHOW_TRANSITION(SettingsGroup.SLIDESHOW, "换片动效", "相册放映的换片效果"),
+    SS_MUSIC(SettingsGroup.SLIDESHOW, "背景音乐", "幻灯片/屏保时循环播放；可用手机上传音乐"),
     SS_PREVIEW(SettingsGroup.SCREENSAVER, "预览屏保", "仅全屏预览，不开启自动屏保"),
 
     PB_AUTOPLAY(SettingsGroup.PLAYBACK, "自动连播下一集", "播完自动播放列表里的下一个"),
@@ -90,6 +98,21 @@ enum class SettingsKey(
 val SettingsRowsByGroup: Map<SettingsGroup, List<SettingsKey>> =
     SettingsKey.entries.groupBy { it.group }
 
+internal const val PHOTO_WALL_SETTING_HINT = "切换屏保画面后可调整此项"
+
+internal fun SettingsKey.isAvailableInMode(mode: ScreensaverSettings.Mode): Boolean {
+    if (mode != ScreensaverSettings.Mode.PHOTO_WALL) return true
+    return when (this) {
+        SettingsKey.SS_CLOCK,
+        SettingsKey.SS_BACKGROUND,
+        SettingsKey.SS_DATE,
+        SettingsKey.SS_NIGHT_DIM,
+        SettingsKey.SS_KEN_BURNS,
+        -> false
+        else -> true
+    }
+}
+
 /**
  * 所有写操作的唯一入口。
  * SettingsStore 的 setter 是 private → 一律 `updateXxx { it.copy(...) }`。
@@ -99,6 +122,10 @@ class SettingsActions(
     private val feedback: SettingsFeedback,
     private val onPreviewScreensaver: () -> Unit,
 ) {
+
+    // ---------------- 外观 ----------------
+    /** ← → / ENTER 切换外观模式，改动会立刻经 SettingsStore 触发根主题重组。 */
+    fun cycleAppearance(reverse: Boolean = false) = store.cycleAppearance(reverse)
 
     // ---------------- NAS ----------------
     fun setName(value: String) = store.updateNas { it.copy(name = value.ifBlank { "Home-NAS" }) }
@@ -238,7 +265,7 @@ class SettingsActions(
     // ---------------- 屏保 ----------------
     fun toggleScreensaver() = store.updateScreensaver { it.copy(enabled = !it.enabled) }
     fun cycleIdleTimeout() = store.cycleIdleTimeout()
-    fun cycleMode() = store.cycleScreensaverMode()
+    fun cycleMode(reverse: Boolean = false) = store.cycleScreensaverMode(reverse)
     private fun displayAlbums() = currentDisplayAlbums(store).filter { it.id in store.displayAlbumIds }
     fun cycleSource() = store.cycleScreensaverSource(displayAlbums())
     fun cycleAlbum() = store.cycleScreensaverAlbum(displayAlbums())

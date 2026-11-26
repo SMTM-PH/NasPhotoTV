@@ -66,9 +66,9 @@ import java.time.LocalDateTime
  *   3. 防烧屏层 所有前景元素挤在一个 [PixelShiftBox] 容器里，每 2 分钟在九宫格
  *              固定位置间平移（±8dp，≤10dp），加 nightDim 的 0.90~1.0 呼吸
  *   4. 前景   CLOCK：时钟与退出提示（照片元信息永远不上屏）；
- *            PHOTO_ONLY：只保留照片本身，不显示时钟/日期/提示，任何文字都不上屏。
+ *            照片模式只展示全屏照片或照片墙。
  *
- * 交互：←/→ 在屏保内切换样式（时钟模式换时钟样式，纯照片模式换轮播来源），
+ * 交互：←/→ 在屏保内切换表盘或照片来源，
  *       其他任意键退出；所有按键都被最外层 Box 吞掉，不会漏到下层页面。
  */
 @Composable
@@ -76,29 +76,20 @@ fun ScreensaverScreen(
     settings: ScreensaverSettings,
     photos: List<MediaItem>,
     onExit: () -> Unit,
-    onCycleStyle: () -> Unit = {},
-    onCycleSource: () -> Unit = {},
+    onCycleStyle: (reverse: Boolean) -> Unit = {},
+    onCycleSource: (reverse: Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // 屏保展示期间循环播放背景音乐（无音乐文件时自动静默）
     SlideshowMusicEffect(active = true)
 
-    val now = rememberNowEverySecond()
-    val parts = rememberClockParts(now)
-
-    val purePhoto = settings.mode == ScreensaverSettings.Mode.PHOTO_ONLY
+    val showClock = settings.mode == ScreensaverSettings.Mode.CLOCK
     // 随机来源：每次进入屏保时重新洗牌（覆盖层退出后会被销毁，重进即换一组顺序）
     val pool = remember(photos, settings.photoSource) {
         if (settings.photoSource == ScreensaverSettings.PhotoSource.RANDOM) photos.shuffled() else photos
     }
 
-    // 纯照片模式固定使用照片；没有照片时兜底成 AURORA（不崩、不黑屏）
-    val effectiveBg = if (purePhoto) {
-        if (pool.isEmpty()) ScreensaverSettings.BackgroundStyle.AURORA
-        else ScreensaverSettings.BackgroundStyle.PHOTO
-    } else {
-        effectiveBackground(settings, pool)
-    }
+    val effectiveBg = effectiveBackground(settings, pool)
 
     // ---------- 照片轮播：每 photoIntervalSec 换一张，自动淡入由 Crossfade 负责 ----------
     // 用整个 pool 做 key：换轮播来源后即使数量不变，也从第一张重新开始
@@ -147,7 +138,8 @@ fun ScreensaverScreen(
                 if (event.type == KeyEventType.KeyDown) {
                     when (event.key) {
                         Key.DirectionLeft, Key.DirectionRight -> {
-                            if (purePhoto) onCycleSource() else onCycleStyle()
+                            val reverse = event.key == Key.DirectionLeft
+                            if (showClock) onCycleStyle(reverse) else onCycleSource(reverse)
                         }
 
                         else -> exitOnce()
@@ -156,20 +148,23 @@ fun ScreensaverScreen(
                 true // KeyDown/KeyUp 都吞掉：保证不会同时触发别的动作
             },
     ) {
-        // 1. 背景
-        when (effectiveBg) {
-            ScreensaverSettings.BackgroundStyle.PHOTO -> ScreensaverPhotoBackground(
-                photos = pool,
-                index = photoIndex,
-                kenBurns = settings.kenBurns,
-                settings = settings,
-                modifier = Modifier.fillMaxSize(),
-            )
-            ScreensaverSettings.BackgroundStyle.AURORA -> AuroraBackground(Modifier.fillMaxSize())
-            ScreensaverSettings.BackgroundStyle.BLACK -> BlackBackground(Modifier.fillMaxSize())
+        if (settings.mode == ScreensaverSettings.Mode.PHOTO_WALL && pool.size > 1) {
+            ScreensaverPhotoWall(pool, photoIndex, Modifier.fillMaxSize())
+        } else {
+            when (effectiveBg) {
+                ScreensaverSettings.BackgroundStyle.PHOTO -> ScreensaverPhotoBackground(
+                    photos = pool,
+                    index = photoIndex,
+                    kenBurns = settings.kenBurns && settings.mode != ScreensaverSettings.Mode.PHOTO_WALL,
+                    settings = settings,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                ScreensaverSettings.BackgroundStyle.AURORA -> AuroraBackground(Modifier.fillMaxSize())
+                ScreensaverSettings.BackgroundStyle.BLACK -> BlackBackground(Modifier.fillMaxSize())
+            }
         }
 
-        if (!purePhoto) {
+        if (showClock) {
             // 2. 可读性遮罩
             ScreensaverScrim(
                 effectiveBg,
@@ -180,11 +175,12 @@ fun ScreensaverScreen(
             // 3. 防烧屏容器：呼吸 + 每 2 分钟整体位移
             PixelShiftBox(enabled = settings.nightDim, Modifier.fillMaxSize()) {
                 EntranceFade(Modifier.fillMaxSize()) {
+                    val now = rememberNowEverySecond()
                     ScreensaverForeground(
                         settings = settings,
                         photoIndex = photoIndex,
                         now = now,
-                        parts = parts,
+                        parts = rememberClockParts(now),
                     )
                 }
             }

@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -53,8 +55,9 @@ sealed interface ConnectionMode {
 
 /**
  * 首次使用或连接失败时的入口页。
- * 不展示任何假数据：要么去设置里填账号，要么重试。
+ * 可以连接 NAS、重试或从手机向电视发送照片。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ConnectionScreen(
     mode: ConnectionMode,
@@ -64,6 +67,7 @@ fun ConnectionScreen(
     onSelectNas: (LanNasDevice) -> Unit,
     modifier: Modifier = Modifier,
     onManualSetup: () -> Unit = onOpenSettings,
+    onPhonePhotos: () -> Unit,
 ) {
     val primaryFocus = remember { FocusRequester() }
     val firstDeviceFocus = remember { FocusRequester() }
@@ -152,7 +156,10 @@ fun ConnectionScreen(
                     )
 
                     Spacer(Modifier.height(TvDimen.SpaceL))
-                    Row(horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
+                    ) {
                         if (scan !is NasScan.Scanning) {
                             ActionButton(
                                 label = "重新搜索",
@@ -166,6 +173,7 @@ fun ConnectionScreen(
                             focusRequester = primaryFocus,
                             onClick = onManualSetup,
                         )
+                        ActionButton("手机传图", primary = false, onClick = onPhonePhotos)
                         ActionButton("设置", primary = false, onClick = onOpenSettings)
                     }
                 }
@@ -188,7 +196,10 @@ fun ConnectionScreen(
                         color = TvColor.TextTertiary,
                     )
                     Spacer(Modifier.height(TvDimen.SpaceL))
-                    Row(horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
+                    ) {
                         ActionButton(
                             label = "重试",
                             primary = true,
@@ -196,6 +207,7 @@ fun ConnectionScreen(
                             onClick = onRetry,
                         )
                         ActionButton(label = "打开设置", primary = false, onClick = onOpenSettings)
+                        ActionButton(label = "手机传图", primary = false, onClick = onPhonePhotos)
                     }
                 }
             }

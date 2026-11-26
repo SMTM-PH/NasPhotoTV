@@ -20,6 +20,7 @@ internal data class HomeCollection(
     /** 非空表示这是飞牛 AI 场景/事物分类，值为分类 id。 */
     val smartAlbumId: String? = null,
     val coverUrl: String = "",
+    val itemCount: Int = items.size,
 ) {
     /** 封面占位媒体：分类没有封面 URL 时也能走统一的占位样式。 */
     val cover: MediaItem
@@ -50,5 +51,6 @@ internal fun homeCollections(state: LibraryState): List<HomeCollection> =
             },
             smartAlbumId = album.id,
             coverUrl = album.coverUrl,
+            itemCount = album.itemCount,
         )
     }

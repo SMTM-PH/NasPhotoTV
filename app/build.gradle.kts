@@ -15,8 +15,8 @@ android {
         // java.time 等 API 26 才有的类由 core library desugaring 提供。
         minSdk = 24
         targetSdk = 34
-        versionCode = 20
-        versionName = "1.2.14"
+        versionCode = 21
+        versionName = "1.2.15"
     }
 
     signingConfigs {
@@ -103,6 +103,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.10.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("com.google.zxing:core:3.5.3")
     // 飞牛相册对接：WebSocket 登录 + 签名 HTTP + 后续缩略图/视频流共用同一个客户端
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // 真实视频 / 实况片段播放（带 AccessToken 的 OkHttp 数据源）

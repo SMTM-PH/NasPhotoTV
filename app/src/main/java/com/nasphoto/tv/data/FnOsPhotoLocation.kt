@@ -6,9 +6,9 @@ import org.json.JSONObject
 
 /** The fnOS gallery model supplies decimal coordinates and an ISO country code. */
 internal fun parseFnOsPhotoLocation(json: JSONObject): PhotoLocation? {
-    val address = json.optJSONObject("location")
-        ?: json.optJSONObject("additional")?.optJSONObject("location")
-    val sources = listOfNotNull(json, address)
+    val additional = json.optJSONObject("additional")
+    val location = json.optJSONObject("location") ?: additional?.optJSONObject("location")
+    val sources = listOfNotNull(json, location, json.optJSONObject("address"), location?.optJSONObject("address"))
 
     fun firstText(vararg keys: String): String = sources.firstNotNullOfOrNull { source ->
         keys.firstNotNullOfOrNull { key ->
@@ -21,9 +21,9 @@ internal fun parseFnOsPhotoLocation(json: JSONObject): PhotoLocation? {
             ?: coordinates(source, "geoLatitude", "geoLongitude")
             ?: coordinates(source, "lat", "lon")
     }
-    val country = firstText("countryCode").uppercase(Locale.ROOT).takeIf { it in countryCodes }.orEmpty()
-    val locality = firstText("city", "locality")
-    val region = firstText("province", "region")
+    val country = firstText("countryCode", "country_code").uppercase(Locale.ROOT).takeIf { it in countryCodes }.orEmpty()
+    val locality = firstText("city", "locality", "cityName")
+    val region = firstText("province", "region", "provinceName")
     if (coordinates == null && country.isBlank() && locality.isBlank() && region.isBlank()) return null
     return PhotoLocation(country, locality, region, coordinates?.first, coordinates?.second)
 }

@@ -11,6 +11,9 @@ sealed interface AppRoute {
     data object Library : AppRoute
     data object Setup : AppRoute
     data object Settings : AppRoute
+    data object Accounts : AppRoute
+    data object PhonePhotos : AppRoute
+    data object ArtAlbum : AppRoute
     data object ScreensaverPreview : AppRoute
 }
 

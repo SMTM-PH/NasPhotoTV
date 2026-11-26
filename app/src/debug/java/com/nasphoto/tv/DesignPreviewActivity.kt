@@ -34,12 +34,16 @@ import com.nasphoto.tv.data.model.Person
 import com.nasphoto.tv.ui.AppRoute
 import com.nasphoto.tv.ui.LibraryState
 import com.nasphoto.tv.ui.ViewerRequest
+import com.nasphoto.tv.ui.book.ArtAlbumScreen
 import com.nasphoto.tv.ui.library.LibraryScreen
+import com.nasphoto.tv.ui.library.LibraryTab
 import com.nasphoto.tv.ui.screensaver.ScreensaverScreen
+import com.nasphoto.tv.ui.settings.SettingsKey
 import com.nasphoto.tv.ui.settings.SettingsScreen
 import com.nasphoto.tv.ui.settings.currentDisplayAlbums
 import com.nasphoto.tv.ui.theme.NasPhotoTvTheme
 import com.nasphoto.tv.ui.theme.TvColor
+import com.nasphoto.tv.ui.transfer.PhonePhotoScreen
 import com.nasphoto.tv.ui.video.VideoPlayerScreen
 import com.nasphoto.tv.ui.viewer.PhotoViewerScreen
 import java.time.LocalDate
@@ -47,7 +51,7 @@ import java.time.LocalDate
 /**
  * Debug-only offline review of the real Compose screens with clearly named sample data.
  * No repository, NAS credentials, discovery, settings restore or settings persist runs here.
- * Launch with optional `--ei tab 2` or `--es screen settings|viewer|screensaver`.
+ * Launch with optional `--ei tab 2` or `--es screen settings|accounts|viewer|screensaver|art-album`.
  */
 class DesignPreviewActivity : ComponentActivity() {
     private var previousContext: Context? = null
@@ -109,7 +113,9 @@ class DesignPreviewActivity : ComponentActivity() {
                 var route by remember {
                     mutableStateOf<AppRoute>(when (initialScreen) {
                         "settings" -> AppRoute.Settings
+                        "accounts" -> AppRoute.Accounts
                         "screensaver" -> AppRoute.ScreensaverPreview
+                        "art-album" -> AppRoute.ArtAlbum
                         else -> AppRoute.Library
                     })
                 }
@@ -171,17 +177,25 @@ class DesignPreviewActivity : ComponentActivity() {
                                 },
                             )
                         }
-                        AppRoute.Setup, AppRoute.Settings -> SettingsScreen(
+                        AppRoute.Setup, AppRoute.Settings, AppRoute.Accounts -> SettingsScreen(
                             store = SettingsStore,
                             onClose = { route = AppRoute.Library },
                             onPreviewScreensaver = { route = AppRoute.ScreensaverPreview },
                             onOpenLibrary = { route = AppRoute.Library },
                             screensaverPhotos = displayPhotos(sample.albums, sample.mediaByAlbum, SettingsStore.displayAlbumIds),
+                            initialFocus = SettingsKey.ACC_CURRENT.takeIf { route == AppRoute.Accounts },
                         )
                         AppRoute.ScreensaverPreview -> ScreensaverScreen(
                             settings = SettingsStore.screensaver,
                             photos = displayPhotos(sample.albums, sample.mediaByAlbum, SettingsStore.displayAlbumIds),
                             onExit = { route = AppRoute.Library },
+                        )
+                        AppRoute.ArtAlbum -> ArtAlbumScreen(
+                            photos = sample.recent,
+                            onClose = { route = AppRoute.Library },
+                        )
+                        AppRoute.PhonePhotos -> PhonePhotoScreen(
+                            onClose = { route = AppRoute.Library },
                         )
                     }
                 }
@@ -276,7 +290,7 @@ private fun previewLibrary(tab: Int): LibraryState {
         recent = allItems,
         albums = albums,
         mediaByAlbum = albums.associate { album -> album.id to allItems.filter { it.albumId == album.id } },
-        selectedTabIndex = tab.coerceIn(0, 5),
+        selectedTabIndex = tab.coerceIn(0, LibraryTab.entries.lastIndex),
         connectionName = "本地示例图库",
         isOnline = true,
         accountName = "设计预览",

@@ -64,6 +64,16 @@ object FnOsTransport {
             .build()
     }
 
+    /** 上传与入库提交不能由 HTTP 客户端自动重发，也不能跟随携带会话头的跳转。 */
+    internal val uploadClient: OkHttpClient by lazy {
+        client.newBuilder()
+            .retryOnConnectionFailure(false)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .callTimeout(120, TimeUnit.SECONDS)
+            .build()
+    }
+
     /** ExoPlayer 数据源：http(s) 走带鉴权的流媒体客户端，android.resource 等仍走默认源 */
     fun mediaDataSourceFactory(context: Context): DataSource.Factory =
         DefaultDataSource.Factory(

@@ -11,9 +11,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Collections
-import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,14 +27,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.data.model.pixelSize
 import com.nasphoto.tv.ui.common.MediaImage
+import com.nasphoto.tv.ui.theme.LocalTvPalette
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
 import com.nasphoto.tv.ui.theme.TvType
@@ -43,14 +44,14 @@ import kotlinx.coroutines.launch
 /** 全屏照片始终在导航及内容的下方，不参与焦点树。 */
 @Composable
 internal fun CinemaBackdrop(item: MediaItem, modifier: Modifier = Modifier) {
+    val size = item.pixelSize()
+    val isWide = size != null && size.first.toFloat() / size.second >= 1.6f
     Box(modifier.fillMaxSize().background(TvColor.Bg)) {
         Crossfade(
-            targetState = item.thumbnailUrl.ifBlank { item.url },
+            targetState = item.thumbnailUrl.ifBlank { item.url } to isWide,
             animationSpec = tween(280),
             label = "cinemaPhoto",
-        ) { url ->
-            val size = item.pixelSize()
-            val wide = size != null && size.first.toFloat() / size.second >= 1.6f
+        ) { (url, wide) ->
             Box(Modifier.fillMaxSize()) {
                 if (!wide) MediaImage(url, null, Modifier.fillMaxSize().alpha(0.18f),
                     contentScale = ContentScale.Crop, targetWidth = 1280)
@@ -95,7 +96,22 @@ internal fun ImmersiveHome(
     onUpToTopBar: () -> Unit,
     loading: Boolean = false,
     error: String? = null,
+    showCollectionWaterfall: Boolean = false,
+    onBrowseAllCollections: () -> Unit = {},
+    onCloseCollectionWaterfall: () -> Unit = {},
 ) {
+    if (showCollectionWaterfall) {
+        HomeCollectionWaterfall(
+            collections = collections,
+            selectedIndex = selectedIndex,
+            onSelect = onSelect,
+            onOpenCollection = onOpenCollection,
+            contentFocus = contentFocus,
+            onUpToTopBar = onUpToTopBar,
+            onClose = onCloseCollectionWaterfall,
+        )
+        return
+    }
     if (collections.isEmpty()) {
         EmptyImmersiveHome(
             onOpenAlbumsTab, contentFocus, onUpToTopBar, loading, error,
@@ -111,6 +127,7 @@ internal fun ImmersiveHome(
     fun thumbnailRequester(id: String) = thumbnailRequesters.getOrPut(id) { FocusRequester() }
     val stripState = rememberLazyListState(initialFirstVisibleItemIndex = (safeIndex - 1).coerceAtLeast(0))
     val scope = rememberCoroutineScope()
+    val typography = MaterialTheme.typography
 
     fun focusStrip() {
         scope.launch {
@@ -171,16 +188,16 @@ internal fun ImmersiveHome(
                         .padding(top = if (compact) TvDimen.SpaceXs else TvDimen.SpaceXl),
                 ) {
                     Text("客厅相册  /  飞牛 AI 智能分类",
-                        color = TvColor.Accent, fontSize = TvType.Caption,
-                        fontWeight = FontWeight.Medium)
+                        color = TvColor.Accent, style = typography.bodyMedium,
+                        fontWeight = FontWeight.Medium, letterSpacing = 0.35.sp)
                     Spacer(Modifier.height(TvDimen.SpaceXs))
                     Text(collection.title, color = TvColor.TextPrimary,
-                        fontSize = titleSize,
-                        fontWeight = FontWeight.Bold,
+                        style = typography.displayLarge, fontSize = titleSize,
+                        lineHeight = titleSize * 1.14f,
                         maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(TvDimen.SpaceXs))
-                    Text(collection.subtitle, color = TvColor.TextPrimary,
-                        fontSize = TvType.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(collection.subtitle, color = TvColor.TextSecondary,
+                        style = typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (!compact) {
                         Spacer(Modifier.height(TvDimen.SpaceS))
                         Text("AI 识别的事物与场景", color = TvColor.TextSecondary,
@@ -205,13 +222,18 @@ internal fun ImmersiveHome(
             Row(Modifier.fillMaxWidth().padding(horizontal = TvDimen.ScreenPadding),
                 verticalAlignment = Alignment.CenterVertically) {
                 Text("智能分类", color = TvColor.TextPrimary,
-                    fontSize = if (compact) TvType.CardTitle else TvType.Section,
-                    fontWeight = FontWeight.SemiBold)
+                    style = if (compact) typography.titleLarge else typography.headlineMedium)
                 Spacer(Modifier.width(TvDimen.SpaceS))
-                Text("共 ${collections.size} 个分类", color = TvColor.TextSecondary, fontSize = TvType.Caption)
+                Text("共 ${collections.size} 个分类", color = TvColor.TextSecondary, style = typography.bodyMedium)
                 Spacer(Modifier.weight(1f))
-                Text("${safeIndex + 1} / ${collections.size}", color = TvColor.TextPrimary,
-                    fontSize = TvType.Caption, fontFamily = FontFamily.Monospace)
+                Text(
+                    "↓ 瀑布浏览",
+                    color = TvColor.Accent,
+                    style = typography.labelLarge,
+                    modifier = Modifier
+                        .background(TvColor.Surface, RoundedCornerShape(TvDimen.RadiusS))
+                        .padding(horizontal = TvDimen.SpaceS, vertical = TvDimen.SpaceXs / 2),
+                )
             }
             Spacer(Modifier.height(if (compact) TvDimen.SpaceXs else TvDimen.SpaceM))
             Box(Modifier.fillMaxWidth().padding(horizontal = TvDimen.ScreenPadding)
@@ -235,6 +257,10 @@ internal fun ImmersiveHome(
                             } },
                             onConfirm = { onOpenCollection(media) },
                             onUp = { primaryRequester.requestFocus() },
+                            onDown = {
+                                onZoneChange(HomeFocusZone.STRIP)
+                                onBrowseAllCollections()
+                            },
                             modifier = Modifier.width(thumbnailWidth).height(thumbnailHeight)
                                 .semantics { this.selected = selected }
                                 .clip(shape)
@@ -244,13 +270,17 @@ internal fun ImmersiveHome(
                             Box(Modifier.fillMaxSize().blockPointer()) {
                                 MediaImage(media.cover.thumbnailUrl.ifBlank { media.cover.url }, media.title,
                                     Modifier.fillMaxSize(), targetWidth = 640)
-                                Text(media.title, color = TvColor.TextPrimary, fontSize = TvType.Caption,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                Row(
                                     modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth()
-                                        .background(TvColor.Bg.copy(alpha = 0.8f)).padding(TvDimen.SpaceXs))
-                                if (media.cover.type == MediaType.VIDEO) {
-                                    VideoBadge(formatDuration(media.cover.durationMs), Modifier.align(Alignment.BottomEnd)
-                                        .padding(TvDimen.SpaceXs))
+                                        .background(TvColor.Bg.copy(alpha = 0.8f)).padding(TvDimen.SpaceXs),
+                                    horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(media.title, color = TvColor.TextPrimary, style = typography.titleMedium,
+                                        modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (media.cover.type == MediaType.VIDEO) {
+                                        VideoBadge(formatDuration(media.cover.durationMs))
+                                    }
                                 }
                             }
                         }
@@ -268,18 +298,19 @@ private fun CinemaAction(
     onClick: () -> Unit, onFocus: () -> Unit, onUp: () -> Unit, onDown: () -> Unit,
 ) {
     val shape = RoundedCornerShape(TvDimen.RadiusS)
+    val background = if (LocalTvPalette.current.isLight) TvColor.Surface else TvColor.CinemaPanel
     TvFocusBox(focusRequester = focusRequester, cornerRadiusDp = 10,
         focusedScale = 1.025f, onConfirm = onClick, onUp = onUp, onDown = onDown,
         onFocusChanged = { if (it) onFocus() },
         modifier = Modifier.height(TvDimen.ControlHeight).clip(shape)
-            .background(TvColor.CinemaPanel)
+            .background(background)
             .padding(horizontal = TvDimen.SpaceM)) { focused ->
+        val contentColor = if (focused) TvColor.Accent else TvColor.TextPrimary
         Row(Modifier.fillMaxHeight(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs)) {
-            Icon(icon, null, tint = if (focused) TvColor.Accent else TvColor.TextPrimary,
-                modifier = Modifier.size(TvDimen.IconSize))
-            Text(label, color = if (focused) TvColor.Accent else TvColor.TextPrimary,
-                fontSize = TvType.Caption, fontWeight = FontWeight.SemiBold)
+            Icon(icon, null, tint = contentColor, modifier = Modifier.size(TvDimen.IconSize))
+            Text(label, color = contentColor,
+                style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -301,7 +332,7 @@ private fun EmptyImmersiveHome(
             error != null -> "暂时无法读取回忆"
             else -> "还没有可展示的智能分类"
         }
-        Text(title, color = TvColor.TextPrimary, fontSize = TvType.Display)
+        Text(title, color = TvColor.TextPrimary, style = MaterialTheme.typography.displayLarge)
         Spacer(Modifier.height(TvDimen.SpaceS))
         Text(
             error ?: if (loading) "也可以先浏览图库或相册。" else "请在飞牛相册中开启 AI 识别，识别结果会自动出现在这里。",

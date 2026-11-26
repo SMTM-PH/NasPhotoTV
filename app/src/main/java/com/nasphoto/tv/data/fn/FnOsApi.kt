@@ -1,5 +1,6 @@
 package com.nasphoto.tv.data.fn
 
+import android.net.Uri
 import android.util.Base64
 import com.nasphoto.tv.data.model.NasConnection
 import kotlinx.coroutines.CoroutineScope
@@ -16,17 +17,23 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
 import org.json.JSONArray
+import java.io.File
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import javax.net.ssl.SSLException
 
 /**
@@ -182,6 +189,50 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
     suspend fun postJson(path: String, body: JSONObject): JSONObject =
         requestJson(path, emptyList(), body.toString())
 
+    /** 文件管理上传使用与网页端一致的 multipart 和路径签名。 */
+    internal suspend fun uploadPhotoFile(file: File, targetPath: String, originalName: String, mime: String): Unit =
+        withContext(Dispatchers.IO) {
+            val session = ensureSession(force = false)
+            val key = runCatching { Base64.decode(session.secret, Base64.DEFAULT) }.getOrNull()
+            if (key == null || key.isEmpty()) throw FnOsException("飞牛登录会话缺少文件上传凭证")
+            val encodedPath = Uri.encode(targetPath, "/")
+            val signature = Mac.getInstance("HmacSHA256").run {
+                init(SecretKeySpec(key, algorithm))
+                Base64.encodeToString(doFinal(encodedPath.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+            }
+            val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
+                .addFormDataPart("trim-upload-file", originalName, file.asRequestBody(mime.toMediaType()))
+                .build()
+            val request = Request.Builder()
+                .url(access.url("/upload"))
+                .header("AccessToken", session.token)
+                .header("Trim-Token", session.token)
+                .header("Trim-Sign", signature)
+                .header("Trim-Path", encodedPath)
+                .header("Trim-Overwrite", "1")
+                .header("Trim-Mtim", (file.lastModified() / 1000).toString())
+                .header("Trim-Flags", "1")
+                .post(multipart)
+                .build()
+            FnOsTransport.uploadClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw FnOsException("飞牛拒绝保存照片（HTTP ${response.code}）")
+            }
+        }
+
+    /** 入库不能自动重发。收到业务结果前断开时，照片可能已进入相册。 */
+    internal suspend fun postUploadNotice(path: String, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        val session = ensureSession(force = false)
+        val result = try {
+            execute(session, path, emptyList(), body.toString(), FnOsTransport.uploadClient)
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            if (error is FnOsException && error.httpStatus in setOf(400, 401, 403, 404, 413, 415, 422)) throw error
+            throw FnOsPhotoImportUncertain(error)
+        }
+        if (result.code != 0) throw FnOsException("飞牛未能将照片加入所选文件夹（代码 ${result.code}）")
+        result.data
+    }
+
     private suspend fun requestJson(
         path: String,
         params: List<Pair<String, String>>,
@@ -246,6 +297,7 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
         path: String,
         params: List<Pair<String, String>>,
         requestBody: String?,
+        client: OkHttpClient = FnOsTransport.client,
     ): ApiResult {
         // session 只用于保证调用前已登录；AccessToken 由 FnOsTransport 拦截器统一注入
         @Suppress("UNUSED_EXPRESSION")
@@ -266,7 +318,7 @@ class FnOsApi(private val access: FnOsAccess) : AutoCloseable {
         } else {
             builder.post(requestBody.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
         }
-        FnOsTransport.client.newCall(request).execute().use { response ->
+        client.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 throw FnOsException(

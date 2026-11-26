@@ -225,14 +225,20 @@ fun lerpColor(start: Color, stop: Color, fraction: Float): Color {
 fun Color.mixWhite(t: Float): Color = lerpColor(this, Color.White, t)
 
 /**
- * 屏保实际使用的背景：选了 PHOTO 但没有照片时兜底为 AURORA（不崩、不黑屏）。
+ * 照片模式使用照片背景，没有照片时使用极光。
  */
 fun effectiveBackground(
     settings: ScreensaverSettings,
     photos: List<MediaItem>,
-): ScreensaverSettings.BackgroundStyle =
-    if (settings.background == ScreensaverSettings.BackgroundStyle.PHOTO && photos.isEmpty()) {
+): ScreensaverSettings.BackgroundStyle {
+    val background = if (settings.mode == ScreensaverSettings.Mode.CLOCK) {
+        settings.background
+    } else {
+        ScreensaverSettings.BackgroundStyle.PHOTO
+    }
+    return if (background == ScreensaverSettings.BackgroundStyle.PHOTO && photos.isEmpty()) {
         ScreensaverSettings.BackgroundStyle.AURORA
     } else {
-        settings.background
+        background
     }
+}

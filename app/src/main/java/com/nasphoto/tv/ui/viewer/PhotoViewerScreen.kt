@@ -134,9 +134,9 @@ private const val PanoramaStep = 0.33f
 /** 全景横向细节多，按 4K 宽度请求解码 */
 private const val PanoramaTargetWidth = 4096
 
-/** 图片区背景：上深下略亮的竖向渐变，保证图片区本身不会是一块「纯黑无内容」的舞台 */
+/** 图片区背景：固定暗场常量，不随外观模式变化（顶层 val 不能读 TvColor）。 */
 private val StageBackground = Brush.verticalGradient(
-    listOf(TvColor.Bg, Color(0xFF0E1016), TvColor.Bg),
+    listOf(Color(0xFF06131E), Color(0xFF0E1016), Color(0xFF06131E)),
 )
 
 /** 控制栏浮层的 Scrim：图片铺满整屏时，保证信息条 / 按钮 / 胶片条上的文字依然清晰可读 */
@@ -144,7 +144,7 @@ private val ChromeScrim = Brush.verticalGradient(
     0.0f to Color.Transparent,
     0.28f to Color.Black.copy(alpha = 0.55f),
     0.62f to Color.Black.copy(alpha = 0.88f),
-    1.0f to TvColor.Bg,
+    1.0f to Color(0xFF06131E),
 )
 
 private data class PageRequest(val index: Int, val item: MediaItem, val direction: Int)

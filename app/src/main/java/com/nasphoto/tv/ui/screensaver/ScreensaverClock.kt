@@ -70,8 +70,9 @@ import java.time.LocalDateTime
  *  - 卡片用 [GlassCard] 玻璃拟态；不用真实背景模糊（电视芯片代价高）
  */
 
-/** 时钟主色：白色 90% */
-val TimeWhite = TvColor.TextPrimary.copy(alpha = 0.90f)
+/** 时钟主色：白色 90%。屏保属于「固定暗场」，两套外观下都用深色常量，
+ *  不能读 TvColor（顶层 val 会在类加载时固化成启动那一刻的调色板）。 */
+val TimeWhite = Color(0xE6F5F7FA)
 
 /** 大数字共用字形：等宽 + 紧字距 + 投影，保证任何背景上都清晰 */
 private fun bigTimeStyle(size: TextUnit, weight: FontWeight): TextStyle = TextStyle(
@@ -454,6 +455,9 @@ private fun CalendarPanel(date: LocalDate, modifier: Modifier = Modifier) {
 
 @Composable
 private fun RowScope.DayCell(day: Int?, today: Boolean) {
+    // 屏保属于固定暗场：取当前（深色）板的主色，再捕获进 drawBehind 的 DrawScope。
+    val accent = TvColor.Accent
+    val textSecondary = TvColor.TextSecondary
     Box(Modifier.width(42.dp).height(38.dp), contentAlignment = Alignment.Center) {
         if (day == null) return@Box
         if (today) {
@@ -461,11 +465,11 @@ private fun RowScope.DayCell(day: Int?, today: Boolean) {
                 Modifier
                     .drawBehind {
                         drawCircle(
-                            color = TvColor.Accent.copy(alpha = 0.18f),
+                            color = accent.copy(alpha = 0.18f),
                             radius = size.minDimension / 2f,
                         )
                         drawCircle(
-                            color = TvColor.Accent.copy(alpha = 0.60f),
+                            color = accent.copy(alpha = 0.60f),
                             radius = size.minDimension / 2f - 1.dp.toPx(),
                             style = Stroke(width = 2.dp.toPx()),
                         )
@@ -477,7 +481,7 @@ private fun RowScope.DayCell(day: Int?, today: Boolean) {
             text = day.toString(),
             fontSize = TvType.Caption,
             fontWeight = if (today) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (today) TvColor.Accent else TvColor.TextSecondary.copy(alpha = 0.64f),
+            color = if (today) accent else textSecondary.copy(alpha = 0.64f),
         )
     }
 }

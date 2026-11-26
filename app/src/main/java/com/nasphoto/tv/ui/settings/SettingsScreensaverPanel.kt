@@ -1,14 +1,15 @@
 package com.nasphoto.tv.ui.settings
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -37,33 +38,24 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nasphoto.tv.R
 import com.nasphoto.tv.data.SettingsStore
-import com.nasphoto.tv.data.MediaCache
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.ScreensaverSettings
 import com.nasphoto.tv.ui.common.MediaImage
+import com.nasphoto.tv.ui.screensaver.ScreensaverPhotoWall
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
 import com.nasphoto.tv.ui.theme.TvType
 import java.time.LocalDateTime
 
-/**
- * ================= 右栏 · 屏保实时预览（settings-main 重点） =================
- *
- * 一个 16:9 的"小电视"：里面按当前 ScreensaverSettings 实时渲染
- *  - 背景（照片轮播 / 极光 / 纯黑）
- *  - 时钟小样（四种样式各有不同构图，一眼能看出区别）
- *  - 日期 / 照片信息（跟随开关）
- *  - 夜间调暗（整体压暗 + 暖色遮罩）、Ken Burns（照片极缓慢缩放）
- *
- * 刻意不直接嵌 ScreensaverScreen：那个组件是给 1080p 全屏设计的（220sp 时钟、像素位移、退出手势），
- * 缩到 900x506 的小框里用独立的"缩略版"反而更像右侧面板该有的信息密度。
- */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+/** 展示当前屏保画面，调整选项时保持预览可见。 */
 @Composable
 fun SettingsScreensaverPanel(
     store: SettingsStore,
@@ -76,87 +68,108 @@ fun SettingsScreensaverPanel(
     modifier: Modifier = Modifier,
 ) {
     val s = store.screensaver
-    val purePhoto = s.mode == ScreensaverSettings.Mode.PHOTO_ONLY
+    val showsClock = s.mode == ScreensaverSettings.Mode.CLOCK
+    val photoWall = s.mode == ScreensaverSettings.Mode.PHOTO_WALL
+    val choosingOption = focusedKey == SettingsKey.SS_MODE ||
+        focusedKey == SettingsKey.SS_SOURCE || focusedKey == SettingsKey.SS_ALBUM ||
+        focusedKey == SettingsKey.SS_CLOCK || focusedKey == SettingsKey.SS_BACKGROUND
+    val showPushIn = focusedKey == SettingsKey.SS_KEN_BURNS && !photoWall
     // 外壳传入已按当前账号白名单过滤的照片；不能回退到最近照片或未过滤缓存。
-    val photo = if (store.displayAlbumIds.isEmpty()) null else screensaverPhotos.firstOrNull()
+    val previewPhotos = if (store.displayAlbumIds.isEmpty()) emptyList() else screensaverPhotos
+    val photo = previewPhotos.firstOrNull()
     val displayAlbums = currentDisplayAlbums(store).filter { it.id in store.displayAlbumIds }
     val now = remember { LocalDateTime.now() }
-    // 预览是「静态快照」，不做每帧动画。
-    // 原因：设置页默认就停在这一组，之前的 rememberInfiniteTransition(Ken Burns) +
-    // 极光动画会让画面 60fps 持续重绘，弱 GPU 的电视/4K 面板上 CPU/GPU 被打满，
-    // 于是「进入设置后要等一会儿方向键才有反应」。真机实测这是设置页卡顿的主因。
-    val kenBurnsScale = KEN_BURNS_PREVIEW_SCALE
-
-    // 预览很高：聚焦到「时钟样式 / 背景」时把选择条滚进视野（最小滚动，尽量保留预览）
     val panelScroll = rememberScrollState()
-    val stripBringIntoView = remember { BringIntoViewRequester() }
-    LaunchedEffect(focusedKey) {
-        kotlinx.coroutines.delay(80)
-        when (focusedKey) {
-            SettingsKey.SS_MODE,
-            SettingsKey.SS_SOURCE,
-            SettingsKey.SS_ALBUM,
-            SettingsKey.SS_CLOCK,
-            SettingsKey.SS_BACKGROUND,
-            -> runCatching { stripBringIntoView.bringIntoView() }
-
-            else -> panelScroll.animateScrollTo(0)
-        }
-    }
+    LaunchedEffect(focusedKey) { panelScroll.scrollTo(0) }
 
     Column(
         modifier
             .fillMaxWidth()
             .verticalScroll(panelScroll),
     ) {
-        PanelTitle("屏保预览", if (s.enabled) "仅使用客厅展示相册" else "屏保已关闭 · 预览仍可查看")
-        if (store.displayAlbumIds.isEmpty()) {
-            Spacer(Modifier.height(TvDimen.SpaceXs))
-            Text("请先在「客厅展示相册」中选择照片范围", fontSize = TvType.Caption, color = TvColor.TextSecondary)
+        when (focusedKey) {
+            SettingsKey.SS_MODE -> ChoiceStrip(
+                title = "屏保画面",
+                items = ScreensaverSettings.Mode.entries.map { it.label },
+                selectedIndex = s.mode.ordinal,
+                onPick = { index -> onPickMode(ScreensaverSettings.Mode.entries[index]) },
+            )
+            SettingsKey.SS_SOURCE -> ChoiceStrip(
+                title = "轮播内容",
+                items = ScreensaverSettings.PhotoSource.entries.map { it.label },
+                selectedIndex = s.photoSource.ordinal,
+                onPick = { index -> onPickSource(ScreensaverSettings.PhotoSource.entries[index]) },
+            )
+            SettingsKey.SS_ALBUM -> PanelTitle(
+                "轮播相册",
+                displayAlbums.firstOrNull { it.id == s.albumId }?.name ?: "请选择客厅展示相册",
+            )
+            SettingsKey.SS_CLOCK -> if (showsClock) {
+                ChoiceStrip(
+                    title = "时钟样式",
+                    items = ScreensaverSettings.ClockStyle.entries.map { it.label },
+                    selectedIndex = s.clockStyle.ordinal,
+                    onPick = { index -> onPickClock(ScreensaverSettings.ClockStyle.entries[index]) },
+                )
+            } else {
+                PanelNote("切到时钟待机后可调整时钟样式")
+            }
+            SettingsKey.SS_BACKGROUND -> if (showsClock) {
+                ChoiceStrip(
+                    title = "背景",
+                    items = ScreensaverSettings.BackgroundStyle.entries.map { it.label },
+                    selectedIndex = s.background.ordinal,
+                    onPick = { index -> onPickBackground(ScreensaverSettings.BackgroundStyle.entries[index]) },
+                )
+            } else {
+                PanelNote("切到时钟待机后可调整背景")
+            }
+            else -> if (showPushIn) {
+                PanelTitle("照片推拉预览", if (s.kenBurns) "已开启 · 示例照片" else "已关闭 · 示例照片")
+            } else {
+                PanelTitle("屏保预览", if (s.enabled) s.mode.label else "${s.mode.label} · 自动屏保已关闭")
+            }
         }
-        Spacer(Modifier.height(TvDimen.SpaceM))
+        Spacer(Modifier.height(TvDimen.SpaceS))
 
         // ---------------- 预览框 ----------------
         Box(
             Modifier
-                .fillMaxWidth()
+                .align(Alignment.CenterHorizontally)
+                .fillMaxWidth(if (choosingOption) 0.84f else 1f)
                 .aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(TvDimen.RadiusL))
                 .background(Color.Black)
                 .border(1.5.dp, TvColor.Divider, RoundedCornerShape(TvDimen.RadiusL)),
         ) {
-            if (purePhoto) {
-                // 纯照片：全屏照片本身，不压暗、不叠加任何文字
-                if (photo != null) {
-                    if (s.kenBurns) {
-                        MediaImage(
-                            url = photo.thumbnailUrl.ifBlank { photo.url },
-                            contentDescription = null,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    scaleX = kenBurnsScale
-                                    scaleY = kenBurnsScale
-                                },
-                            targetWidth = 1080,
-                        )
-                    } else {
-                        MediaImage(
-                            url = photo.thumbnailUrl.ifBlank { photo.url },
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            targetWidth = 1080,
-                        )
-                    }
-                } else {
-                    Box(
-                        Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
+            if (showPushIn) {
+                PhotoPushInPreview(enabled = s.kenBurns)
+            } else if (!showsClock) {
+                when {
+                    photo == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
-                            text = "展示相册暂无可用照片",
+                            text = if (store.displayAlbumIds.isEmpty()) {
+                                "请先选择客厅展示相册"
+                            } else {
+                                "展示相册暂无可用照片"
+                            },
                             fontSize = TvType.Caption,
                             color = TvColor.TextTertiary,
+                        )
+                    }
+
+                    photoWall -> ScreensaverPhotoWall(previewPhotos, index = 0, modifier = Modifier.fillMaxSize())
+
+                    else -> {
+                        val scale = if (s.kenBurns) KEN_BURNS_PREVIEW_SCALE else 1f
+                        MediaImage(
+                            url = photo.thumbnailUrl.ifBlank { photo.url },
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize().graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                            },
+                            targetWidth = 1080,
                         )
                     }
                 }
@@ -171,8 +184,8 @@ fun SettingsScreensaverPanel(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
-                                        scaleX = kenBurnsScale
-                                        scaleY = kenBurnsScale
+                                        scaleX = KEN_BURNS_PREVIEW_SCALE
+                                        scaleY = KEN_BURNS_PREVIEW_SCALE
                                     },
                                 targetWidth = 1080,
                             )
@@ -229,130 +242,26 @@ fun SettingsScreensaverPanel(
                 }
             }
 
-            // 关闭态：在上面盖一层灰 + 文案
-            if (!s.enabled) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.45f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "屏保已关闭",
-                        fontSize = TvType.CardTitle,
-                        fontWeight = FontWeight.Medium,
-                        color = TvColor.TextPrimary.copy(alpha = 0.85f),
-                    )
-                }
-            }
         }
 
-        Spacer(Modifier.height(TvDimen.SpaceM))
-
-        // ---------------- 一眼可点的选择条（紧贴预览） ----------------
-        // 只在关注对应行时出现，避免右栏永远满满当当
-        Box(Modifier.bringIntoViewRequester(stripBringIntoView)) {
-            when (focusedKey) {
-                SettingsKey.SS_MODE -> ChoiceStrip(
-                    title = "屏保画面",
-                    items = ScreensaverSettings.Mode.entries.map { it.label },
-                    selectedIndex = s.mode.ordinal,
-                    onPick = { idx -> onPickMode(ScreensaverSettings.Mode.entries[idx]) },
-                )
-
-                SettingsKey.SS_SOURCE -> ChoiceStrip(
-                    title = "轮播内容",
-                    items = ScreensaverSettings.PhotoSource.entries.map { it.label },
-                    selectedIndex = s.photoSource.ordinal,
-                    onPick = { idx -> onPickSource(ScreensaverSettings.PhotoSource.entries[idx]) },
-                )
-
-                SettingsKey.SS_ALBUM -> Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("相册", fontSize = TvType.Tiny, color = TvColor.TextTertiary)
-                        Spacer(Modifier.weight(1f))
-                        Text(
-                            "${displayAlbums.size} 个展示相册 · ← → 切换",
-                            fontSize = TvType.Tiny,
-                            color = TvColor.TextTertiary.copy(alpha = 0.7f),
-                        )
-                    }
-                    Spacer(Modifier.height(TvDimen.SpaceXs))
-                    Text(
-                        text = displayAlbums.firstOrNull { it.id == s.albumId }?.name ?: "未选择展示相册",
-                        fontSize = TvType.CardTitle,
-                        fontWeight = FontWeight.Medium,
-                        color = TvColor.TextPrimary,
-                    )
-                    if (s.photoSource != ScreensaverSettings.PhotoSource.ALBUM) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "把「轮播内容」切到「相册」后生效",
-                            fontSize = TvType.Tiny,
-                            color = TvColor.TextTertiary.copy(alpha = 0.8f),
-                        )
-                    }
-                }
-
-                SettingsKey.SS_CLOCK -> if (purePhoto) {
-                    PanelNote("纯照片模式下不显示时钟")
-                } else {
-                    ChoiceStrip(
-                        title = "时钟样式",
-                        items = ScreensaverSettings.ClockStyle.entries.map { it.label },
-                        selectedIndex = s.clockStyle.ordinal,
-                        onPick = { idx -> onPickClock(ScreensaverSettings.ClockStyle.entries[idx]) },
-                    )
-                }
-
-                SettingsKey.SS_BACKGROUND -> if (purePhoto) {
-                    PanelNote("纯照片模式固定使用全屏照片")
-                } else {
-                    ChoiceStrip(
-                        title = "背景",
-                        items = ScreensaverSettings.BackgroundStyle.entries.map { it.label },
-                        selectedIndex = s.background.ordinal,
-                        onPick = { idx -> onPickBackground(ScreensaverSettings.BackgroundStyle.entries[idx]) },
-                    )
-                }
-
-                else -> {}
+        if (!choosingOption && !showPushIn) {
+            Spacer(Modifier.height(TvDimen.SpaceS))
+            if (store.displayAlbumIds.isEmpty()) {
+                Text("请先选择客厅展示相册", fontSize = TvType.Caption, color = TvColor.TextSecondary)
+            } else {
+                val interval = SettingsStore.formatInterval(s.photoIntervalSec)
+                InfoLine("照片停留", "$interval / ${if (photoWall) "轮" else "张"}")
+            }
+            if (s.enabled) {
+                InfoLine("自动进入", "静止 ${SettingsStore.formatIdleTimeout(s.idleTimeoutSec)}后")
             }
         }
-
-        Spacer(Modifier.height(TvDimen.SpaceM))
-
-        // ---------------- 快捷参数（遥控器也能直接点） ----------------
-        InfoLine("画面", s.mode.label)
-        InfoLine(
-            "轮播",
-            if (s.photoSource == ScreensaverSettings.PhotoSource.ALBUM) {
-                "相册 · ${displayAlbums.firstOrNull { it.id == s.albumId }?.name ?: "未选择展示相册"}"
-            } else {
-                s.photoSource.label
-            },
-        )
-        if (!purePhoto) InfoLine("时钟", s.clockStyle.label)
-        InfoLine("背景", if (purePhoto) "全屏照片" else s.background.label)
-        InfoLine("停留", "${SettingsStore.formatInterval(s.photoIntervalSec)} / 张")
-        InfoLine("进入", if (s.enabled) "静止 ${SettingsStore.formatIdleTimeout(s.idleTimeoutSec)}后" else "不会进入")
-        InfoLine(
-            "叠加",
-            if (purePhoto) {
-                "无（纯照片）"
-            } else {
-                buildList {
-                    if (s.showDate) add("日期")
-                    if (s.nightDim) add("夜间调暗")
-                    if (s.kenBurns) add("Ken Burns")
-                }.joinToString(" · ").ifEmpty { "无" }
-            },
-        )
 
         if (focusedKey == SettingsKey.SS_PREVIEW || focusedKey == SettingsKey.SS_ENABLED) {
             Spacer(Modifier.height(TvDimen.SpaceS))
+            val cycle = if (showsClock) "换表盘" else "换轮播内容"
             Text(
-                text = "ENTER 全屏预览 · 屏保里 ← → 换样式，其他键退出",
+                text = "ENTER 全屏预览 · 屏保里 ← → $cycle，其他键退出",
                 fontSize = TvType.Tiny,
                 color = TvColor.Accent.copy(alpha = 0.85f),
                 modifier = Modifier
@@ -362,6 +271,24 @@ fun SettingsScreensaverPanel(
             )
         }
     }
+}
+
+@Composable
+private fun PhotoPushInPreview(enabled: Boolean) {
+    val scale = remember { Animatable(1f) }
+    LaunchedEffect(enabled) {
+        scale.snapTo(1f)
+        if (enabled) scale.animateTo(KEN_BURNS_PREVIEW_SCALE, tween(1_800, easing = LinearOutSlowInEasing))
+    }
+    Image(
+        painter = painterResource(R.drawable.slideshow_preview_lake),
+        contentDescription = null,
+        modifier = Modifier.fillMaxSize().graphicsLayer {
+            scaleX = scale.value
+            scaleY = scale.value
+        },
+        contentScale = ContentScale.Crop,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +541,9 @@ private fun MiniMonth(year: Int, month: Int, today: Int, modifier: Modifier = Mo
 private fun AuroraPreview(modifier: Modifier = Modifier) {
     // 静态极光：预览不需要每帧漂移，避免设置页持续重绘
     val t = 0.5f
+    // drawBehind 的 DrawScope 不是 Composable 上下文，先取色再捕获。
+    val accent = TvColor.Accent
+    val accentAlt = TvColor.AccentAlt
     Box(
         modifier
             .background(
@@ -626,7 +556,7 @@ private fun AuroraPreview(modifier: Modifier = Modifier) {
                 val h = size.height
                 drawCircle(
                     brush = Brush.radialGradient(
-                        listOf(TvColor.Accent.copy(alpha = 0.34f), Color.Transparent),
+                        listOf(accent.copy(alpha = 0.34f), Color.Transparent),
                         center = Offset(w * (0.20f + 0.10f * t), h * 0.28f),
                         radius = w * 0.42f,
                     ),
@@ -635,7 +565,7 @@ private fun AuroraPreview(modifier: Modifier = Modifier) {
                 )
                 drawCircle(
                     brush = Brush.radialGradient(
-                        listOf(TvColor.AccentAlt.copy(alpha = 0.30f), Color.Transparent),
+                        listOf(accentAlt.copy(alpha = 0.30f), Color.Transparent),
                         center = Offset(w * (0.78f - 0.08f * t), h * 0.34f),
                         radius = w * 0.36f,
                     ),

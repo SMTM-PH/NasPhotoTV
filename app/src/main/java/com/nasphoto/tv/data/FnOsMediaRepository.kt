@@ -15,6 +15,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.json.JSONObject
+import java.io.File
 import java.time.LocalDate
 
 /**
@@ -42,6 +43,13 @@ class FnOsMediaRepository(
     private val gallery = FnOsGallery(api::getJson, ::parseMedia)
     private val mapPlaces = FnOsMapPlaces(api::getJson, ::parseMedia, baseUrl)
     private val folders = FnOsFolders(api::getJson, ::parseMedia, api::postJson, baseUrl)
+    private val phonePhotos = FnOsPhonePhotoUpload(api)
+
+    internal suspend fun uploadPhonePhoto(file: File, onImportStarting: suspend () -> Unit = {}) {
+        phonePhotos.upload(file, onImportStarting)
+    }
+
+    internal suspend fun isPhonePhotoImported(file: File): Boolean = phonePhotos.isImported(file)
 
     suspend fun probe(): FnOsProbeResult = api.testConnection()
 

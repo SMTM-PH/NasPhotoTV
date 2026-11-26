@@ -27,6 +27,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -52,7 +53,7 @@ const val SETTINGS_FOCUS_SCALE = 1.02f
 /**
  * 一行设置项。
  *
- * @param onConfirm ENTER / DPAD_CENTER：执行（跳转 / 预览 / 单项切换）
+ * @param onConfirm ENTER / DPAD_CENTER：执行（跳转 / 预览 / 单项切换）。null 为只读行
  * @param onAdjust 左右键回调。LEFT/RIGHT 一律拦截（含边界情况，避免焦点乱飞到右侧面板）。
  * @param autoOnFocus 焦点移入这一行时自动执行一次（用于"锁定开关/预览"这类行：按 UP/DOWN 经过即生效，遥控器手感最顺）
  */
@@ -60,7 +61,7 @@ const val SETTINGS_FOCUS_SCALE = 1.02f
 fun SettingsFocusRow(
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
-    onConfirm: () -> Unit,
+    onConfirm: (() -> Unit)?,
     onAdjust: ((isLeft: Boolean) -> Boolean)? = null,
     onFocused: ((Boolean) -> Unit)? = null,
     autoOnFocus: (() -> Unit)? = null,
@@ -91,7 +92,14 @@ fun SettingsFocusRow(
             .tvFocusRing(TvDimen.RadiusM, if (focused) 1f else 0f)
             .semantics(mergeDescendants = true) {
                 role = Role.Button
-                onClick { onConfirm(); true }
+                if (onConfirm != null) {
+                    onClick {
+                        onConfirm()
+                        true
+                    }
+                } else {
+                    disabled()
+                }
             }
             .onFocusChanged { state ->
                 if (focused != state.isFocused) {
@@ -105,7 +113,7 @@ fun SettingsFocusRow(
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                 when (event.key) {
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
-                        onConfirm()
+                        onConfirm?.invoke()
                         true
                     }
 

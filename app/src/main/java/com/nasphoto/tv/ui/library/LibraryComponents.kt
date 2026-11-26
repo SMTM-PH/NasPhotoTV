@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -58,6 +59,7 @@ import com.nasphoto.tv.data.model.AlbumType
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.ui.common.MediaImage
+import com.nasphoto.tv.ui.theme.DarkPalette
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvImage
 import com.nasphoto.tv.ui.theme.TvDimen
@@ -68,62 +70,26 @@ import com.nasphoto.tv.ui.theme.TvType
  * 全部组件只做展示 + 焦点回调，"点哪去"由 LibraryScreen 决定。
  */
 
-// ============================== 顶栏 ==============================
-
-@Composable
-fun LibraryTopBar(
-    tabs: List<LibraryTab>,
-    selectedTab: LibraryTab,
-    connectionName: String,
-    isOnline: Boolean,
-    onTabClick: (LibraryTab) -> Unit,
-    onTabFocus: (Int) -> Unit,
-    onActionFocus: (Int) -> Unit,
-    tabFocusRequesters: List<FocusRequester>,
-    actionFocusRequesters: List<FocusRequester>,
-    onHome: () -> Unit,
-    onScreensaver: () -> Unit,
-    onSettings: () -> Unit,
-    /** 当前飞牛账号显示名（空 = 还没读到账号，不显示胶囊） */
-    accountName: String = "",
-    /** 这台 NAS 上的账号数；>1 才提示可切换，1 个账号提示切换是骗人的 */
-    accountCount: Int = 1,
-    onAccountClick: () -> Unit = {},
-    /** 账号胶囊按 DOWN 时通知外层（回主内容），与 [onTabDown] 同一套显式落点 */
-    onAccountDown: () -> Unit = {},
-    accountFocusRequester: FocusRequester? = null,
-    /** Tab 按 DOWN 时通知外层（去主内容） */
-    onTabDown: (Int) -> Unit = {},
-    modifier: Modifier = Modifier,
-    isConnecting: Boolean = false,
-) {
-    GalleryTopBar(tabs, selectedTab, connectionName, isOnline, onTabClick, onTabFocus,
-        onActionFocus, tabFocusRequesters, actionFocusRequesters, onHome, onScreensaver,
-        onSettings, accountName, accountCount, onAccountClick, onAccountDown,
-        accountFocusRequester, onTabDown, modifier, isConnecting)
-}
-
 // ============================== 区块标题 ==============================
 
 @Composable
 fun SectionHeader(title: String, trailing: String = "", modifier: Modifier = Modifier) {
     Row(
         modifier.fillMaxWidth().padding(bottom = TvDimen.SpaceXs),
-        verticalAlignment = Alignment.Bottom,
     ) {
         Text(
             text = title,
             color = TvColor.TextPrimary,
-            fontSize = TvType.Section,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.alignByBaseline(),
         )
         if (trailing.isNotBlank()) {
             Spacer(Modifier.width(TvDimen.SpaceS))
             Text(
                 text = trailing,
-                color = TvColor.TextMuted,
-                fontSize = TvType.Caption,
-                modifier = Modifier.padding(bottom = 4.dp),
+                color = TvColor.TextSecondary,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.alignByBaseline(),
             )
         }
     }
@@ -151,7 +117,7 @@ fun LibraryHero(
 
 // ============================== 媒体卡片 ==============================
 
-/** 视频时长角标 */
+/** 视频时长角标。黑底角标和照片遮罩都使用固定暗场的文字配色。 */
 @Composable
 fun VideoBadge(duration: String, modifier: Modifier = Modifier) {
     Row(
@@ -164,12 +130,12 @@ fun VideoBadge(duration: String, modifier: Modifier = Modifier) {
         Icon(
             imageVector = Icons.Filled.PlayArrow,
             contentDescription = null,
-            tint = TvColor.TextPrimary,
+            tint = DarkPalette.textPrimary,
             modifier = Modifier.size(14.dp),
         )
         if (duration.isNotBlank()) {
             Spacer(Modifier.width(2.dp))
-            Text(duration, color = TvColor.TextPrimary, fontSize = TvType.Tiny)
+            Text(duration, color = DarkPalette.textPrimary, fontSize = TvType.Tiny)
         }
     }
 }
@@ -220,14 +186,6 @@ fun MediaCard(
                         ),
                 )
             }
-            if (item.type == MediaType.VIDEO) {
-                VideoBadge(
-                    duration = formatDuration(item.durationMs),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(10.dp),
-                )
-            }
             if (item.starred || FavoritesStore.isFavorite(item.id)) {
                 Icon(
                     imageVector = Icons.Filled.Star,
@@ -239,26 +197,33 @@ fun MediaCard(
                         .size(20.dp),
                 )
             }
-            if (showMetaOnFocus) {
-                Column(
-                    Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+            if (showMetaOnFocus || item.type == MediaType.VIDEO) {
+                Row(
+                    modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth()
+                        .padding(horizontal = TvDimen.SpaceS, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs, Alignment.End),
+                    verticalAlignment = Alignment.Bottom,
                 ) {
-                    Text(
-                        text = item.title.ifBlank { "未命名" },
-                        color = TvColor.TextPrimary,
-                        fontSize = TvType.Caption,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = formatShortDate(item.dateTaken),
-                        color = TvColor.TextSecondary,
-                        fontSize = TvType.Caption,
-                        maxLines = 1,
-                    )
+                    if (showMetaOnFocus) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = item.title.ifBlank { "未命名" },
+                                color = DarkPalette.textPrimary,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = formatShortDate(item.dateTaken),
+                                color = DarkPalette.textSecondary,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                    if (item.type == MediaType.VIDEO) {
+                        VideoBadge(duration = formatDuration(item.durationMs))
+                    }
                 }
             }
         }
@@ -300,14 +265,14 @@ fun AlbumCard(
             Row(Modifier.fillMaxWidth().padding(horizontal = TvDimen.SpaceM, vertical = TvDimen.SpaceS),
                 verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(album.name, color = TvColor.TextPrimary, fontSize = TvType.Body,
-                        fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(album.name, color = TvColor.TextPrimary, style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                     // 子目录接口不返回媒体计数，不能把未知数量显示成「0 项」。
                     // 文件夹层级视图会传 secondaryText（如「3 个子文件夹」）覆盖默认计数。
                     Text(secondaryText ?: if (album.id.startsWith("folder:path:") && album.itemCount == 0) {
                         if (album.subtitle.startsWith("子文件夹")) "子文件夹" else "文件夹"
                     } else "${album.itemCount} 项", color = TvColor.TextSecondary,
-                        fontSize = TvType.Caption, maxLines = 1)
+                        style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (focused) Icon(Icons.Filled.PlayArrow, null, tint = TvColor.Accent,
                     modifier = Modifier.size(TvDimen.IconSize))
@@ -413,7 +378,7 @@ fun ChronoCard(
             ) {
                 Text(
                     text = bucket.title,
-                    color = TvColor.TextPrimary,
+                    color = DarkPalette.textPrimary,
                     fontSize = TvType.Section,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -422,7 +387,7 @@ fun ChronoCard(
                 Spacer(Modifier.height(2.dp))
                 Text(
                     text = bucket.subtitle,
-                    color = if (focused) TvColor.Accent else TvColor.TextSecondary,
+                    color = if (focused) DarkPalette.accent else DarkPalette.textSecondary,
                     fontSize = TvType.Tiny,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -511,13 +476,13 @@ fun LibraryEmptyState(onOpenSettings: () -> Unit, modifier: Modifier = Modifier)
                     Icon(
                         imageVector = Icons.Filled.Settings,
                         contentDescription = null,
-                        tint = Color(0xFF00210F),
+                        tint = TvColor.InkOnAccent,
                         modifier = Modifier.size(22.dp),
                     )
                     Spacer(Modifier.width(TvDimen.SpaceXs))
                     Text(
                         text = "去设置",
-                        color = Color(0xFF00210F),
+                        color = TvColor.InkOnAccent,
                         fontSize = TvType.Body,
                         fontWeight = FontWeight.SemiBold,
                     )

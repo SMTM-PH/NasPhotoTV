@@ -1,5 +1,7 @@
 package com.nasphoto.tv.ui.theme
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -9,42 +11,49 @@ import androidx.compose.ui.unit.sp
  * 10-foot UI：所有尺寸按 960x540 dp 画布设计（ProvideTvDesignDensity 会把任意
  * 分辨率/系统密度归一化到这块画布；1080p 上 1dp=2px，4K 上 1dp=4px）。
  * 所有页面必须使用这里的 token，禁止在页面里写魔法色值/字号。
+ *
+ * 颜色不再是常量，而是从 [LocalTvPalette] 读取的**语义角色**：
+ * 深色「影院黑」/ 浅色「画廊白」两套取值见 `Appearance.kt` 与
+ * `docs/appearance/README.md`。字段名保持不变，业务代码无需改动。
+ * 注意：这些 getter 是 `@Composable` 的，只能在 Composable 上下文里读；
+ * 顶层 `val` 的 initializer 不要直接引用 `TvColor.*`，固定暗场请写死常量。
  */
 object TvColor {
-    /** 全局底色（深空黑，带一点冷调） */
-    val Bg = Color(0xFF06131E)
-    val BgElevated = Color(0xFF12141B)
-    val Surface = Color(0xFF1A1D26)
-    val SurfaceHigh = Color(0xFF252935)
-    val SurfaceGlass = Color(0x66FFFFFF)
-    /** 客厅影廊：安静的照片舞台与柔和的功能面。 */
-    val Stage = Color(0xFF0B202F)
-    val SurfaceSoft = Color(0xFF122A3A)
-    val InkOnAccent = Color(0xFF002232)
-    val CinemaPanel = Color(0xCC081D2B)
-    val TextMuted = Color(0xFF8D9AA8)
-    val Warm = Color(0xFFCDBA98)
-    val Divider = Color(0x1FFFFFFF)
+    /** 全局底色 */
+    val Bg: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.bg
+    val BgElevated: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.bgElevated
+    val Surface: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.surface
+    val SurfaceHigh: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.surfaceHigh
+    val SurfaceGlass: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.surfaceGlass
+    /** 客厅影廊：固定暗场的照片舞台，两套模式下字面相同。 */
+    val Stage: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.stage
+    val SurfaceSoft: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.surfaceSoft
+    val InkOnAccent: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.inkOnAccent
+    val CinemaPanel: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.cinemaPanel
+    val TextMuted: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.textMuted
+    val Warm: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.warm
+    val Divider: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.divider
 
-    val TextPrimary = Color(0xFFF5F7FA)
-    val TextSecondary = Color(0xFFA9B0BE)
-    val TextTertiary = Color(0xFF6F7787)
+    val TextPrimary: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.textPrimary
+    val TextSecondary: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.textSecondary
+    val TextTertiary: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.textTertiary
 
-    /** 品牌主色：冰蓝，与沉浸式照片舞台呼应。 */
-    val Accent = Color(0xFF31B6ED)
-    val AccentDim = Color(0x3331B6ED)
+    /** 品牌主色：深色冰蓝 / 浅色深冰蓝（浅底上加深以保证对比度）。 */
+    val Accent: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.accent
+    val AccentDim: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.accentDim
     /** 次强调：星蓝（用于视频/设置选中） */
-    val AccentAlt = Color(0xFF5B8CFF)
-    val AccentAltDim = Color(0x335B8CFF)
-    val Danger = Color(0xFFFF6B6B)
-    val Warn = Color(0xFFFFC857)
+    val AccentAlt: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.accentAlt
+    val AccentAltDim: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.accentAltDim
+    val Danger: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.danger
+    val Warn: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.warn
 
-    /** 焦点环 */
-    val FocusRing = Color(0xFFFFFFFF)
-    val FocusRingGlow = Color(0x8031B6ED)
+    /** 焦点环：深色白描边 + 冰蓝辉光 / 浅色墨蓝描边 + 淡墨投影。 */
+    val FocusRing: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.focusRing
+    val FocusRingGlow: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.focusRingGlow
 
-    val ScrimTop = Color(0xB3000000)
-    val ScrimBottom = Color(0xD9000000)
+    /** 压在照片上的黑遮罩，两套模式下字面相同。 */
+    val ScrimTop: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.scrimTop
+    val ScrimBottom: Color @Composable @ReadOnlyComposable get() = LocalTvPalette.current.scrimBottom
 }
 
 object TvDimen {
@@ -108,6 +117,7 @@ object TvType {
     val CardTitle = 22.sp
     /** 正文 */
     val Body = 20.sp
+    val Label = 18.sp
     /** 辅助 */
     val Caption = 16.sp
     val Tiny = 13.sp

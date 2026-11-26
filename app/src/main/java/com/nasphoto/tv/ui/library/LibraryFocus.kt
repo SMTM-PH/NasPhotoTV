@@ -1,6 +1,7 @@
 package com.nasphoto.tv.ui.library
 
 import android.os.SystemClock
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -13,7 +14,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -21,17 +21,15 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.withFrameMillis
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -41,16 +39,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.nasphoto.tv.ui.theme.TvColor
-import com.nasphoto.tv.ui.theme.tvFocusRing
 import com.nasphoto.tv.ui.theme.TvDimen
-
-/**
- * ================= 媒体库页焦点/按键工具（library-dev 维护） =================
- *
- * 没有直接复用 ui/common/FocusCard.kt：那里的 focusRequester 只在 initialFocus=true 时挂载，
- * 而这里的行/网格需要「任意索引都能被程序化聚焦」。视觉行为与公共规范一致：
- * 放大 TvDimen.FocusScale + 白色 3dp 描边 + 青色辉光阴影。
- */
+import com.nasphoto.tv.ui.theme.tvFocusRing
 
 /** 区块 id：顶栏 Tab / 主内容。Tab 下移时通过区块请求让页面决定落点 */
 const val BLOCK_TOP = 0
@@ -133,12 +123,12 @@ fun ConsumeBlockRequest(pending: PendingFocus, blockId: Int, blockFallback: () -
 }
 
 /**
- * 电视端可聚焦卡片：聚焦时放大 + 白色描边 + 青色辉光阴影。
- * 父容器必须留出放大溢出空间（1.08 → 每边多 4%），否则缩放会被裁剪。
+ * 电视端可聚焦卡片：白色描边即时跟随焦点，卡片轻微放大。
+ * 父容器需要为放大留出空间，例如放大 8% 时每边多出 4%。
  *
  * @param onConfirm ENTER/DPAD_CENTER 回调；传 null 表示调用方自己处理按键
- * @param onUp/onDown 显式上下导航（contract 5：跨行）。null = 这一侧没有目标，放行给 Compose 做空间查找。
- *        内部挂在 [Modifier.confirmOnKey] 的**同一个** key 监听里，保证 ENTER 与方向键只有一个处理者。
+ * @param onUp 指定向上的焦点落点，默认交给 Compose 查找。
+ * @param onDown 指定向下的焦点落点，默认交给 Compose 查找。
  */
 @Composable
 fun TvFocusBox(
@@ -156,37 +146,19 @@ fun TvFocusBox(
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
         targetValue = if (focused) focusedScale else 1f,
-        animationSpec = tween(160),
+        animationSpec = if (focused) FocusInAnimation else FocusOutAnimation,
         label = "tvFocusScale",
     )
-    val glow by animateFloatAsState(
-        targetValue = if (focused) 1f else 0f,
-        animationSpec = tween(180),
-        label = "tvFocusGlow",
-    )
-    val shape: Shape = RoundedCornerShape(cornerRadiusDp.dp)
     val interaction = remember { MutableInteractionSource() }
 
-    // 描边画在自身图层上（不是子节点）：不参与测量，不会被 caller 的 padding 裁进内容里。
-    // 顺序：graphicsLayer 在外，缩放时描边跟着一起放大。
+    // 描边与缩放使用同一图层。缩放的每一帧只更新图层，保持卡片测量与焦点落点稳定。
     val boxMod: Modifier = Modifier
         .graphicsLayer {
-            scaleX = scale
-            scaleY = scale
+            val currentScale = scale
+            scaleX = currentScale
+            scaleY = currentScale
         }
-        .tvFocusRing(cornerRadiusDp.dp, glow)
-        .then(
-            if (focused) {
-                Modifier.shadow(
-                    TvDimen.FocusElevation,
-                    shape,
-                    ambientColor = TvColor.FocusRingGlow,
-                    spotColor = TvColor.FocusRingGlow,
-                )
-            } else {
-                Modifier
-            },
-        )
+        .tvFocusRing(cornerRadiusDp.dp, if (focused) 1f else 0f)
         .then(modifier)
         .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
         .onFocusChanged {
@@ -203,6 +175,9 @@ fun TvFocusBox(
         content(focused)
     }
 }
+
+private val FocusInAnimation = tween<Float>(durationMillis = 140, easing = LinearOutSlowInEasing)
+private val FocusOutAnimation = tween<Float>(durationMillis = 95, easing = LinearOutSlowInEasing)
 
 /**
  * 按 index 懒创建 FocusRequester（列表项数量随数据变化，不能预分配固定数组）。
@@ -307,14 +282,17 @@ val RowPadding = PaddingValues(
 /** 整页背景：深空黑 + 顶部极淡的星蓝辉光，避免大片死黑 */
 @Composable
 fun LibraryBackdrop(modifier: Modifier = Modifier) {
+    // drawBehind 的 DrawScope 不是 Composable 上下文：先在组合期把语义色取成局部值。
+    val bg = TvColor.Bg
+    val accentAlt = TvColor.AccentAlt
     Box(
         modifier
             .fillMaxSize()
-            .background(TvColor.Bg)
+            .background(bg)
             .drawBehind {
                 drawRect(
                     Brush.radialGradient(
-                        colors = listOf(TvColor.AccentAlt.copy(alpha = 0.10f), TvColor.Bg.copy(alpha = 0f)),
+                        colors = listOf(accentAlt.copy(alpha = 0.10f), bg.copy(alpha = 0f)),
                         center = Offset(size.width * 0.18f, -size.height * 0.10f),
                         radius = size.width * 0.85f,
                     ),

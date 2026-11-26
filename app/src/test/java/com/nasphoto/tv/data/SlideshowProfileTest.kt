@@ -35,11 +35,11 @@ class SlideshowProfileTest {
     fun ownerSeparatesNasAndAccountButSurvivesCredentialChanges() {
         val account = NasAccount(id = "saved-account", username = "viewer", password = "first")
         val nas = NasConnection(host = "example.test", accounts = listOf(account), activeAccountId = account.id)
-        val owner = nas.albumSlideshowOwnerKey()
+        val owner = nas.localMediaOwnerKey()
 
-        assertEquals(owner, nas.withAccount(account.copy(password = "second", accessCode = "changed")).albumSlideshowOwnerKey())
-        assertNotEquals(owner, nas.withAccount(account.copy(username = "another")).albumSlideshowOwnerKey())
-        assertNotEquals(owner, nas.copy(host = "other.test").albumSlideshowOwnerKey())
-        assertNotEquals(owner, nas.copy(basePath = "/other").albumSlideshowOwnerKey())
+        assertEquals(owner, nas.withAccount(account.copy(password = "second", accessCode = "changed")).localMediaOwnerKey())
+        assertNotEquals(owner, nas.withAccount(account.copy(username = "another")).localMediaOwnerKey())
+        assertNotEquals(owner, nas.copy(host = "other.test").localMediaOwnerKey())
+        assertNotEquals(owner, nas.copy(basePath = "/other").localMediaOwnerKey())
     }
 }

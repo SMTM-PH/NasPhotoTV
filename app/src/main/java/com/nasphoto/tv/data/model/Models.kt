@@ -335,7 +335,7 @@ data class ScreensaverSettings(
     val idleTimeoutSec: Int = 60,
     /** 单张照片停留时长（秒） */
     val photoIntervalSec: Int = 10,
-    /** 画面模式：时钟待机 / 纯照片（全屏照片，无任何文字） */
+    /** 画面模式：时钟待机 / 全屏照片 / 照片墙 */
     val mode: Mode = Mode.CLOCK,
     /** 照片轮播的来源：人物 / 最近 / 随机 / 相册 */
     val photoSource: PhotoSource = PhotoSource.RECENT,
@@ -363,6 +363,9 @@ data class ScreensaverSettings(
     val slideshowIntervalSec: Int = 5,
     val slideshowTransition: SlideshowTransition = SlideshowTransition.SHOWCASE,
 ) {
+    val needsPhotoPool: Boolean
+        get() = mode != Mode.CLOCK || background == BackgroundStyle.PHOTO
+
     enum class SlideshowTransition(val label: String) {
         SHOWCASE("叠化并缓慢推近"),
         DISSOLVE("叠化"),
@@ -372,6 +375,7 @@ data class ScreensaverSettings(
     enum class Mode(val label: String) {
         CLOCK("时钟待机"),
         PHOTO_ONLY("纯照片"),
+        PHOTO_WALL("照片墙"),
     }
 
     enum class PhotoSource(val label: String) {

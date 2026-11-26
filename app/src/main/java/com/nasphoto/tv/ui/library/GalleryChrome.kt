@@ -1,52 +1,71 @@
 package com.nasphoto.tv.ui.library
 
+import androidx.annotation.DrawableRes
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AccountCircle
-import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Slideshow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.nasphoto.tv.R
 import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.ui.common.MediaImage
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
 import com.nasphoto.tv.ui.theme.TvType
 
-/** 客厅影廊：身份与操作在上，内容导航在下。两个密度下保持相同焦点顺序。 */
+/** 主导航的下划线独立于遥控器焦点。 */
 @Composable
 internal fun GalleryTopBar(
-    tabs: List<LibraryTab>, selectedTab: LibraryTab,
-    connectionName: String, isOnline: Boolean,
-    onTabClick: (LibraryTab) -> Unit, onTabFocus: (Int) -> Unit,
-    onActionFocus: (Int) -> Unit,
-    tabFocusRequesters: List<FocusRequester>, actionFocusRequesters: List<FocusRequester>,
-    onHome: () -> Unit, onScreensaver: () -> Unit, onSettings: () -> Unit,
-    accountName: String, accountCount: Int, onAccountClick: () -> Unit,
-    onAccountDown: () -> Unit, accountFocusRequester: FocusRequester?,
-    onTabDown: (Int) -> Unit, modifier: Modifier = Modifier, isConnecting: Boolean = false,
+    tabs: List<LibraryTab>,
+    selectedTab: LibraryTab,
+    connectionName: String,
+    isOnline: Boolean,
+    isConnecting: Boolean,
+    tabFocusRequesters: List<FocusRequester>,
+    homeRequester: FocusRequester,
+    artAlbumRequester: FocusRequester,
+    screensaverRequester: FocusRequester,
+    phonePhotosRequester: FocusRequester,
+    settingsRequester: FocusRequester,
+    onTabClick: (LibraryTab) -> Unit,
+    onTabDown: () -> Unit,
+    onHome: () -> Unit,
+    onArtAlbum: () -> Unit,
+    onScreensaver: () -> Unit,
+    onPhonePhotos: () -> Unit,
+    onSettings: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val status = when {
         isConnecting -> "正在连接 NAS"
@@ -58,83 +77,214 @@ internal fun GalleryTopBar(
         isOnline -> TvColor.Accent
         else -> TvColor.Danger
     }
-    BoxWithConstraints(modifier.fillMaxWidth()) {
-        val compact = maxWidth < 1200.dp
-        Row(
-            Modifier.fillMaxWidth()
-                .padding(start = TvDimen.ScreenPadding, end = TvDimen.ScreenPadding,
-                    top = TvDimen.HeaderInset, bottom = TvDimen.SpaceXs),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(if (compact) TvDimen.SpaceS else TvDimen.SpaceL),
+    val activeIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
+    val focusActiveTab: () -> Unit = { tabFocusRequesters.getOrNull(activeIndex)?.requestFocus() }
+    val largeText = LocalDensity.current.fontScale > 1.35f
+    val controlHeight = if (largeText) 54.dp else 44.dp
+    Row(
+        modifier.fillMaxWidth().background(TvColor.Bg.copy(alpha = 0.94f))
+            .padding(horizontal = TvDimen.ScreenPadding, vertical = TvDimen.SpaceXs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceS),
+    ) {
+        TvFocusBox(
+            focusRequester = homeRequester,
+            cornerRadiusDp = 10,
+            focusedScale = 1.025f,
+            onConfirm = onHome,
+            onDown = focusActiveTab,
+            modifier = Modifier.height(controlHeight).semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = "首页 · $connectionName · $status"
+            }.padding(horizontal = TvDimen.SpaceXs),
         ) {
-            TvFocusBox(focusRequester = actionFocusRequesters.getOrNull(0),
-                cornerRadiusDp = 10, focusedScale = 1.025f,
-                onConfirm = onHome, onFocusChanged = { if (it) onActionFocus(0) },
-                onDown = { tabFocusRequesters.getOrNull(selectedTab.ordinal)?.requestFocus() },
-                modifier = Modifier.height(TvDimen.CinemaHeaderHeight)
-                    .semantics { contentDescription = "首页 · $connectionName · $status" }
-                    .padding(horizontal = TvDimen.SpaceXs)) {
-                Row(Modifier.fillMaxHeight(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs)) {
-                    Icon(Icons.Outlined.PhotoLibrary, null, tint = TvColor.Accent,
-                        modifier = Modifier.size(TvDimen.IconSize))
-                    Text("NAS 相册", color = TvColor.TextPrimary,
-                        fontSize = if (compact) TvType.Body else TvType.CardTitle,
-                        fontWeight = FontWeight.Bold, maxLines = 1)
-                    Box(Modifier.size(6.dp).clip(CircleShape)
-                        .background(statusColor))
-                }
+            Row(Modifier.fillMaxHeight(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Image(
+                    painter = painterResource(R.mipmap.ic_launcher),
+                    contentDescription = null,
+                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(TvDimen.RadiusS)),
+                )
+                Box(Modifier.size(5.dp).clip(CircleShape).background(statusColor))
             }
-            Row(Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(if (compact) 0.dp else TvDimen.SpaceXs)) {
-                tabs.forEachIndexed { index, tab ->
-                    TvFocusBox(focusRequester = tabFocusRequesters.getOrNull(index),
-                        cornerRadiusDp = 10, focusedScale = 1.025f,
-                        onFocusChanged = { if (it) onTabFocus(index) },
-                        onConfirm = { onTabClick(tab) }, onDown = { onTabDown(index) },
-                        modifier = Modifier.weight(1f).height(TvDimen.CinemaHeaderHeight)
-                            .semantics { selected = tab == selectedTab }) { focused ->
-                        Column(
-                            Modifier.fillMaxSize().background(
-                                if (focused) TvColor.SurfaceSoft else Color.Transparent,
-                                RoundedCornerShape(10.dp),
-                            ), horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center) {
-                            Text(tab.label, color = if (focused || tab == selectedTab) TvColor.TextPrimary else TvColor.TextSecondary,
-                                fontSize = if (compact) TvType.Caption else TvType.Body,
-                                fontWeight = if (tab == selectedTab) FontWeight.SemiBold else FontWeight.Normal,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (tab == selectedTab) Box(Modifier.padding(top = 4.dp).width(24.dp).height(3.dp)
-                                .background(TvColor.Accent))
-                        }
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs)) {
-                if (accountName.isNotBlank()) CinemaHeaderAction(
-                    Icons.Outlined.AccountCircle,
-                    if (accountCount > 1) "$accountName · 切换账号" else accountName,
-                    accountFocusRequester, onAccountClick, {}, onAccountDown)
-                CinemaHeaderAction(Icons.Outlined.Slideshow, "屏保", actionFocusRequesters.getOrNull(1),
-                    onScreensaver, { onActionFocus(1) },
-                    { tabFocusRequesters.getOrNull(selectedTab.ordinal)?.requestFocus() })
-                CinemaHeaderAction(Icons.Outlined.Settings, "设置", actionFocusRequesters.getOrNull(2),
-                    onSettings, { onActionFocus(2) },
-                    { tabFocusRequesters.getOrNull(selectedTab.ordinal)?.requestFocus() })
-            }
+        }
+        GalleryTabs(
+            tabs = tabs,
+            activeIndex = activeIndex,
+            controlHeight = controlHeight,
+            focusRequesters = tabFocusRequesters,
+            artAlbumRequester = artAlbumRequester,
+            onClick = onTabClick,
+            onArtAlbum = onArtAlbum,
+            onDown = onTabDown,
+            modifier = Modifier.weight(1f),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            CinemaHeaderAction(
+                R.drawable.ic_gallery_screensaver, "屏保", !largeText, controlHeight,
+                screensaverRequester, onScreensaver, focusActiveTab,
+            )
+            CinemaHeaderAction(
+                R.drawable.ic_gallery_phone_photos, "传图", !largeText, controlHeight,
+                phonePhotosRequester, onPhonePhotos, focusActiveTab, accessibilityLabel = "手机传图",
+            )
+            CinemaHeaderAction(
+                R.drawable.ic_gallery_settings, "设置", !largeText, controlHeight,
+                settingsRequester, onSettings, focusActiveTab,
+            )
         }
     }
 }
 
 @Composable
-private fun CinemaHeaderAction(icon: ImageVector, label: String, requester: FocusRequester?,
-    onClick: () -> Unit, onFocus: () -> Unit, onDown: () -> Unit) {
-    TvFocusBox(focusRequester = requester, cornerRadiusDp = 10,
-        onConfirm = onClick, onDown = onDown, focusedScale = 1.025f,
-        onFocusChanged = { if (it) onFocus() },
-        modifier = Modifier.size(TvDimen.CinemaHeaderHeight)) { focused ->
-        Icon(icon, label, tint = if (focused) TvColor.Accent else TvColor.TextPrimary,
-            modifier = Modifier.align(Alignment.Center).size(TvDimen.IconSize))
+private fun GalleryTabs(
+    tabs: List<LibraryTab>,
+    activeIndex: Int,
+    controlHeight: Dp,
+    focusRequesters: List<FocusRequester>,
+    artAlbumRequester: FocusRequester,
+    onClick: (LibraryTab) -> Unit,
+    onArtAlbum: () -> Unit,
+    onDown: () -> Unit,
+    modifier: Modifier,
+) {
+    val shape = RoundedCornerShape(TvDimen.RadiusM)
+    val tabGap = 4.dp
+    val indicatorWidth = 22.dp
+    val artAlbumWeight = 1.35f
+    BoxWithConstraints(
+        modifier.background(TvColor.Stage.copy(alpha = 0.82f), shape)
+            .border(1.dp, TvColor.Divider, shape)
+            .padding(4.dp),
+    ) {
+        val tabWidth = (maxWidth - tabGap * tabs.size) / (tabs.size + artAlbumWeight)
+        val indicatorOffset by animateDpAsState(
+            targetValue = (tabWidth + tabGap) * activeIndex + (tabWidth - indicatorWidth) / 2,
+            animationSpec = tween(210),
+            label = "galleryTabIndicator",
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(tabGap)) {
+            tabs.forEachIndexed { index, tab ->
+                GalleryTabControl(
+                    label = tab.label,
+                    selectedTab = index == activeIndex,
+                    requester = focusRequesters[index],
+                    onClick = { onClick(tab) },
+                    onDown = onDown,
+                    modifier = Modifier.weight(1f).height(controlHeight),
+                )
+            }
+            GalleryTabControl(
+                label = "艺术画册",
+                selectedTab = null,
+                requester = artAlbumRequester,
+                onClick = onArtAlbum,
+                onDown = onDown,
+                modifier = Modifier.weight(artAlbumWeight).height(controlHeight),
+            )
+        }
+        Box(
+            Modifier.align(Alignment.BottomStart)
+                .offset { IntOffset(indicatorOffset.roundToPx(), -4.dp.roundToPx()) }
+                .size(width = indicatorWidth, height = 3.dp)
+                .background(TvColor.Accent, CircleShape),
+        )
+    }
+}
+
+@Composable
+private fun GalleryTabControl(
+    label: String,
+    selectedTab: Boolean?,
+    requester: FocusRequester,
+    onClick: () -> Unit,
+    onDown: () -> Unit,
+    modifier: Modifier,
+) {
+    val active = selectedTab == true
+    TvFocusBox(
+        focusRequester = requester,
+        cornerRadiusDp = 10,
+        focusedScale = 1.02f,
+        onConfirm = onClick,
+        onDown = onDown,
+        modifier = modifier.semantics(mergeDescendants = true) {
+            if (selectedTab != null) {
+                role = Role.Tab
+                selected = selectedTab
+            } else {
+                role = Role.Button
+            }
+        },
+    ) { focused ->
+        val surface by animateColorAsState(
+            targetValue = when {
+                active -> TvColor.AccentDim
+                focused -> TvColor.SurfaceSoft
+                else -> Color.Transparent
+            },
+            animationSpec = tween(130),
+            label = "galleryTabSurface",
+        )
+        Box(
+            Modifier.fillMaxSize().background(surface, RoundedCornerShape(TvDimen.RadiusS)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                label,
+                color = when {
+                    active -> TvColor.Accent
+                    focused -> TvColor.TextPrimary
+                    else -> TvColor.TextSecondary
+                },
+                modifier = Modifier.padding(bottom = 3.dp),
+                fontSize = TvType.Label,
+                fontWeight = if (active || focused) FontWeight.SemiBold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CinemaHeaderAction(
+    @DrawableRes icon: Int,
+    label: String,
+    showLabel: Boolean,
+    controlHeight: Dp,
+    requester: FocusRequester,
+    onClick: () -> Unit,
+    onDown: () -> Unit,
+    accessibilityLabel: String = label,
+) {
+    TvFocusBox(
+        focusRequester = requester,
+        cornerRadiusDp = 10,
+        onConfirm = onClick,
+        onDown = onDown,
+        focusedScale = 1.025f,
+        modifier = Modifier.size(width = 46.dp, height = controlHeight)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = accessibilityLabel
+            },
+    ) { focused ->
+        Column(
+            Modifier.fillMaxSize().background(
+                if (focused) TvColor.SurfaceHigh else Color.Transparent,
+                RoundedCornerShape(TvDimen.RadiusS),
+            ),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically),
+        ) {
+            Icon(painterResource(icon), null, tint = if (focused) TvColor.Accent else TvColor.TextPrimary,
+                modifier = Modifier.size(if (showLabel) 19.dp else TvDimen.IconSize))
+            if (showLabel) {
+                Text(label, color = TvColor.TextPrimary, fontSize = 12.sp,
+                    lineHeight = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            }
+        }
     }
 }
 

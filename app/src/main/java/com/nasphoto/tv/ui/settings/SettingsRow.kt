@@ -1,13 +1,13 @@
 package com.nasphoto.tv.ui.settings
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -31,12 +31,12 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -74,20 +74,32 @@ fun SettingsRow(
     modifier: Modifier = Modifier,
     valueOverride: String? = null,
     hintOverride: String? = null,
+    simple: Boolean = false,
 ) {
+    val editable = key.isAvailableInMode(store.screensaver.mode)
     val value = valueOverride ?: rowValueText(key, store, feedback)
-    val toggle = toggleState(key, store)
+    val toggle = if (editable) toggleState(key, store) else null
     val action = isActionRow(key)
 
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val compact = maxWidth < 420.dp
+        val stacked = simple && (maxWidth < 290.dp || LocalDensity.current.fontScale > 1.3f)
+        val valueWidth = maxWidth * 0.52f
+        val rowHeight = when {
+            stacked -> 86.dp
+            simple -> 58.dp
+            compact -> TvDimen.SpaceXxl + TvDimen.SpaceM
+            else -> SettingsRowHeight
+        }
         SettingsFocusRow(
             focusRequester = focusRequester,
-            rowHeight = if (compact) TvDimen.SpaceXxl + TvDimen.SpaceM else SettingsRowHeight,
-            onConfirm = onConfirm,
+            rowHeight = rowHeight,
+            onConfirm = onConfirm.takeIf { editable },
             onFocused = { isFocused -> if (isFocused) onFocus() },
             onAdjust = { isLeft ->
                 when {
+                    !editable -> true
+
                     // 开关：左右直接切换；值行：执行该方向的步进；没有步进的动作行：吃掉但不做事
                     toggle != null -> {
                         onConfirm()
@@ -104,8 +116,18 @@ fun SettingsRow(
         ) { rowFocused ->
             val trailing: @Composable () -> Unit = {
                 when {
+                    !editable && simple -> Text("当前不适用", fontSize = TvType.Caption, color = TvColor.TextMuted)
+                    !editable -> StaticChip("当前不适用", color = TvColor.TextMuted)
                     toggle != null -> TvSwitch(checked = toggle, focused = rowFocused)
                     action -> ActionTail(key, value, feedback, rowFocused)
+                    simple -> Text(
+                        if (rowFocused && onStepLeft != null) "‹  $value  ›" else value,
+                        modifier = if (stacked) Modifier else Modifier.widthIn(max = valueWidth),
+                        fontSize = TvType.Caption,
+                        color = if (rowFocused) TvColor.Accent else TvColor.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     else -> ValueChip(
                         text = value,
                         focused = rowFocused,
@@ -114,7 +136,37 @@ fun SettingsRow(
                     )
                 }
             }
-            if (compact && !action) {
+            if (simple) {
+                val title: @Composable (Modifier) -> Unit = { titleModifier ->
+                    Text(
+                        text = key.title,
+                        modifier = titleModifier,
+                        fontSize = TvType.Label,
+                        fontWeight = if (rowFocused) FontWeight.SemiBold else FontWeight.Normal,
+                        color = TvColor.TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (stacked) {
+                    Column(
+                        Modifier.align(Alignment.CenterStart).fillMaxWidth().padding(horizontal = TvDimen.SpaceM),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        title(Modifier)
+                        trailing()
+                    }
+                } else {
+                    Row(
+                        Modifier.align(Alignment.CenterStart).fillMaxWidth().padding(horizontal = TvDimen.SpaceM),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs),
+                    ) {
+                        title(Modifier.weight(1f))
+                        trailing()
+                    }
+                }
+            } else if (compact && !action) {
                 Column(
                     Modifier.fillMaxWidth().padding(horizontal = TvDimen.SpaceM, vertical = TvDimen.SpaceXs),
                 ) {
@@ -162,7 +214,7 @@ fun SettingsRow(
                             exit = fadeOut(tween(100)) + shrinkVertically(tween(100)),
                         ) {
                             Text(
-                                text = hintOverride ?: key.hint,
+                                text = if (editable) hintOverride ?: key.hint else PHOTO_WALL_SETTING_HINT,
                                 fontSize = TvType.Tiny,
                                 color = TvColor.TextMuted,
                                 maxLines = 1,
@@ -180,34 +232,6 @@ fun SettingsRow(
     }
 }
 
-/** 组标题：分组名 + 当前聚焦组时右侧一条短强调线 */
-@Composable
-fun SettingsGroupHeader(group: SettingsGroup, focusedKey: SettingsKey?, modifier: Modifier = Modifier) {
-    val inGroup = focusedKey?.group == group
-    val color by animateColorAsState(
-        targetValue = if (inGroup) TvColor.Accent else TvColor.TextTertiary,
-        animationSpec = tween(180),
-        label = "groupHeader",
-    )
-    Row(
-        modifier
-            .fillMaxWidth()
-            .padding(start = TvDimen.SpaceS, top = TvDimen.SpaceM, bottom = TvDimen.SpaceXs),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(group.title, fontSize = TvType.Caption, fontWeight = FontWeight.Medium, color = color)
-        if (inGroup) {
-            Spacer(Modifier.width(TvDimen.SpaceS))
-            Box(
-                Modifier
-                    .width(28.dp)
-                    .height(1.dp)
-                    .background(TvColor.Accent.copy(alpha = 0.45f)),
-            )
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // 行内容取值（左栏与右栏共用同一套判断，保证"左栏显示的就是右栏看到的"）
 // ---------------------------------------------------------------------------
@@ -219,6 +243,7 @@ fun rowValueText(key: SettingsKey, store: SettingsStore, feedback: SettingsFeedb
     val p = store.playback
     return when (key) {
         SettingsKey.NAS_TEST -> "开始测试"
+        SettingsKey.APPEARANCE_MODE -> store.appearance.label
         SettingsKey.NAS_DEVICE -> store.nas.name
         SettingsKey.NAS_HOST -> if (store.nas.host.isBlank()) "未设置" else store.nas.displayAddress
         SettingsKey.NAS_PORT -> store.nas.port.toString()

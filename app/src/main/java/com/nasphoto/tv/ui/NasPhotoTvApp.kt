@@ -26,6 +26,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import com.nasphoto.tv.data.AppContextHolder
 import com.nasphoto.tv.data.AppUpdateController
@@ -34,7 +35,9 @@ import com.nasphoto.tv.data.mediaIdentityKey
 import com.nasphoto.tv.data.FavoritesStore
 import com.nasphoto.tv.data.FnOsMediaRepository
 import com.nasphoto.tv.data.MediaCache
+import com.nasphoto.tv.data.PhonePhotoNasBackup
 import com.nasphoto.tv.data.SettingsStore
+import com.nasphoto.tv.data.localMediaOwnerKey
 import com.nasphoto.tv.data.fn.FnOsStats
 import com.nasphoto.tv.data.fn.FnOsTransport
 import com.nasphoto.tv.data.fn.FnOsTwoFactorChallenge
@@ -44,6 +47,7 @@ import com.nasphoto.tv.data.model.NasConnection
 import com.nasphoto.tv.data.model.MediaItem
 import com.nasphoto.tv.data.model.MediaType
 import com.nasphoto.tv.data.model.ScreensaverSettings
+import com.nasphoto.tv.ui.book.ArtAlbumScreen
 import com.nasphoto.tv.ui.connection.ConnectionMode
 import com.nasphoto.tv.ui.connection.ConnectionScreen
 import com.nasphoto.tv.ui.connection.NasSetupScreen
@@ -52,10 +56,13 @@ import com.nasphoto.tv.ui.library.folderAlbum
 import com.nasphoto.tv.ui.common.NasImageLoader
 import com.nasphoto.tv.ui.common.ScreenIdleGuard
 import com.nasphoto.tv.ui.screensaver.ScreensaverScreen
+import com.nasphoto.tv.ui.settings.SettingsKey
 import com.nasphoto.tv.ui.settings.SettingsScreen
 import com.nasphoto.tv.ui.settings.TextEntryOverlay
 import com.nasphoto.tv.ui.theme.NasPhotoTvTheme
+import com.nasphoto.tv.ui.theme.ProvideTvStage
 import com.nasphoto.tv.ui.theme.TvColor
+import com.nasphoto.tv.ui.transfer.PhonePhotoScreen
 import com.nasphoto.tv.ui.video.VideoPlayerScreen
 import com.nasphoto.tv.ui.viewer.PhotoViewerScreen
 import kotlinx.coroutines.async
@@ -71,11 +78,12 @@ import kotlinx.coroutines.launch
  * ================= 应用外壳 =================
  *
  * 负责：真实数据加载、路由、屏保待机与空闲检测。
- * 媒体数据全部来自飞牛相册；没有配置 NAS 时只显示连接引导，不再使用任何静态假数据。
+ * 图库的数据来自飞牛相册，手机传图可通过局域网独立使用。
  */
 @Composable
 fun NasPhotoTvApp() {
-    NasPhotoTvTheme {
+    // 根主题读取可观察偏好；改动外观时整棵树自动重组，无需重启 Activity。
+    NasPhotoTvTheme(appearance = SettingsStore.appearance) {
         var route by remember { mutableStateOf<AppRoute>(AppRoute.Library) }
         var setupDraft by remember { mutableStateOf<NasConnection?>(null) }
         var viewer by remember { mutableStateOf<ViewerRequest?>(null) }
@@ -128,6 +136,19 @@ fun NasPhotoTvApp() {
         }
         DisposableEffect(repository) {
             onDispose { repository?.close() }
+        }
+        val appContext = LocalContext.current.applicationContext
+        val photoOwnerKey = nas.localMediaOwnerKey().takeIf { repository != null }
+        val phonePhotoBackup = remember(appContext, photoOwnerKey) {
+            photoOwnerKey?.let { PhonePhotoNasBackup(appContext, it) }
+        }
+        LaunchedEffect(phonePhotoBackup, repository) {
+            if (phonePhotoBackup != null && repository != null) {
+                phonePhotoBackup.run(repository::isPhonePhotoImported, repository::uploadPhonePhoto)
+            }
+        }
+        LaunchedEffect(phonePhotoBackup, nas.connected) {
+            if (nas.connected) phonePhotoBackup?.requestSave()
         }
 
         // 完整身份变化也覆盖同一账号槽位更换用户名/服务器；设置路由同样清理。
@@ -304,11 +325,11 @@ fun NasPhotoTvApp() {
         }
         val photoPool = if (screensaverSettings.photoSource == ScreensaverSettings.PhotoSource.PEOPLE)
             scopedSaverPhotos.filter { it.id in peopleIds } else scopedSaverPhotos
-        val saverPhotos = if (screensaverSettings.mode == ScreensaverSettings.Mode.PHOTO_ONLY ||
-            screensaverSettings.background == ScreensaverSettings.BackgroundStyle.PHOTO) photoPool else emptyList()
+        val saverPhotos = if (screensaverSettings.needsPhotoPool) photoPool else emptyList()
 
-        // 任何设置变更立即落盘（含在线更新偏好）
-        LaunchedEffect(screensaverSettings, playbackSettings, updateSettings, nas) {
+        // 任何设置变更立即落盘（含外观模式、在线更新偏好）
+        val appearance = SettingsStore.appearance
+        LaunchedEffect(screensaverSettings, playbackSettings, updateSettings, nas, appearance) {
             SettingsStore.persist()
         }
 
@@ -370,12 +391,14 @@ fun NasPhotoTvApp() {
                 if (ScreenIdleGuard.isHeld()) continue
                 val idle = (System.currentTimeMillis() - lastInteractionMs) / 1000
                 val eligible = route != AppRoute.ScreensaverPreview &&
+                    route != AppRoute.PhonePhotos &&
+                    route != AppRoute.ArtAlbum &&
                     player == null &&
                     viewer == null &&
                     loadState is LibraryLoad.Ready
-                val photoMode = screensaverSettings.mode == ScreensaverSettings.Mode.PHOTO_ONLY ||
-                    screensaverSettings.background == ScreensaverSettings.BackgroundStyle.PHOTO
-                if (eligible && idle >= idleSec && (!photoMode || saverPhotos.isNotEmpty())) screensaverVisible = true
+                if (eligible && idle >= idleSec && (!screensaverSettings.needsPhotoPool || saverPhotos.isNotEmpty())) {
+                    screensaverVisible = true
+                }
             }
         }
 
@@ -387,9 +410,9 @@ fun NasPhotoTvApp() {
                         lastInteractionMs = System.currentTimeMillis()
                         if (screensaverVisible && event.type == KeyEventType.KeyDown) {
                             if (event.key == Key.DirectionLeft || event.key == Key.DirectionRight) {
-                                // 待机界面左右键换样式：时钟模式换表盘，纯照片模式换轮播来源
+                                // 待机界面左右键切换表盘或照片来源。
                                 val reverse = event.key == Key.DirectionLeft
-                                if (screensaverSettings.mode == ScreensaverSettings.Mode.PHOTO_ONLY) {
+                                if (screensaverSettings.mode != ScreensaverSettings.Mode.CLOCK) {
                                     SettingsStore.cycleScreensaverSource(MediaCache.albums, reverse)
                                 } else {
                                     SettingsStore.cycleClockStyle(reverse)
@@ -420,32 +443,37 @@ fun NasPhotoTvApp() {
                     val v: ViewerRequest? = current.second
                     val p: PlayerRequest? = current.third
                     when {
-                        p != null -> VideoPlayerScreen(
-                            items = p.items,
-                            initialIndex = p.initialIndex,
-                            contextTitle = p.contextTitle,
-                            settings = playbackSettings,
-                            onClose = { player = null },
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                        // 固定暗场：播放 / 看图不随外观模式变化，照片始终是主角。
+                        p != null -> ProvideTvStage {
+                            VideoPlayerScreen(
+                                items = p.items,
+                                initialIndex = p.initialIndex,
+                                contextTitle = p.contextTitle,
+                                settings = playbackSettings,
+                                onClose = { player = null },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
 
-                        v != null -> PhotoViewerScreen(
-                            items = v.items,
-                            initialIndex = v.initialIndex,
-                            contextTitle = v.contextTitle,
-                            startSlideshow = v.startSlideshow,
-                            slideshowProfile = SettingsStore.albumSlideshow(v.slideshowKey),
-                            onClose = { viewer = null },
-                            onOpenVideo = { item, list ->
-                                viewer = null
-                                player = PlayerRequest(
-                                    items = list,
-                                    initialIndex = list.indexOf(item).coerceAtLeast(0),
-                                    contextTitle = v.contextTitle,
-                                )
-                            },
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                        v != null -> ProvideTvStage {
+                            PhotoViewerScreen(
+                                items = v.items,
+                                initialIndex = v.initialIndex,
+                                contextTitle = v.contextTitle,
+                                startSlideshow = v.startSlideshow,
+                                slideshowProfile = SettingsStore.albumSlideshow(v.slideshowKey),
+                                onClose = { viewer = null },
+                                onOpenVideo = { item, list ->
+                                    viewer = null
+                                    player = PlayerRequest(
+                                        items = list,
+                                        initialIndex = list.indexOf(item).coerceAtLeast(0),
+                                        contextTitle = v.contextTitle,
+                                    )
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
 
                         r is AppRoute.Setup -> NasSetupScreen(
                             connection = setupDraft ?: nas,
@@ -458,7 +486,7 @@ fun NasPhotoTvApp() {
                             },
                         )
 
-                        r is AppRoute.Settings -> SettingsScreen(
+                        r == AppRoute.Settings || r == AppRoute.Accounts -> SettingsScreen(
                             store = SettingsStore,
                             onClose = { route = AppRoute.Library },
                             onPreviewScreensaver = enterScreensaver,
@@ -466,7 +494,25 @@ fun NasPhotoTvApp() {
                             onRefreshLibrary = { refreshToken += 1; route = AppRoute.Library },
                             modifier = Modifier.fillMaxSize(),
                             screensaverPhotos = saverPhotos,
+                            initialFocus = SettingsKey.ACC_CURRENT.takeIf { r == AppRoute.Accounts },
                         )
+
+                        r == AppRoute.PhonePhotos -> PhonePhotoScreen(
+                            onClose = { route = AppRoute.Library },
+                            nasBackup = phonePhotoBackup,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+
+                        // 艺术画册是满屏照片，同样走固定暗场。
+                        r == AppRoute.ArtAlbum -> ProvideTvStage {
+                            ArtAlbumScreen(
+                                photos = currentLibrary
+                                    ?.takeIf { it.ownerAccountId == nas.activeAccountId }
+                                    ?.recent.orEmpty(),
+                                onClose = { route = AppRoute.Library },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
 
                         else -> Box(Modifier.fillMaxSize()) {
                             when (val state = loadState) {
@@ -484,6 +530,7 @@ fun NasPhotoTvApp() {
                                         repository?.let { repo -> libraryRequest { repo.getPlaceMedia(id, refreshToken) } }
                                     },
                                     placeRevision = refreshToken,
+                                    screensaverVisible = screensaverVisible,
                                     onOpenVideo = { items, index, title ->
                                         player = PlayerRequest(items, index, title)
                                     },
@@ -541,6 +588,7 @@ fun NasPhotoTvApp() {
                                 onRetry = { refreshToken += 1 },
                                 onSelectNas = selectDiscoveredNas,
                                 modifier = Modifier.fillMaxSize(),
+                                onPhonePhotos = { route = AppRoute.PhonePhotos },
                             )
 
                             is LibraryLoad.Error -> ConnectionScreen(
@@ -550,6 +598,7 @@ fun NasPhotoTvApp() {
                                 onRetry = { refreshToken += 1 },
                                 onSelectNas = selectDiscoveredNas,
                                 modifier = Modifier.fillMaxSize(),
+                                onPhonePhotos = { route = AppRoute.PhonePhotos },
                             )
                         }
 
@@ -610,21 +659,24 @@ fun NasPhotoTvApp() {
                 }
             }
 
-                // 屏保是覆盖层而非替换：下层页面保持组合，退出后焦点与滚动位置原样回来
+                // 屏保是覆盖层而非替换：下层页面保持组合，退出后焦点与滚动位置原样回来。
+                // 固定暗场：夜间客厅里的白色屏保既眩光又烧屏，两套外观下都保持深色。
                 if (screensaverVisible) {
-                    ScreensaverScreen(
-                        settings = screensaverSettings,
-                        photos = saverPhotos,
-                        onExit = {
-                            screensaverVisible = false
-                            lastInteractionMs = System.currentTimeMillis()
-                        },
-                        onCycleStyle = { SettingsStore.cycleClockStyle() },
-                        onCycleSource = {
-                            SettingsStore.cycleScreensaverSource(MediaCache.albums)
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    ProvideTvStage {
+                        ScreensaverScreen(
+                            settings = screensaverSettings,
+                            photos = saverPhotos,
+                            onExit = {
+                                screensaverVisible = false
+                                lastInteractionMs = System.currentTimeMillis()
+                            },
+                            onCycleStyle = SettingsStore::cycleClockStyle,
+                            onCycleSource = { reverse ->
+                                SettingsStore.cycleScreensaverSource(MediaCache.albums, reverse)
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
         }

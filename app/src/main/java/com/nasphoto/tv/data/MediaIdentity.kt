@@ -11,7 +11,8 @@ import java.util.Locale
  */
 fun NasConnection.mediaIdentityKey(): String = identityDigest(includeCredentials = true)
 
-internal fun NasConnection.albumSlideshowOwnerKey(): String = identityDigest(includeCredentials = false)
+/** Stable local media scope for the same NAS account after a password or access code change. */
+internal fun NasConnection.localMediaOwnerKey(): String = identityDigest(includeCredentials = false)
 
 private fun NasConnection.identityDigest(includeCredentials: Boolean): String {
     val fields = listOf(

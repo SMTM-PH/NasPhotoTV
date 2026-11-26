@@ -9,6 +9,7 @@ import com.nasphoto.tv.data.model.NasAccount
 import com.nasphoto.tv.data.model.NasConnection
 import com.nasphoto.tv.data.model.PlaybackSettings
 import com.nasphoto.tv.data.model.ScreensaverSettings
+import com.nasphoto.tv.ui.theme.TvAppearance
 
 /**
  * ================= 全局设置状态（data-engineer 维护） =================
@@ -51,7 +52,7 @@ object SettingsStore {
     private var albumSlideshows by mutableStateOf<Map<String, SlideshowProfile>>(emptyMap())
 
     fun albumSlideshowKey(collectionId: String): String =
-        "album_slideshow/${nas.albumSlideshowOwnerKey()}/$collectionId"
+        "album_slideshow/${nas.localMediaOwnerKey()}/$collectionId"
 
     fun albumSlideshow(key: String?): SlideshowProfile? = key?.let(albumSlideshows::get)
 
@@ -76,6 +77,14 @@ object SettingsStore {
     var nasLatencyMs: Int? by mutableStateOf<Int?>(null)
         private set
 
+    /**
+     * 外观模式（1.2.15）：深色「影院黑」/ 浅色「画廊白」/ 跟随系统。
+     * 默认 [TvAppearance.DEFAULT]（深色），保证升级后不会突然变白。
+     * 根主题 `NasPhotoTvTheme(appearance = SettingsStore.appearance)` 读取它并自动重组。
+     */
+    var appearance: TvAppearance by mutableStateOf(TvAppearance.DEFAULT)
+        private set
+
     // ---------- 写入口 ----------
 
     fun updateScreensaver(transform: (ScreensaverSettings) -> ScreensaverSettings) {
@@ -94,6 +103,18 @@ object SettingsStore {
 
     fun updateSettings(transform: (UpdateSettings) -> UpdateSettings) {
         update = transform(update)
+    }
+
+    /** 显式指定（遥控器走 [cycleAppearance]；这里给未来的系统主题联动留入口）。 */
+    fun setAppearanceMode(value: TvAppearance) {
+        appearance = value
+    }
+
+    /** 遥控器 ← → 循环：跟随系统 → 浅色 → 深色 → 跟随系统。 */
+    fun cycleAppearance(reverse: Boolean = false) {
+        val values = TvAppearance.entries
+        val delta = if (reverse) -1 else 1
+        appearance = values[(appearance.ordinal + delta + values.size) % values.size]
     }
 
     /**
@@ -202,6 +223,7 @@ object SettingsStore {
         nas = defaultNas
         nasLatencyMs = null
         update = UpdateSettings()
+        appearance = TvAppearance.DEFAULT
     }
 
     // ---------- 「下一档」便捷方法（设置页遥控器一键切换） ----------
@@ -225,11 +247,12 @@ object SettingsStore {
         }
     }
 
-    /** 画面模式下一档：时钟待机 → 纯照片 → 时钟待机 */
-    fun cycleScreensaverMode() {
+    /** 按遥控方向循环切换屏保画面。 */
+    fun cycleScreensaverMode(reverse: Boolean = false) {
         val values = ScreensaverSettings.Mode.entries
+        val delta = if (reverse) -1 else 1
         updateScreensaver { s ->
-            s.copy(mode = values[(s.mode.ordinal + 1) % values.size])
+            s.copy(mode = values[(s.mode.ordinal + delta + values.size) % values.size])
         }
     }
 
@@ -362,6 +385,7 @@ object SettingsStore {
         e.putString("upd_api", update.apiUrl)
         e.putString("upd_mirror", update.mirror)
         e.putLong("upd_last", update.lastCheckMs)
+        e.putString(TvAppearance.PREF_KEY, appearance.name)
         e.apply()
     }
 
@@ -372,6 +396,8 @@ object SettingsStore {
             if (!key.startsWith("album_slideshow/") || value !is String) null
             else SlideshowProfile.decode(value)?.let { key to it }
         }.toMap()
+        // 外观偏好独立于其它设置；即使没有 NAS 存档也要先读回来。
+        appearance = TvAppearance.fromStored(p.getString(TvAppearance.PREF_KEY, null))
         if (!p.contains("ss_idle") && !p.contains("nas_host")) return
         val restoredAccounts = restoreAccounts(p)
         val storedActive = p.getString("nas_active", "") ?: ""

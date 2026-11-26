@@ -199,6 +199,10 @@ fun AuroraBackground(modifier: Modifier = Modifier) {
     )
 
     val blobs = remember { auroraStars(seed = 20261019, count = 46) }
+    // Canvas 的 DrawScope 不是 Composable 上下文：先在组合期取色再捕获进画布 lambda。
+    // 屏保属于固定暗场，取到的是深色板的冰蓝 / 星蓝。
+    val accent = TvColor.Accent
+    val accentAlt = TvColor.AccentAlt
 
     Box(modifier.fillMaxSize().background(TvColor.Bg)) {
         Canvas(Modifier.fillMaxSize()) {
@@ -218,8 +222,8 @@ fun AuroraBackground(modifier: Modifier = Modifier) {
             drawRect(
                 Brush.radialGradient(
                     colors = listOf(
-                        TvColor.Accent.copy(alpha = 0.26f),
-                        TvColor.Accent.copy(alpha = 0.10f),
+                        accent.copy(alpha = 0.26f),
+                        accent.copy(alpha = 0.10f),
                         Color.Transparent,
                     ),
                     center = Offset(cx1, cy1),
@@ -233,8 +237,8 @@ fun AuroraBackground(modifier: Modifier = Modifier) {
             drawRect(
                 Brush.radialGradient(
                     colors = listOf(
-                        TvColor.AccentAlt.copy(alpha = 0.22f),
-                        TvColor.AccentAlt.copy(alpha = 0.07f),
+                        accentAlt.copy(alpha = 0.22f),
+                        accentAlt.copy(alpha = 0.07f),
                         Color.Transparent,
                     ),
                     center = Offset(cx2, cy2),

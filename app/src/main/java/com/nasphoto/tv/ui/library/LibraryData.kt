@@ -20,10 +20,7 @@ import java.util.Locale
  */
 
 /**
- * 顶栏 Tab 定义（顺序即 selectedTabIndex 语义）。
- *
- * 「人物」独立成 Tab 后，SMART 的标题里不再重复人物/地点：
- * 1920dp 画布要放 6 个 Tab，label 每短一个字，中间那排就多一分余量。
+ * 媒体库页面。枚举顺序用于保留 selectedTabIndex 的兼容性，展示顺序由导航配置决定。
  */
 enum class LibraryTab(val label: String) {
     ALL("回忆"),
@@ -31,7 +28,7 @@ enum class LibraryTab(val label: String) {
     ALBUMS("相册"),
     FOLDER("文件夹"),
     PEOPLE("人物"),
-    RECENT("最近添加"),
+    RECENT("最近拍摄"),
     SMART("收藏"),
     PLACES("地点"),
 }

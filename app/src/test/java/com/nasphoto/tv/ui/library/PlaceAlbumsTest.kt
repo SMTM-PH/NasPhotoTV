@@ -11,13 +11,13 @@ import org.junit.Test
 
 class PlaceAlbumsTest {
     @Test
-    fun groupsNearbyCoordinatesAndKeepsTheNewestCover() {
+    fun groupsUnrecognizedCoordinatesAndKeepsTheNewestCover() {
         val first = media("1", """{"latitude":"31.2201","longitude":"121.4601","countryCode":"cn"}""")
         val second = media("2", """{"geoLatitude":31.23,"geoLongitude":121.48,"countryCode":"CN"}""")
         val unknown = media("3", """{"latitude":0,"longitude":0,"countryCode":""}""")
 
         val place = placeAlbums(listOf(first, second, first, unknown)).single()
-        assertEquals("北纬31.2° · 东经121.5°", place.album.name)
+        assertEquals("未识别城市", place.album.name)
         assertEquals("中国", place.album.subtitle)
         assertEquals(first.url, place.album.coverUrl)
         assertEquals(listOf(first, second), place.media)

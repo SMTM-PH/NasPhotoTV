@@ -57,13 +57,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nasphoto.tv.data.model.MediaItem
+import com.nasphoto.tv.data.model.PhotoLocation
 import com.nasphoto.tv.data.model.isPanoramaPhoto
 import com.nasphoto.tv.data.model.isRawPhoto
+import com.nasphoto.tv.data.model.locationAreaTitle
 import com.nasphoto.tv.ui.common.FocusCard
 import com.nasphoto.tv.ui.common.MediaImage
 import com.nasphoto.tv.ui.theme.TvColor
 import com.nasphoto.tv.ui.theme.TvDimen
 import com.nasphoto.tv.ui.theme.TvType
+import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * ================= 底部缩略图胶片条 =================
@@ -284,6 +288,10 @@ fun ViewerHud(
                     RailMeta("相册", contextTitle)
                     Spacer(Modifier.height(TvDimen.SpaceXs))
                 }
+                item.location?.viewerPlaceLabel()?.let { place ->
+                    RailMeta("拍摄地点", place)
+                    Spacer(Modifier.height(TvDimen.SpaceXs))
+                }
                 RailMeta("尺寸", item.resolution.ifBlank { "—" })
                 Spacer(Modifier.height(TvDimen.SpaceXs))
                 RailMeta("文件", listOf(fileSize, item.extension.uppercase(),
@@ -293,6 +301,20 @@ fun ViewerHud(
                 HudBadges(item)
             }
         }
+    }
+}
+
+private fun PhotoLocation.viewerPlaceLabel(): String? {
+    val name = listOf(region, locality).filter(String::isNotBlank).distinct().joinToString(" · ")
+    if (name.isNotEmpty()) return name
+
+    val latitude = latitude
+    val longitude = longitude
+    if (latitude != null && longitude != null) {
+        return locationAreaTitle((latitude * 10).roundToInt(), (longitude * 10).roundToInt())
+    }
+    return countryCode.takeIf(String::isNotBlank)?.let { code ->
+        Locale("", code).getDisplayCountry(Locale.SIMPLIFIED_CHINESE)
     }
 }
 

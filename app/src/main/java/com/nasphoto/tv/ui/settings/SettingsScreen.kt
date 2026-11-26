@@ -1,11 +1,5 @@
 package com.nasphoto.tv.ui.settings
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -45,6 +39,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -58,6 +57,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.nasphoto.tv.data.SettingsStore
 import com.nasphoto.tv.data.model.MediaItem
+import com.nasphoto.tv.ui.library.TvFocusBox
 import com.nasphoto.tv.ui.theme.NasPhotoTvTheme
 import kotlinx.coroutines.channels.Channel
 import com.nasphoto.tv.ui.theme.TvColor
@@ -66,20 +66,7 @@ import com.nasphoto.tv.ui.theme.TvType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * ================= 设置页（settings-dev） =================
- *
- * 布局：左侧分组设置 + 右侧即时预览；窄画布使用更紧凑的内边距。
- *
- * 遥控器：
- *  - ↑↓     在左栏行间移动（列表自动滚动保证聚焦行可见）
- *  - ←→     调整当前行的值（开关 / 协议 / 停留时长 / 时钟样式 / 背景 / 端口微调），
- *           行内 `‹ 值 ›` 胶囊即时反馈；上下键在有"微调"的行上做精调（端口 ±1、账号序号）
- *  - ENTER  执行（动作行立即执行；「恢复默认」需在 3 秒内按两次）
- *  - BACK   关闭设置页（「设计说明」展开时先收回说明，再按才退出）
- *
- * 已配置 NAS 时初始焦点落在「客厅展示相册」，先明确允许自动展示的范围。
- */
+/** 分类在顶部，当前分类的设置与效果预览分别位于两侧。 */
 @Composable
 fun SettingsScreen(
     store: SettingsStore,
@@ -89,6 +76,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     screensaverPhotos: List<MediaItem> = emptyList(),
     onRefreshLibrary: () -> Unit = onClose,
+    initialFocus: SettingsKey? = null,
 ) {
     val feedback = remember { SettingsFeedback() }
     val scope = rememberCoroutineScope()
@@ -101,13 +89,32 @@ fun SettingsScreen(
             onPreviewScreensaver = onPreviewScreensaver,
         )
     }
-    val listState = rememberLazyListState()
-
     // 当前聚焦行：右侧面板据此切换；首次未配置 NAS 时直接落在「地址」行
-    val initialKey = remember { if (store.nas.isConfigured) INITIAL_KEY else SettingsKey.NAS_HOST }
-    var focusedKey by remember { mutableStateOf(initialKey) }
-    val requesters = remember { mutableMapOf<SettingsKey, FocusRequester>() }
-    fun requesterFor(key: SettingsKey): FocusRequester = requesters.getOrPut(key) { FocusRequester() }
+    val initialKey = remember(initialFocus) {
+        initialFocus ?: if (store.nas.isConfigured) INITIAL_KEY else SettingsKey.NAS_HOST
+    }
+    var focusedKey by remember(initialKey) { mutableStateOf(initialKey) }
+    val activeGroup = focusedKey.group
+    val listState = key(activeGroup) { rememberLazyListState(rowIndexInList(focusedKey)) }
+    val requesters = remember { SettingsKey.entries.associateWith { FocusRequester() } }
+    val categoryRequesters = remember { SettingsGroup.entries.associateWith { FocusRequester() } }
+    var pendingRowFocus by remember(initialKey) { mutableStateOf<SettingsKey?>(initialKey) }
+
+    fun selectGroup(group: SettingsGroup) {
+        if (focusedKey.group != group) focusedKey = SettingsRowsByGroup.getValue(group).first()
+    }
+
+    LaunchedEffect(pendingRowFocus, activeGroup) {
+        val target = pendingRowFocus?.takeIf { it.group == activeGroup } ?: return@LaunchedEffect
+        listState.scrollToItem(rowIndexInList(target))
+        repeat(15) {
+            withFrameMillis { }
+            if (runCatching { requesters.getValue(target).requestFocus() }.isSuccess) {
+                pendingRowFocus = null
+                return@LaunchedEffect
+            }
+        }
+    }
 
     // 动作队列：按键只入队，由单个协程串行执行（测试连接会挂起，避免叠跑）。
     // 注意别用 List.size 当 LaunchedEffect 的 key：出队会改变 size，从而取消正在跑的探测。
@@ -124,9 +131,7 @@ fun SettingsScreen(
             displayAlbumsOpened = true
         } else if (displayAlbumsOpened) {
             focusedKey = SettingsKey.SS_DISPLAY_ALBUMS
-            listState.scrollToItem(rowIndexInList(SettingsKey.SS_DISPLAY_ALBUMS))
-            withFrameMillis { }
-            runCatching { requesterFor(SettingsKey.SS_DISPLAY_ALBUMS).requestFocus() }
+            pendingRowFocus = SettingsKey.SS_DISPLAY_ALBUMS
         }
     }
 
@@ -135,18 +140,7 @@ fun SettingsScreen(
         if (textTarget != null) {
             editorOpened = true
         } else if (editorOpened) {
-            delay(80)
-            runCatching { requesterFor(focusedKey).requestFocus() }
-        }
-    }
-
-    // 初始焦点：首帧后重试直到成功。
-    // 之前只 delay(120) 后试一次，若那一帧行还没挂上布局树就会静默失败，
-    // 表现为「设置界面已经显示，但遥控器方向键没反应」。逐帧重试把这个竞态消除。
-    LaunchedEffect(Unit) {
-        repeat(20) {
-            if (runCatching { requesterFor(initialKey).requestFocus() }.isSuccess) return@LaunchedEffect
-            delay(50)
+            pendingRowFocus = focusedKey
         }
     }
 
@@ -200,18 +194,6 @@ fun SettingsScreen(
         }
     }
 
-    // 聚焦行始终可见
-    LaunchedEffect(focusedKey) {
-        val index = rowIndexInList(focusedKey)
-        runCatching { listState.animateScrollToItem(index.coerceAtLeast(0)) }
-    }
-
-    val rightPad by animateDpAsState(
-        targetValue = if (feedback.showDesignDetail) TvDimen.SpaceM else TvDimen.SpaceL,
-        animationSpec = tween(200),
-        label = "panelPad",
-    )
-
     // BACK：挂在整页根节点（preview 阶段），任何焦点位置都能退出
     SettingsBackdrop(
         modifier
@@ -241,6 +223,17 @@ fun SettingsScreen(
     ) {
         Column(Modifier.fillMaxSize()) {
             SettingsTopBar(nasName = store.nas.name, online = store.nas.connected)
+            SettingsCategoryBar(
+                activeGroup = activeGroup,
+                requesters = categoryRequesters,
+                onFocused = { group -> if (!displayAlbumsOpen) selectGroup(group) },
+                onEnter = { group ->
+                    if (!displayAlbumsOpen) {
+                        selectGroup(group)
+                        pendingRowFocus = focusedKey
+                    }
+                },
+            )
 
             BoxWithConstraints(
                 Modifier
@@ -248,9 +241,8 @@ fun SettingsScreen(
                     .weight(1f)
                     .padding(horizontal = TvDimen.ScreenPadding),
             ) {
-                val compact = maxWidth < 1200.dp
-                val leftWidth = if (compact) maxWidth * 0.48f else (maxWidth * 0.34f).coerceIn(480.dp, 620.dp)
-                val panelGap = if (compact) TvDimen.SpaceM else TvDimen.SpaceL
+                val leftWidth = (maxWidth * 0.43f).coerceAtMost(560.dp)
+                val panelGap = TvDimen.SpaceM
 
                 Row(Modifier.fillMaxSize()) {
                     SettingsLeftPanel(
@@ -260,7 +252,8 @@ fun SettingsScreen(
                         listState = listState,
                         focusedKey = focusedKey,
                         onFocusKey = { focusedKey = it },
-                        requesterFor = { requesterFor(it) },
+                        requesterFor = requesters::getValue,
+                        categoryFocus = categoryRequesters.getValue(focusedKey.group),
                         onQueue = { key -> actionQueue.trySend(key) },
                         onEditText = { key -> textTarget = key },
                         onOpenDisplayAlbums = { displayAlbumsOpen = true },
@@ -281,45 +274,31 @@ fun SettingsScreen(
                                 color = TvColor.Divider,
                                 shape = RoundedCornerShape(TvDimen.RadiusL),
                             )
-                            .padding(if (compact) TvDimen.SpaceM else rightPad),
+                            .padding(TvDimen.SpaceM),
                     ) {
                         if (displayAlbumsOpen) {
                             SettingsDisplayAlbumsPanel(store, onClose = { displayAlbumsOpen = false })
-                        } else Column(Modifier.fillMaxSize()) {
-                            val group = focusedKey.group
-                            AnimatedContent(
-                                targetState = group,
-                                // 必须显式吃掉右栏剩余高度：AnimatedContent 默认只按内容高度测量，
-                                // 结果 SettingsAccountPanel 的 fillMaxSize 拿不到真实高度，
-                                // weight(1f) 的账号列表只分到一张卡片的高度 —— 第 2 个账号被裁在框外。
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth(),
-                                transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(140)) },
-                                label = "settingsRightPanel",
-                            ) { g ->
-                                when (g) {
-                                    SettingsGroup.NAS -> SettingsNasPanel(store, feedback)
-
-                                    SettingsGroup.ACCOUNTS -> SettingsAccountPanel(store)
-
-                                    SettingsGroup.SCREENSAVER -> SettingsScreensaverPanel(
-                                        store = store,
-                                        focusedKey = focusedKey,
-                                        onPickClock = { style ->
-                                            store.updateScreensaver { it.copy(clockStyle = style) }
-                                        },
-                                        onPickBackground = { bg ->
-                                            store.updateScreensaver { it.copy(background = bg) }
-                                        },
-                                        onPickMode = actions::setMode,
-                                        onPickSource = actions::setSource,
-                                        screensaverPhotos = screensaverPhotos,
-                                    )
-
-                                    SettingsGroup.PLAYBACK -> SettingsPlaybackPanel(store)
-                                    SettingsGroup.ABOUT -> SettingsAboutPanel(store, feedback)
-                                }
+                        } else {
+                            when (focusedKey.group) {
+                                SettingsGroup.APPEARANCE -> SettingsAppearancePanel(store)
+                                SettingsGroup.SCREENSAVER -> SettingsScreensaverPanel(
+                                    store = store,
+                                    focusedKey = focusedKey,
+                                    onPickClock = { style ->
+                                        store.updateScreensaver { it.copy(clockStyle = style) }
+                                    },
+                                    onPickBackground = { background ->
+                                        store.updateScreensaver { it.copy(background = background) }
+                                    },
+                                    onPickMode = actions::setMode,
+                                    onPickSource = actions::setSource,
+                                    screensaverPhotos = screensaverPhotos,
+                                )
+                                SettingsGroup.SLIDESHOW -> SettingsSlideshowPanel(store, focusedKey, replay = 0)
+                                SettingsGroup.PLAYBACK -> SettingsPlaybackPanel(store)
+                                SettingsGroup.NAS -> SettingsNasPanel(store, feedback)
+                                SettingsGroup.ACCOUNTS -> SettingsAccountPanel(store)
+                                SettingsGroup.ABOUT -> SettingsAboutPanel(store, feedback)
                             }
                         }
                     }
@@ -331,11 +310,11 @@ fun SettingsScreen(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = TvDimen.ScreenPadding)
-                    .padding(top = TvDimen.SpaceM, bottom = TvDimen.SpaceM),
+                    .padding(vertical = TvDimen.SpaceS),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = focusedKey.hint,
+                    text = if (focusedKey.isAvailableInMode(store.screensaver.mode)) focusedKey.hint else PHOTO_WALL_SETTING_HINT,
                     fontSize = TvType.Caption,
                     color = TvColor.TextSecondary,
                     maxLines = 2,
@@ -344,9 +323,9 @@ fun SettingsScreen(
                 )
                 Spacer(Modifier.width(TvDimen.SpaceM))
                 Text(
-                    text = focusedKey.group.title,
-                    fontSize = TvType.Caption,
-                    color = TvColor.TextMuted,
+                    text = "↑↓ 选择 · ←→ 调整 · 返回",
+                    fontSize = TvType.Tiny,
+                    color = TvColor.TextSecondary,
                     maxLines = 1,
                 )
             }
@@ -437,60 +416,83 @@ fun SettingsScreen(
 
 @Composable
 private fun SettingsTopBar(nasName: String, online: Boolean) {
-    BoxWithConstraints(
+    Row(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = TvDimen.ScreenPadding)
-            .padding(top = TvDimen.SpaceL, bottom = TvDimen.SpaceM),
+            .padding(top = TvDimen.SpaceM, bottom = TvDimen.SpaceS),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        val compact = maxWidth < 1200.dp
-        Column {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "设置",
-                        fontSize = if (compact) TvType.Section else TvType.Display,
-                        fontWeight = FontWeight.Medium,
-                        color = TvColor.TextPrimary,
-                    )
-                    Spacer(Modifier.height(TvDimen.SpaceXs))
-                    Text("让相册适合你的客厅", fontSize = TvType.Caption, color = TvColor.TextSecondary)
-                }
-                Spacer(Modifier.width(TvDimen.SpaceM))
-                Row(
-                    Modifier
-                        .widthIn(max = if (compact) 320.dp else 480.dp)
-                        .clip(RoundedCornerShape(TvDimen.RadiusM))
-                        .background(TvColor.SurfaceSoft)
-                        .padding(horizontal = TvDimen.SpaceM, vertical = TvDimen.SpaceS),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(Modifier.size(TvDimen.SpaceXs).clip(CircleShape).background(if (online) TvColor.Accent else TvColor.Danger))
-                    Spacer(Modifier.width(TvDimen.SpaceS))
-                    Text(
-                        text = "${nasName.ifBlank { "NAS" }} · ${if (online) "已连接" else "未连接"}",
-                        fontSize = TvType.Caption,
-                        color = TvColor.TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            Spacer(Modifier.height(TvDimen.SpaceM))
-            Row(horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceM)) { KeyHintRow() }
-        }
+        Text(
+            text = "设置",
+            modifier = Modifier.weight(1f),
+            fontSize = TvType.Section,
+            fontWeight = FontWeight.SemiBold,
+            color = TvColor.TextPrimary,
+        )
+        Spacer(Modifier.width(TvDimen.SpaceM))
+        Box(
+            Modifier.size(6.dp).clip(CircleShape)
+                .background(if (online) TvColor.Accent else TvColor.TextMuted),
+        )
+        Spacer(Modifier.width(TvDimen.SpaceXs))
+        Text(
+            text = "${nasName.ifBlank { "NAS" }} · ${if (online) "已连接" else "未连接"}",
+            modifier = Modifier.widthIn(max = 280.dp),
+            fontSize = TvType.Caption,
+            color = TvColor.TextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
-/** 右上角按键提示 */
 @Composable
-private fun KeyHintRow() {
-    listOf("↑ ↓ 选择", "← → 调整", "确认 应用", "返回 退出").forEach { h ->
-        Text(
-            text = h,
-            fontSize = TvType.Caption,
-            color = TvColor.TextMuted,
-        )
+private fun SettingsCategoryBar(
+    activeGroup: SettingsGroup,
+    requesters: Map<SettingsGroup, FocusRequester>,
+    onFocused: (SettingsGroup) -> Unit,
+    onEnter: (SettingsGroup) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = TvDimen.ScreenPadding)
+            .padding(bottom = TvDimen.SpaceM),
+        horizontalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs),
+    ) {
+        SettingsGroup.entries.forEach { group ->
+            val active = group == activeGroup
+            TvFocusBox(
+                modifier = Modifier.weight(1f).height(TvDimen.ControlHeight)
+                    .clip(RoundedCornerShape(TvDimen.RadiusS))
+                    .background(if (active) TvColor.SurfaceSoft else TvColor.Stage)
+                    .semantics {
+                        role = Role.Tab
+                        selected = active
+                    },
+                focusRequester = requesters.getValue(group),
+                cornerRadiusDp = 10,
+                focusedScale = 1f,
+                onFocusChanged = { if (it) onFocused(group) },
+                onConfirm = { onEnter(group) },
+                onDown = { onEnter(group) },
+            ) { focused ->
+                Text(
+                    group.title,
+                    Modifier.align(Alignment.Center),
+                    color = if (active || focused) TvColor.TextPrimary else TvColor.TextSecondary,
+                    fontSize = TvType.Label,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (active) {
+                    Box(
+                        Modifier.align(Alignment.BottomCenter).padding(bottom = 4.dp)
+                            .width(16.dp).height(2.dp).background(TvColor.Accent, CircleShape),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -503,6 +505,7 @@ private fun SettingsLeftPanel(
     focusedKey: SettingsKey,
     onFocusKey: (SettingsKey) -> Unit,
     requesterFor: (SettingsKey) -> FocusRequester,
+    categoryFocus: FocusRequester,
     onQueue: (SettingsKey) -> Unit,
     onEditText: (SettingsKey) -> Unit,
     onOpenDisplayAlbums: () -> Unit,
@@ -516,29 +519,26 @@ private fun SettingsLeftPanel(
         contentPadding = PaddingValues(start = TvDimen.SpaceXs, end = TvDimen.SpaceXs, bottom = TvDimen.SpaceL, top = TvDimen.SpaceXs),
         verticalArrangement = Arrangement.spacedBy(TvDimen.SpaceXs),
     ) {
-        SettingsGroup.entries.forEach { group ->
-            item(key = "header_${group.name}") {
-                SettingsGroupHeader(group = group, focusedKey = focusedKey)
-            }
-            val rows = SettingsRowsByGroup.getValue(group)
-            items(count = rows.size, key = { rows[it].name }) { i ->
-                val key = rows[i]
-                val step = stepAction(key, actions)
-                SettingsRow(
-                    key = key,
-                    store = store,
-                    feedback = feedback,
-                    focused = focusedKey == key,
-                    focusRequester = requesterFor(key),
-                    onFocus = { onFocusKey(key) },
-                    onConfirm = {
-                        if (key == SettingsKey.SS_DISPLAY_ALBUMS) onOpenDisplayAlbums()
-                        else performConfirm(key, actions, onQueue, onEditText)
-                    },
-                    onStepLeft = step?.let { fn -> { fn(true) } },
-                    onStepRight = step?.let { fn -> { fn(false) } },
-                )
-            }
+        val rows = SettingsRowsByGroup.getValue(focusedKey.group)
+        items(count = rows.size, key = { rows[it].name }) { index ->
+            val key = rows[index]
+            val step = stepAction(key, actions)
+            SettingsRow(
+                key = key,
+                store = store,
+                feedback = feedback,
+                focused = focusedKey == key,
+                focusRequester = requesterFor(key),
+                onFocus = { onFocusKey(key) },
+                onConfirm = {
+                    if (key == SettingsKey.SS_DISPLAY_ALBUMS) onOpenDisplayAlbums()
+                    else performConfirm(key, actions, onQueue, onEditText)
+                },
+                onStepLeft = step?.let { fn -> { fn(true) } },
+                onStepRight = step?.let { fn -> { fn(false) } },
+                modifier = if (index == 0) Modifier.focusProperties { up = categoryFocus } else Modifier,
+                simple = true,
+            )
         }
     }
 }
@@ -626,9 +626,10 @@ private fun textEditSpec(key: SettingsKey, store: SettingsStore): TextEditSpec =
  * 不可调的"信息行"（设备名称之类）按下会循环下一个候选值，避免按了没反应。
  */
 private fun stepAction(key: SettingsKey, actions: SettingsActions): ((Boolean) -> Unit)? = when (key) {
+    SettingsKey.APPEARANCE_MODE -> { isLeft -> actions.cycleAppearance(reverse = isLeft) }
     SettingsKey.SS_ENABLED -> { _ -> actions.toggleScreensaver() }
     SettingsKey.SS_IDLE -> { _ -> actions.cycleIdleTimeout() }
-    SettingsKey.SS_MODE -> { _ -> actions.cycleMode() }
+    SettingsKey.SS_MODE -> { isLeft -> actions.cycleMode(reverse = isLeft) }
     SettingsKey.SS_SOURCE -> { _ -> actions.cycleSource() }
     SettingsKey.SS_ALBUM -> { _ -> actions.cycleAlbum() }
     SettingsKey.SS_INTERVAL -> { _ -> actions.cyclePhotoInterval() }
@@ -655,31 +656,23 @@ private fun stepAction(key: SettingsKey, actions: SettingsActions): ((Boolean) -
 /** 静态的深墨蓝背景，让焦点和右侧预览承担视觉层级。 */
 @Composable
 fun SettingsBackdrop(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
+    // 先在组合期取色，再捕获进 drawBehind 的 DrawScope（非 Composable 上下文）。
+    val bg = TvColor.Bg
+    val stage = TvColor.Stage
     Box(
         modifier
-            .background(TvColor.Bg)
+            .background(bg)
             .drawBehind {
-                drawRect(Brush.verticalGradient(listOf(TvColor.Stage, TvColor.Bg)))
+                drawRect(Brush.verticalGradient(listOf(stage, bg)))
             },
         content = content,
     )
 }
 
-/** 初始焦点行：屏保开关 */
+/** 常规入口从客厅展示相册开始。 */
 private val INITIAL_KEY = SettingsKey.SS_DISPLAY_ALBUMS
 
-/** key 在 LazyColumn 里的下标（组标题也占一行，必须对齐，否则滚动错位） */
-fun rowIndexInList(key: SettingsKey): Int {
-    var index = 0
-    SettingsGroup.entries.forEach { g ->
-        index += 1 // 组标题
-        val rows = SettingsRowsByGroup.getValue(g)
-        val inGroup = rows.indexOf(key)
-        if (inGroup >= 0) return index + inGroup
-        index += rows.size
-    }
-    return 0
-}
+private fun rowIndexInList(key: SettingsKey): Int = SettingsRowsByGroup.getValue(key.group).indexOf(key)
 
 // ---------------------------------------------------------------------------
 // 预览
