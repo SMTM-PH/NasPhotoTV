@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 SMTM-PH and NasPhotoTV contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 package com.nasphoto.tv.ui.screensaver
 
 import com.nasphoto.tv.ui.common.SlideshowMusicEffect

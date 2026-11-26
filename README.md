@@ -2,736 +2,306 @@
 
 > **在电视上看 NAS 里的照片与视频，并把电视变成一台会呼吸的电子相框。**
 
-Android TV 原型 App（Kotlin + Jetpack Compose）。包名 `com.nasphoto.tv`，单 Activity、纯 Compose、无 TV 专用库；
-屏保待机显示对标 iPhone 的 StandBy —— 大号时钟 + 照片氛围 + 天气 + 防烧屏。
+Android TV 客户端（Kotlin + Jetpack Compose，单 Activity、纯 Compose）。数据来自真实飞牛 fnOS 相册：
+局域网自动发现、WSS 加密登录、签名 HTTP、AccessToken 串流原片；屏保对标 iPhone StandBy ——
+大号时钟、照片氛围、防烧屏。另有原生 tvOS 版本，见 [apple/README.md](apple/README.md)。
 
-> 🍎 **Apple TV 版**：原生 tvOS 1.2.8，支持 tvOS 17+。构建、真机签名与分发说明见 [apple/README.md](apple/README.md)。
+- 当前版本：Android `1.2.15`（versionCode 21） / tvOS `1.2.8`（build 14）
+- 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01 / Media3 1.5.1 / Coil 2.7.0 / OkHttp 4.12.0
+- 兼容范围：minSdk 24（Android 7.0）、targetSdk 34、compileSdk 35；`java.time` 通过脱糖支持
+- 仓库：[github.com/SMTM-PH/NasPhotoTV](https://github.com/SMTM-PH/NasPhotoTV)
 
-- 版本：`1.2.14`（versionCode 20）。[GitHub Release 下载正式签名 APK](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/v1.2.14)
-- 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01（Compose 1.7.6、material3 1.3.1）/ **minSdk 24（Android 7.0）**、compileSdk 35、targetSdk 34；`java.time` 由 core library desugaring 提供
-- 数据来源：**真实飞牛相册**（`data/fn/`：WSS 加密登录 + 签名 HTTP + AccessToken 注入 + 局域网自动发现），直连 NAS 原片串流
+## 开源协议
 
----
-
-## 1.2.14 更新（2026-11-25）
-
-- **地点浏览**：「相册 → 地点」读取飞牛地图聚合数据，可按区域浏览和放映照片。
-- **启动和遥控器**：先显示首页，再连接 NAS 并加载图库。统一主要控件的焦点样式，退出看图、放映或预览时恢复原焦点。
-- **相册放映**：按相册保存停留时间、切换效果、配乐和相框，支持预览动效。慢网换片时继续显示上一张照片。
-- **连接表单**：修复高密度和大字号下电视键盘底部按钮被裁切的问题。
-
-详见 [发布说明](docs/releases/v1.2.14.md)。
+本项目采用 [Apache License 2.0](LICENSE)，版权与第三方素材说明见 [NOTICE](NOTICE)。
+示例照片、依赖库与工具各自遵循其原有许可。
 
 ---
 
-## 1.2.13 更新（2026-11-23）
-
-- **缩短启动等待**：首批最多 48 项媒体就绪后即可浏览，完整时间线、相册、人物与目录在后台补齐。
-- **修复屏保日期裁切**：电影时钟按可用空间缩放，为日期和遥控器提示留出位置。
-- **首次连接**：保留局域网自动发现，新增遥控器可操作的独立连接页，端口和访问码可在高级选项中填写。
-- **相册放映与定位**：新增「播放此相册」和「跳到年月」，可设置停留时间、切换效果和背景音乐。
-
-详见 [发布说明](docs/releases/v1.2.13.md)。
-
----
-
-## 1.2.12 更新（2026-11-23）
-
-> 用户反馈：希望支持安卓 7.0。
-
-- **修复真正挡住 7.x 的问题**：`themes.xml` 里 API 27 才有的 `windowLayoutInDisplayCutoutMode`
-  原本放在基础 `values/`，Android 7.0/7.1 解析主题时会遇到未定义属性（部分定制系统会因此报错）。
-  现已拆成 `values/`（纯基础主题）+ `values-v27/`（刘海屏属性），7.x 只加载前者。
-- **放开 leanback 特性**：`android.software.leanback` 从 `required="true"` 改为 `false`。
-  不少国产 Android 7.x 盒子 / 老平板并不声明 leanback，required=true 会被应用市场和部分安装器直接过滤；
-  TV 启动入口（`LEANBACK_LAUNCHER`）与横屏 D-Pad 交互完全不变。
-- **启用 v1+v2 双签名**：AGP 8 在 minSdk ≥ 24 时默认只签 v2，部分 7.x 定制系统的 v2 校验实现不完整，
-  补上 v1(JAR) 签名兜底；新系统不受影响。
-- **lint 守门**：联网跑通 `lintDebug`，修完上面那条后 **0 errors**；`NewApi` 检查继续保留，
-  避免以后又把高版本 API 加进基础资源。
-- 统一 README / CONTRACT 里过时的「minSdk 26 / Android 8.0 及以上」描述。
-- Android TV **API 24（7.0）系统镜像**实装、启动、UI 复核通过。
-
-详见 [docs/releases/v1.2.12.md](docs/releases/v1.2.12.md)。
-
----
-
-## 1.2.11 更新（2026-11-22）
-
-> 用户反馈：① 网络不好时幻灯片两图间隙会闪「锯齿样」破图图标；② 希望像 showcase 一样有切换动画；③ 视频方向有时不一致，想能手动旋转。
-
-- **换页不再闪破图**：全屏舞台 / 屏保改成「HOLD」占位（透明，保留上一张画面），
-  卡片加载占位把锯齿破图图标统一换成转圈；幻灯片换页前先把下一张解码进缓存再切换，
-  慢网络下会一直显示当前照片直到下一张就绪（最多等 8 秒，不会卡死）。
-- **showcase 风格切换动画**：幻灯片自动换页改为 900ms 缓慢叠化 + 每张 1.0→1.05 的
-  轻微推拉；手动左右翻页仍保留原来的方向滑动。屏保同样提前预加载下一张。
-- **视频方向修正 + 手动旋转**：`VideoSize.unappliedRotationDegrees` 参与换算，
-  避免竖屏判定与实际画面不一致；新增「设置 → 视频播放 → 画面旋转」默认档位，
-  播放中按 **MENU**（INFO / 红键同效）逐档 0°→90°→180°→270° 旋转当前视频，
-  **绿键**复位，**黄键**切换竖屏适配；换片自动回到默认值。播放器改用 TextureView，
-  让旋转变换真正作用到画面上（SurfaceView 不受父级 View 旋转影响）。
-- 新增 `VideoRotationTest` / `SlideshowPreloadTest` 共 11 例单元测试。
-
-详见 [docs/releases/v1.2.11.md](docs/releases/v1.2.11.md)。
-
----
-
-## 1.2.10 更新（2026-11-20）
-
-> 用户反馈：「现在点文件夹，会把主文件夹、子文件夹、孙文件夹全部都列在一起，如果能分层列出会更好」。
-
-- **文件夹改为逐层浏览**：文件夹 Tab 只列当前层的直接子目录，点有子目录的卡片下钻一层，
-  不再把扫描根目录和所有层级子孙目录平铺在同一个网格里。
-- **面包屑 + 返回上一级**：进入目录后显示「文件夹 › Photos › DJI_001」完整路径，
-  网格首格固定是「返回上一级」，遥控器 BACK 也逐层向上，回到根层才退出 Tab。
-- **本目录照片仍能看**：第二格固定是「查看本目录照片」，下钻后不会丢掉该目录自己的照片；
-  叶子目录（没有子目录）仍是点一下直接看照片，卡片会显示「N 个子文件夹 / N 项」。
-- 目录层级关系由 `NasFolder.parentId` 一路透传到 UI（`Album.parentId`），
-  层级索引与孤儿目录兜底由 `FolderHierarchy` 纯函数实现，新增 9 个单元测试。
-
-实现与验证见 [docs/releases/v1.2.10.md](docs/releases/v1.2.10.md)。
-
----
-
-## 1.2.9 修复（2026-11-20）
-
-- **文件夹里的照片能显示了**：`folder_view/getFileList` 条目常不带
-  `additional.thumbnail`，按飞牛官方前端算法用 `id + photoUUID` 拼 stream 地址
-  （缩略图 `s`、大图 `o`、RAW `m`、视频 `v/{id}`），修好目录缩略图与全屏大图空白。
-- **文件夹卡片有封面了**：新增 `folder_view/cover` 批量读取封面；接口不可用或旧版本
-  降级时，用整库时间线里同目录前缀的照片兜底。
-- **第二行不再被裁**：焦点滚动改为按实际溢出量最小滚动，聚焦第二行时照片会整体上移，
-  卡片下方的标题与日期完整可见。
-
-协议取证、验证与待确认范围见 [docs/releases/v1.2.9.md](docs/releases/v1.2.9.md)。
-
----
-
-## 1.2.8 修复（2026-11-19）
-
-- **文件夹子目录**：根据飞牛官方 Web 前端协议，改用 `folder_view/getFolderList`
-  逐层读取子目录；目录与媒体分别请求，不再从仅返回媒体的 `getFileList` 中猜测目录项。
-- **图库早期年份**：先读 `gallery/timeline`，按其年份范围读取媒体并核对数量；
-  分页不足时按日补齐，移除图库的 2 万项截断。读取不完整时提示失败，避免把局部数据当作全库。
-- **目录异常提示**：子目录读取失败会提示重试，不再静默显示成没有子目录。
-
-协议取证、验证结果及尚待确认的范围见 [docs/releases/v1.2.8.md](docs/releases/v1.2.8.md)。
-
----
-
-## 1.2.7 更新（2026-11-18）
-
-- **在线更新**：设置 → 关于 新增「在线更新」四行（检查/下载/安装状态机、启动静默检查开关、
-  可配置更新源地址与下载镜像前缀），右栏新增状态卡片。
-- 更新源默认 GitHub Releases `latest` API，可换镜像/反代；下载可叠加镜像前缀，
-  适配国内电视网络。
-- **全程手动确认**：检查 → 确认下载 → 确认安装，不自动下载、不自动装、不弹窗打断看图。
-- 网络层与 NAS 连接完全隔离（独立 OkHttp client，不带 AccessToken）；按当前安装包签名
-  自动挑 release / debug 包，避免签名不同导致覆盖安装失败。
-- `FileProvider` + `REQUEST_INSTALL_PACKAGES` 调起系统安装界面。
-
-详见 [docs/releases/v1.2.7.md](docs/releases/v1.2.7.md)。
-
----
-
-## 1.2.6 更新（2026-11-17）
-
-- **图库年份全量加载（再次修复）**：1.2.3 的分页终止条件要求 `hasNext` 与「满 500 条」同时成立，
-  用户 NAS 每页不足 500（或 `hasNext` 是 `"1"`/`1`）时第一页就停，仍只显示最近 9 年；
-  改为 OR 语义 + 布尔兼容 + id 去重，`total` 未取满就继续。
-- **文件夹显示子目录**：`photo/folder/list` 只给扫描根目录，旧代码把 `folder_view/getFileList`
-  里的目录项当媒体丢弃；现在递归展开 `folder/view` 目录树（多字段名兼容），
-  并在必要时从文件列表识别子目录，子目录带「子文件夹 · 路径」说明。
-- **选择相册自动全屏**：进入相册/人物/智能分类详情后，用封面铺满整屏做背景并隐藏顶栏与底部提示，
-  网格铺满大屏，返回后原样恢复。
-- **缩略图更小更清晰**：按 960×540dp 设计画布重新校准卡片（相册 3 列 256×152、照片 4 列 192×124、
-  年份 3 列 256×152），请求像素提高到 960/640，同屏内容更多、画面更锐利。
-
-详见 [docs/releases/v1.2.6.md](docs/releases/v1.2.6.md)。
-
----
-
-## 1.2.4 更新（2026-11-14）
-
-- **实况照片改为按需播放**：点开 Live 图默认是静态照片；按**确认键**才播放一次动态片段
-  （静音，播完自动停在最后一帧回到静态，再按再播），不再无限循环自动播放。
-  播放期间右上角短暂显示「实况播放中 · 播完自动回到静态」。
-- 普通照片的确认键行为不变（弹出/收起工具条）；视频、全景的按键逻辑不受影响。
-
-详见 [docs/releases/v1.2.4.md](docs/releases/v1.2.4.md)。
-
----
-
-## 1.2.3 更新（2026-11-13）
-
-- **图库显示全部年份**：`gallery/getList` 服务端单页上限 500，旧代码一次要 20000 只拿到最近 500 张；
-  改为按 offset 逐页拉全（实测 5294 项 / 11 年），2015、2017 等更早年份不再丢失。
-- **人物照片拉全**：旧实现只看时间线前 30 天、每天 200 张；改为遍历完整时间线并单日翻页
-  （「老婆」由约 300 张 → 436 张）。
-- **按年份分组**：相册 / 文件夹 / 人物 / 智能分类详情在跨年份时插入「YYYY 年」分隔行。
-- **新增「文件夹」浏览**：相册 → 文件夹，按磁盘目录列出并显示真实张数，进入后同样按年份分组。
-- **支持 Android 7.x**：`minSdk` 由 26 降到 24，并开启 core library desugaring（`java.time` 兼容），
-  修复 7.1.2 盒子「解析安装包出现问题」。
-- **幻灯片背景音乐**：设置 → 屏保与待机 → 背景音乐；面板显示局域网地址，手机浏览器上传音频，
-  幻灯片与屏保循环播放（上传服务仅在面板打开时运行）。
-- **按地点浏览**：飞牛 Web 端 `map/*` 接口只开放 initCenter/boundary，照片列表接口恒返回
-  invalid params（官方客户端私有协议），本轮未实现，详见发布说明。
-- 本版同时包含未单独发布的 1.2.2：4K / 高密度电视按 960×540dp 设计画布归一化、设置页卡顿修复。
-
-详见 [docs/releases/v1.2.3.md](docs/releases/v1.2.3.md)。
-
----
-
-## 1.2.2 更新（2026-11-12）
-
-- **4K / 高密度电视适配**：新增 `ProvideTvDesignDensity`，把任意分辨率归一化到 **960×540dp 设计画布**。
-  修复高密度电视（逻辑画布仅 480×270dp）上「图标超级大、相册卡巨大、信息密度低」的问题；
-  4K 面板上按原生 4K 像素渲染，文字图片更清晰。
-- **缩略图按密度取图**：`MediaImage` 的缩略图宽度随 density 等比放大（封顶 1920），4K 上不再发虚。
-- **设置页卡顿修复**：右栏「屏保预览」去掉两处无限动画（Ken Burns / 极光），静置时不再持续 60fps 重绘；
-  初始焦点改为逐帧重试，修掉「设置界面出来了但方向键要等一会儿/没反应」。
-
-详见 [docs/releases/v1.2.2.md](docs/releases/v1.2.2.md)。
-
----
-
-## 1.2.1 更新（2026-11-10）
-
-- **修复：开启两步验证的账号连不上 NAS**。飞牛在密码正确但设备未被信任时返回
-  `errno=0 / result=succ` 但**不给 `token`**，只给一个临时 `accessToken`；旧版本把这句
-  当成「登录成功但没返回 AccessToken」，于是永远连不上。现在会识别这个挑战，
-  用同一连接提交 `user.2fa.loginVerify` + 6 位动态码完成登录。
-- **动态码输入**：设置页「测试连接」与首屏加载都会弹电视数字键盘（遥控器选数字、确认输入、BACK 取消）。
-- **固定设备标识 `did`**：原来每次登录随机生成，勾了「信任此设备」也会在下次冷启动重新要验证码；
-  现在持久化到本机，信任状态才能生效。
-- **错误提示更准确**：验证码错误 / IP 被临时封禁 / 只能用邮箱验证 / 真的缺 token 分别给不同文案。
-- **输入浮层不再被抢焦点**：电视键盘改用 `Dialog` 独立窗口承载，遥控器按键不会跑到遮罩底下的页面。
-- **访问码网关修复**：开启访问码的 NAS 会下发 `os-access-code` cookie，它是后续所有请求（含 WebSocket 握手）
-  的前提。原来 cookie 表按 host 整桶替换，任何一次响应带别的 `Set-Cookie` 就会把它挤掉，
-  表现为媒体库突然全部 401。现在按名合并，并在 401 时自动重新校验访问码。
-
-详见 [docs/releases/v1.2.1.md](docs/releases/v1.2.1.md)。
-
----
-
-## 1.2.0 更新（2026-11-09）
-
-- **全新电视界面**：由 `codex/tv-gallery-ui` 重做，包含沉浸式首页、「回忆 / 图库 / 相册」三项主导航、回忆集合、简化看图工具与客厅展示相册授权；本次已合入 `main` 并发布。
-- **首页改用飞牛 AI 智能分类**：直接读取 `ai-smart-rec` 的场景 / 事物分类（天空云彩、山、登山徒步…），用分类封面铺满客厅相册行；点开分类或按「播放这个分类」时才通过 magic-search 拉取媒体，不再启动时预取几十个相册。
-- **相册 / 分类详情按需加载**：进入详情才拉当前相册媒体，并区分「加载中 / 失败 / 空 / 就绪」；大相册不再常驻 Java 堆，给 4K 解码腾出内存。
-- **详情页排版**：顶部标题缩小为单行（30sp + 数量同行），底部导航提示不再压住最后一行；聚焦到最后一行时整张卡片完整可见。
-- **4K 视频卡顿修复**：ExoPlayer 默认前向缓冲 50 秒、不限字节数，75–130 Mbps 的 4K 原片会要求 470 MB 以上，远超电视 192 MB 堆上限，触发持续 GC 与周期性停顿。现在缓冲按 **48 MB / 8–20 秒** 封顶，并开启解码失败自动回退。
-- **视频串流更稳**：视频流改用独立媒体客户端，取消 30 秒「整次请求」超时（保留连接 / 读取超时），不会中途被掐断；播放控制层只由用户操作重置计时，进度刷新不再阻止自动隐藏。
-- **稳定性**：关闭 Coil 硬件位图（本机 MTK Android 9 在 `allocateHardwareBitmap` 会因 `glEGLImageTargetTexture2DOES` 报错直接 SIGABRT）；补齐 GET/POST 签名让智能分类可读。
-- **新图标已打进 APK**：`nas-photo-tv-icon-v2` 生成 mdpi–xxxhdpi 启动图标；320×180 TV 横幅**只保留图案、去掉文字**。
-- **图库按全库年份**：启动取整库（实测 5281 项 / 11 个年份，2015–2026），不再只显示最近 1000 项的 2026 年。
-- **人物相册出图**：人物头像取飞牛 `ai-person` 的 faceId → `/p/api/v1/stream/face/{id}`；头像区改 1:1 正方形铺满，名字与张数固定在下方。
-- **看图全屏**：胶片条按确认键会收起全部浮层并把焦点还给画面，不再卡在工具条；视频封面提示由「回车」改为「确认」。
-
-> 已知限制：电视为 **100 Mbps 有线网口**。实测 75 Mbps 的 4K 片段可稳定播放（缓冲约 5 秒）；129 Mbps 的 4K 片段码率高于网口上限，实时串流必然间歇性缓冲，需转码或先缓存到本地。
-
----
-
-> 当前界面改版（2026-11-05，已随 1.2.0 发布）：[相册体验整改与离线预览](docs/design-refinement-20261105/README.md)，包含三项主导航、回忆集合、简化看图工具和客厅展示相册授权。[TV UX/UI 技能调研](docs/design-next/skills-research.md)、[沉浸式首页](docs/design-immersive/README.md)、[上一版影廊](docs/design-next/README.md)与下方历史截图保留供对照；下文旧功能表不代表本轮界面。
-
-新版设计对外介绍与配图：[论坛发布素材（完整稿、短文、固定链接配图）](docs/promotion/design-preview-20261105/README.md)。
-
-1.2.1 版发布说明：[docs/releases/v1.2.1.md](docs/releases/v1.2.1.md)。
-1.2.0 版发布说明：[docs/releases/v1.2.0.md](docs/releases/v1.2.0.md)。
-
-## 0. 快速开始（TL;DR）
+## 快速开始
 
 ```bash
-# 1. 构建（Windows 用 gradlew.bat，Linux/macOS 用 ./gradlew）
+# 1. 构建（Windows 用 gradlew.bat）
 ./gradlew :app:assembleDebug
 
 # 2. 安装到已连接的电视 / 模拟器
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 
-# 3. 启动（Activity 名与包名一致：com.nasphoto.tv/.MainActivity）
+# 3. 启动
 adb shell am start -n com.nasphoto.tv/.MainActivity
 ```
 
-APK 产物：`app/build/outputs/apk/debug/app-debug.apk`（约 23 MB，含 Media3/OkHttp/Coil）。
+也可以从 [GitHub Releases](https://github.com/SMTM-PH/NasPhotoTV/releases) 下载正式签名 APK。
 
-不想自己构建？可直接从 [GitHub Releases](https://github.com/SMTM-PH/NasPhotoTV/releases) 下载 APK 安装包。
+首次启动会进入连接页：自动扫描局域网里的飞牛 NAS，也可手动填写地址、端口、账号、密码和访问码。
+连接成功后先显示首页，再在后台补齐完整时间线、相册、人物与文件夹数据。
 
-首次运行需要在设置页填 NAS 地址（默认 `5667`）+ 账号密码，或等局域网自动发现。
+### 外网访问 / 反向代理
 
-### 外网访问 / 反向代理（中转地址）
-
-设置页的「地址」既接受纯 `IP` / `域名`，也接受**完整 URL**：
+设置页「地址」既接受 `IP` / 域名，也接受完整 URL：
 
 ```
 192.168.31.8                          # 局域网直连，HTTPS 5667
 https://nas.example.com               # DDNS 域名直连
-http://relay.example.com:8080/nas     # http 中转 + 子路径 /nas
-https://relay.example.com/nas/        # https 443 中转 + 子路径 /nas
+http://relay.example.com:8080/nas     # HTTP 中转 + 子路径 /nas
+https://relay.example.com/nas/        # HTTPS 443 中转 + 子路径 /nas
 ```
 
-解析后协议、主机、端口、子路径分别存储，API / 图片 / WebSocket 请求都会挂到子路径下
-（如 `/nas/p/api/v1/...`、`/nas/websocket?type=main`）；协议为 `http` 时 WebSocket 自动降级为 `ws`。
-旧版本把完整 URL 直接写进 `nas_host` 的配置在启动恢复时会自动拆开，无需重填。
+协议、主机、端口、子路径分别保存，API / 图片 / WebSocket 请求都会挂到子路径下
+（如 `/nas/p/api/v1/...`、`/nas/websocket?type=main`）；`http` 下 WebSocket 自动降级为 `ws`。
 
-> 反向代理需要把子路径前缀**剥掉**再转发到飞牛 Web 服务（例如 Nginx
-> `location /nas/ { proxy_pass https://NAS_IP:5667/; }`）。`authx` 签名针对的是飞牛内部的
-> `/p/api/...` 原路径，前缀不参与签名；如果代理把 `/nas` 一起转给后端，服务端会算错签名。
-> 局域网自动发现选中的设备会重置为「直连 / 根路径」模式。
+> 反向代理需要剥掉子路径前缀再转发给飞牛 Web 服务（如 Nginx
+> `location /nas/ { proxy_pass https://NAS_IP:5667/; }`）。`authx` 签名基于飞牛内部
+> `/p/api/...` 原路径，前缀不参与签名。局域网自动发现选中的设备会重置为直连 / 根路径。
 
 ---
 
-## 1. 功能清单
+## 功能概览
 
-| 模块 | 代码位置 | 已实现 |
-|---|---|---|
-| **媒体库 / 相册浏览** | `ui/library/` | 顶栏（Logo + NAS 状态点 + **当前账号胶囊** + 6 个 Tab + 搜索/屏保/设置按钮）；「全部照片」Tab 有 Hero 大图 + 最近添加横排 + 相册横排；「年 · 月 · 日」Tab 四级下钻（年 → 月 → 日 → 当天媒体网格）；「相册」Tab 4 列网格；**「人物」Tab**（NAS 人脸聚类，≤6 人一排卡片、超过自动换 6 列网格，点头像进该人物的照片网格）；「最近添加」Tab 6 列网格；「收藏 · 回忆」Tab（收藏网格 + 人物/地点/回忆横排）；相册详情页（返回按钮 + 6 列媒体网格）；各层级空状态 |
-| **全屏看图** | `ui/viewer/` | **图片优先铺满整屏**（无常驻侧栏，信息都是瞬态浮层）；左上 LIVE 徽标 + 控制栏可见时的状态句/来源/拍摄/标题/序号；`UP` 展开尺寸/文件/ID；左右切换（循环）+ 方向滑动动画；7 个工具按钮（上一张/下一张/信息/收藏/幻灯片/放大查看/关闭）；缩略图胶片条；幻灯片自动播放（5s/张，方向键暂停）；2× 放大 + 方向键平移；视频项显示封面 + ▶ |
-| **视频播放** | `ui/video/` | **真实 Media3 ExoPlayer 解码**，走带 AccessToken 的 OkHttp 数据源串流 NAS 原片；全屏播放 + 控制层 3 秒自动隐藏；播放/暂停；进度条 + 当前/总时长；快进快退 ±10s；媒体键 `NEXT/PREVIOUS` 切换视频；播完自动连播；**解码失败显示可见错误原因**（4K/10bit 超规格等，详见 §8） |
-| **屏保待机显示** | `ui/screensaver/` | 5 种时钟（CINEMA 巨幕/FLIP/THIN/MINIMAL/DATE_FOCUS）× 3 种背景（照片轮播/极光动态/纯黑极简）；农历干支小字；**前景只有时钟与退出提示，不显示任何图片信息**（标题、拍摄日期、分辨率、地点都不上屏）；Ken Burns 推拉；像素位移 + 夜间呼吸防烧屏；任意键退出 |
-| **设置** | `ui/settings/` | 两栏（左列表 420dp + 右面板）：NAS 连接（协议/地址/端口/账号/密码/访问码/测试连接/重扫）、**账号切换**（当前账号 ←→ 秒切 / 备注名 / 添加账号 / 删除账号）、屏保与待机（10 项 + 预览）、视频播放（4 项）、关于（版本/引擎/设备/设计说明/恢复默认）；右栏随聚焦项切换为 连接拓扑 / 账号列表 / 屏保实时小预览 / 播放摘要 / 关于。**任何一项都能反复修改**，改完立刻落盘（`SettingsStore.persist()` + 启动时 `restore()`） |
+### 媒体库 · 浏览
+
+顶栏包含首页状态（连接名 + 在线/离线/连接中）、多个 Tab、艺术画册入口，以及屏保、手机传图、设置按钮。
+主 Tab 由 `LibraryTab` 定义：
+
+| Tab | 内容 |
+|---|---|
+| 回忆 | 沉浸式首页；照片 Hero + 横排内容；可进入「智能分类」瀑布流浏览 AI 事物 / 场景分类 |
+| 图库 | 按年 → 月 → 日逐级下钻的时间线网格 |
+| 相册 | 相册网格与相册详情；相册可单独设置放映参数 |
+| 文件夹 | 读取飞牛文件夹视图，逐级浏览根目录 / 子目录 / 孙目录 |
+| 人物 | NAS 人脸聚类；未开启 AI 相册时显示空状态 |
+| 最近拍摄 | 时间倒序的媒体网格 |
+| 收藏 | 飞牛收藏 ∪ NAS `isCollect` ∪ 本机星标 |
+| 地点 | 读取飞牛地图聚合数据按区域浏览，附离线城市名索引 |
+
+相册详情、人物详情、某一天的照片、收藏网格共用媒体网格；各层级都有加载态和空状态。
+
+### 看图 · 放映
+
+- 全屏看图：图片优先铺满舞台，标题 / 来源 / 拍摄日期 / 序号是 3 秒自动隐藏的浮层；LIVE 徽标常驻。
+- 工具：上一张 / 下一张（循环）、信息、收藏、幻灯片、2× 放大与方向键平移、关闭；底部胶片条。
+- 放映：每个相册可单独保存停留时间（3–30 秒）、换片效果、背景音乐与相框，设置页可预览动效。
+- 背景音乐：手机经局域网网页上传音频，存在 App 私有目录并循环播放。
+- 视频项在看图列表里显示封面和播放标记，确认后交给播放器。
+
+### 视频播放
+
+- Media3 ExoPlayer + 带 AccessToken 的 OkHttp 数据源，直接串流 NAS 原片。
+- 控制层 3 秒自动隐藏；播放 / 暂停、进度、±10 秒快进快退、媒体键上一集 / 下一集、自动连播与循环。
+- 竖屏画面适配（自动填充 / 完整画面 / 铺满屏幕）与画面旋转（0° / 90° / 180° / 270°），播放中也可临时切换。
+- 解码能力探测与播放缓冲计划；解码失败显示具体原因，并可跳到下一条。
+
+### 屏保待机
+
+- 三种画面：时钟待机 / 纯照片 / 照片墙；客厅展示相册需逐相册授权。
+- 五种时钟：巨幕时钟、翻页数字、纤细极简、极简小钟、日期日历；中文日期与近似农历小字。
+- 三种时钟背景：照片轮播 / 极光动态 / 纯黑极简；照片来源可选人物、最近、随机或指定相册。
+- 防烧屏：像素位移、夜间呼吸调暗、Ken Burns 缓慢推拉、压暗遮罩；任意键退出且首次按键只退出。
+- 进入方式：顶栏屏保按钮、设置页预览、空闲超时自动进入；看图 / 播放中不自动进入。
+
+### 手机传图
+
+顶栏「传图」打开局域网网页上传页，手机与电视同网段即可传照片；可选把照片备份回当前 NAS 账号。
+上传地址只在本地显示，照片不经过第三方服务器。
+
+### 设置
+
+两栏布局，左栏 7 组共 42 项，右栏随聚焦项切换预览或详情：
+
+| 分组 | 内容 |
+|---|---|
+| 外观 | 外观模式：跟随系统 / 浅色 / 深色，含两套配色的实时迷你预览 |
+| NAS | 名称、地址、端口、账号、密码、访问码、测试连接、刷新媒体库 |
+| 账号 | 当前账号左右键秒切、备注名、添加账号、删除账号 |
+| 屏保 | 展示相册、开关、进入时间、画面 / 来源 / 相册、停留、时钟、背景、日期、夜间调暗、推拉、预览 |
+| 放映 | 幻灯片停留、换片动效、背景音乐 |
+| 视频 | 自动连播、循环、竖屏画面、画面旋转 |
+| 关于 | 版本、引擎、设备、设计说明、恢复默认、在线更新及更新源配置 |
+
+任何一项改完立即写入 SharedPreferences；「测试连接」是真实 WSS 登录 + 签名请求，失败会显示原因。
+「在线更新」按确认逐步执行 检查 → 下载 → 安装，支持自定义更新源和镜像前缀。
+
+### 外观模式
+
+提供「影院黑」和「画廊白」两套外观，默认深色；看图、视频播放、屏保和艺术画册始终固定暗场，
+照片才是主角。设计规则与 token 见 [docs/appearance/README.md](docs/appearance/README.md)，
+可交互视觉稿见 [docs/appearance/preview.html](docs/appearance/preview.html)。
 
 ---
 
-## 2. 截图
+## 截图
 
-| 媒体库首页（Hero + 横排） | 相册网格 |
+| 回忆首页 | 相册页面 |
 |---|---|
-| ![媒体库首页](docs/screenshots/01-library.png) | ![相册网格](docs/screenshots/02-album-grid.png) |
+| ![回忆首页](docs/promotion/design-preview-20261105/images/01-home.png) | ![相册页面](docs/promotion/design-preview-20261105/images/05-albums.png) |
 
-| 全屏看图 | 视频播放 |
+| 看图 · 按需浮层 | 视频播放 |
 |---|---|
-| ![全屏看图](docs/screenshots/03-photo-viewer.png) | ![视频播放](docs/screenshots/04-video-player.png) |
+| ![看图](docs/promotion/design-preview-20261105/images/03-viewer.png) | ![视频播放](docs/screenshots/04-video-player.png) |
 
-| 屏保 · 翻页数字 | 屏保 · 巨幕时钟 |
+| 相册集合详情 | 客厅展示相册授权 |
 |---|---|
-| ![屏保翻页数字](docs/screenshots/05-screensaver-flip.png) | ![屏保巨幕时钟](docs/screenshots/06-screensaver-date.png) |
+| ![相册集合](docs/promotion/design-preview-20261105/images/02-collection.png) | ![展示相册授权](docs/promotion/design-preview-20261105/images/04-display-albums.png) |
 
-| 设置页 | |
+| 屏保 · 巨幕时钟 | 文件夹浏览 |
 |---|---|
-| ![设置页](docs/screenshots/07-settings.png) | |
+| ![屏保巨幕时钟](docs/screenshots/06-screensaver-date.png) | ![文件夹浏览](docs/screenshots/08-folder-root-1.2.10.png) |
 
-> 截图位于 `docs/screenshots/`（1920×1080），全部来自连接真实飞牛 NAS 的 Android TV 模拟器实测画面，命名即上表的 `01-library.png` … `07-settings.png`。
-> 摄于 10 月 20 日版本；此后看图页已改为图片优先铺满整屏（信息浮层化）、屏保前景不再显示图片信息，最新布局以 §4 的文字描述为准。
+> 其中 5 张为应用实际渲染的离线设计预览（相册、日期与分组为示例数据），另外 3 张来自连接真实 NAS 的
+> Android TV 模拟器实测。图片拍摄时间早于当前版本，最新布局以代码与上文描述为准。
+> 更多截图（视频旋转、Android 7 兼容、格式兼容等）在 [docs/screenshots/](docs/screenshots/)，
+> 设计预览原图在 [docs/promotion/design-preview-20261105/images/](docs/promotion/design-preview-20261105/images/)。
 
 ---
 
-## 3. 运行环境与构建
+## 构建与安装
 
-### 3.1 环境要求
+### 环境
 
-| 项 | 要求 | 本机实测 |
-|---|---|---|
-| JDK | **17+**（工程 `sourceCompatibility/targetCompatibility = 17`、`jvmTarget = 17`） | JDK 17 (Temurin) 实测通过 |
-| Gradle | 用仓库自带 Wrapper（**8.10.2**），不要用全局 gradle | 已含 `gradle/wrapper/gradle-wrapper.jar` |
-| Android SDK | **compileSdk 35**（platforms;android-35 + build-tools 34/35），路径写在 `local.properties` 的 `sdk.dir` | 已用 build-tools 34/35 实测 |
-| 运行设备 | **Android 7.0（API 24）及以上**；Android TV / Google TV / 电视盒子 / 普通安卓设备；`android.software.leanback` 为 **可选**（required=false），touchscreen 非必需 | Android TV 官方镜像（API 24 / API 36，1920×1080 / density 320）实测通过 |
-
-Manifest 已声明：`leanback` 可选 + `touchscreen` 非必需 + `LEANBACK_LAUNCHER` 与 `LAUNCHER` 双入口、`android:banner`、
-`INTERNET` / `ACCESS_NETWORK_STATE` / `WAKE_LOCK` 权限、`usesCleartextTraffic="true"`、`screenOrientation="landscape"`、
-`launchMode="singleTask"`、`configChanges` 含 `uiMode|screenSize|screenLayout`。
-
-### 3.2 构建
+| 项 | 要求 |
+|---|---|
+| JDK | 17（工程 `sourceCompatibility` / `jvmTarget` = 17） |
+| Gradle | 仓库自带 Wrapper 8.10.2 |
+| Android SDK | compileSdk 35，build-tools 35.0.0；路径写在 `local.properties` 的 `sdk.dir` |
+| 设备 | Android 7.0（API 24）+ 的 Android TV / Google TV / 电视盒子；leanback 与触摸屏均为可选 |
 
 ```bash
-# Debug（推荐）—— Windows 用 gradlew.bat，Linux/macOS 用 ./gradlew
-./gradlew :app:assembleDebug
-# 只验证编译（最快）
-./gradlew :app:compileDebugKotlin
-# Release（未签名、未混淆，仅供体积评估）
-./gradlew :app:assembleRelease
+./gradlew :app:assembleDebug          # Debug APK
+./gradlew :app:compileDebugKotlin     # 只验证编译
+./gradlew :app:assembleRelease        # Release（无正式 keystore 时回退 debug 签名）
 ```
 
-内存受限的机器（如 8 GB NAS / 小主机）建议显式压低堆与并行度，否则 Gradle daemon 可能被 OOM kill：
+产物：`app/build/outputs/apk/debug/app-debug.apk`、`app/build/outputs/apk/release/app-release.apk`。
+内存受限的机器可加 `--no-daemon --no-parallel -Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=512m"`。
+同一时间只跑一个 Gradle，避免构建目录冲突。
+
+### 安装与调试
 
 ```bash
-./gradlew --no-daemon --no-parallel \
-  -Dorg.gradle.jvmargs="-Xmx1536m -XX:MaxMetaspaceSize=512m" :app:assembleDebug
-```
-
-产物路径：
-- Debug：`app/build/outputs/apk/debug/app-debug.apk`
-- Release：`app/build/outputs/apk/release/app-release-unsigned.apk`
-
-> ⚠ 团队协作注意：**同一时刻只跑一个 gradle**（多人/多 Agent 并行编译会争抢 `~/.gradle` 与模块构建目录）。
-> 需要互斥时用一个简单的目录锁（如 `mkdir .buildgate`）串行化，跑完删掉即可。
-
-### 3.3 安装到电视 / 盒子
-
-```bash
-# 第一次连接（电视需在 设置 → 系统 → 开发者选项 中开启 ADB 调试）
-adb connect 192.168.1.50:5555
-adb devices                      # 确认设备状态为 device
-
-# 安装 / 覆盖安装
+adb connect 192.168.1.50:5555         # 电视需开启 ADB 调试
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-
-# 启动
 adb shell am start -n com.nasphoto.tv/.MainActivity
-
-# 遥控器按键（无真机时也能验证焦点导航）
-adb shell input keyevent KEYCODE_DPAD_RIGHT
-adb shell input keyevent KEYCODE_DPAD_CENTER
-
-# 看崩溃日志
-adb logcat -s AndroidRuntime:E
+adb logcat -s AndroidRuntime:E        # 看崩溃日志
 ```
 
-也可以用 U 盘 + 电视自带「文件管理」安装 APK（需允许安装未知来源应用）。
+也可以用 U 盘 + 电视文件管理器安装，需允许安装未知来源应用。
 
-### 3.4 模拟器 / 无头验证
+### 模拟器 / 无头运行
 
-工程自带 `@Preview(widthDp = 1920, heightDp = 1080)`（媒体库/看图/屏保/设置等），
-**最省事的是在 Android Studio 里直接看 Preview**，不依赖任何设备。
+工程自带多个 `@Preview(widthDp = 1920, heightDp = 1080)`，在 Android Studio 里可直接查看。
+推荐 Android TV 镜像（如 `system-images;android-36;android-tv;x86_64`），`tv_1080p` 设备模板；
+验证低版本兼容可用 `system-images;android-24;android-tv;x86`。
 
-> ✅ 自 1.2.12 起 `android.software.leanback` 改为 `required="false"`，**手机 / 平板镜像不再声明 leanback 也能安装**；
-> Android TV 设备仍通过 `LEANBACK_LAUNCHER` 正常进入，横屏 D-Pad 交互不变。
-
-| 场景 | 做法 |
-|---|---|
-| **推荐：Android TV 镜像** | SDK Manager 安装 `system-images;android-36;android-tv;x86_64`（或 android-35 的 TV 版），新建 AVD 时选 `tv_1080p` 设备模板（1920×1080 / density 320 → 960×540 dp；density 160 → 1920×1080 dp，按实际逻辑画布核对布局） |
-| **验证 Android 7.x 兼容性** | `system-images;android-24;android-tv;x86`（1.2.12 已在该镜像实装、启动、UI 复核通过） |
-| **只有手机 AVD** | 1.2.12 起无需改动，直接 `adb install`（leanback 已声明为可选） |
-| **真机电视** | 无需改动，直接安装 |
-
-#### 无头（headless）跑 TV 镜像的四个关键参数
-
-在没有显示器的服务器/NAS 上用 `-no-window` 跑 TV 镜像时，下面四个参数缺一个就会出现**周期性 SIGSEGV（exit 139）**，
-表现为「跑几分钟容器就退出」，很容易被误判成内存不足：
+无显示器的服务器上跑 TV 镜像时，下面几个参数缺一可能导致周期性 SIGSEGV：
 
 ```bash
 emulator -avd tv36 -no-window -no-audio -no-snapshot \
-  -gpu swangle_indirect \      # swiftshader_indirect 在渲染 Compose 模糊/辉光时会崩
-  -feature -ModemSimulator \   # 默认 modem 模拟器会因容器内 IPv6 解析失败而崩
-  -timezone Asia/Shanghai \    # 否则屏保时钟差 8 小时（系统时区为 UTC）
+  -gpu swangle_indirect \
+  -feature -ModemSimulator \
+  -timezone Asia/Shanghai \
   -cores 2 -memory 1536
-# 容器还需 --shm-size=2g：Docker 默认 64MB 不够 1080p 的帧缓冲
+# Docker 容器还需 --shm-size=2g
 ```
-
-#### 用 adb 当遥控器
-
-```bash
-adb shell input keyevent 19   # UP
-adb shell input keyevent 20   # DOWN
-adb shell input keyevent 21   # LEFT
-adb shell input keyevent 22   # RIGHT
-adb shell input keyevent 23   # DPAD_CENTER（确认）
-adb shell input keyevent 4    # BACK
-adb shell input keyevent 127  # MENU
-adb shell input keyevent 88   # MEDIA_NEXT（切下一个视频）
-```
-
-## 4. 遥控器操作总表
-
-通用规则（所有页面）：
-
-| 键 | 行为 |
-|---|---|
-| 方向键 `DPAD_UP/DOWN/LEFT/RIGHT` | 移动焦点（行内左右、跨行上下由页面显式接管，不依赖 Compose 默认顺序） |
-| `DPAD_CENTER` / `ENTER` | 确认（等价，代码里同时处理 `Key.DirectionCenter / Key.Enter / Key.NumPadEnter`） |
-| `BACK` | 返回上一级；在 看图页 / 播放页 / 设置页 = 关闭该页回到媒体库 |
-| 长按 / 双击 | **不支持**（一次性操作直接 ENTER） |
-
-### 4.1 媒体库（首页 / 相册 / 详情）— `ui/library`
-
-| 区域 | 方向键 | ENTER | BACK |
-|---|---|---|---|
-| 顶栏 Tab（全部照片 / 年 · 月 · 日 / 相册 / 人物 / 最近添加 / 收藏 · 回忆） | 左右在 Tab 间移动 | 切换 Tab（并退出相册详情 / 人物详情） | 相册详情、人物详情内 = 回到列表 |
-| 顶栏账号胶囊（圆形首字 + 账号名 + `N 个账号`） | 左右移动 | 进设置页「账号切换」组 | — |
-| 顶栏按钮（搜索 / 屏保 / 设置） | 左右移动 | 搜索 → 切到「全部照片」；屏保 → `AppRoute.ScreensaverPreview`（立即进入屏保）；设置 → `AppRoute.Settings` | — |
-| Tab 按 `DOWN` | 交出焦点给主内容（Hero 优先 / 人物 Tab 落到记住的那张人脸） | — | — |
-| Hero 大图 | 左右无；`DOWN` → 最近添加行 | 打开对应媒体（视频进播放器 / 图片进看图页），上下文标题「全部照片」 | — |
-| 「最近添加」横排（卡片 300×180） | `LEFT/RIGHT` 行内移动；`UP` → Hero；`DOWN` → 相册行**同列**卡片 | 打开（上下文标题「最近添加」） | — |
-| 「相册」横排（卡片 380×220 + 末尾「查看全部相册」） | `LEFT/RIGHT`；`UP` → 最近添加行同列 | 进入相册详情 / 切到「相册」Tab | — |
-| 人物排 / 人物网格（卡片 260×320 / 6 列） | 左右 + 上下；第一排 `UP` → 当前顶栏 Tab | 进入该人物的照片网格 | 人物详情内 = 回人物列表 |
-| 相册网格（4 列） | 左右 + 上下（Compose 默认同列） | 进入相册详情 | 回列表 |
-| 时间线分桶网格（5 列，年 / 月 / 日 三级） | 左右 + 上下 | 下钻一级：年 → 月 → 日 → 当天媒体网格 | 逐级上返（日 → 月 → 年 → 交回外层） |
-| 媒体网格（6 列，最近添加 / 收藏 / 相册详情 / 某一天 / 人物详情） | 左右 + 上下；相册/人物详情第一行 `UP` → 返回按钮 | 图片 → 看图页；视频 → 播放器（上下文标题 = 相册名 / 当天日期 / `人物 · 姓名`） | 相册 / 人物详情内 = 回列表 |
-| 空状态「去设置」按钮 | — | 跳设置页 | — |
-
-### 4.2 全屏看图 — `ui/viewer/PhotoViewerScreen`
-
-布局是**图片优先**：舞台 `fillMaxSize()` + `ContentScale.Fit`，整屏就是画框，竖构图也不会被副框缩小。
-左上角只有 LIVE 徽标常驻；标题、来源、拍摄日期、序号都在 `chromeVisible` 的浮层里，3 秒无操作（或 ENTER 收起）后整屏只剩图片。
-
-| 键 | 焦点在图片区 | 焦点在工具按钮行 / 胶片条 |
-|---|---|---|
-| `LEFT` / `RIGHT` | 上一张 / 下一张（首尾循环，带方向滑动）；放大模式下 = 平移 0.5 倍 | 在按钮/缩略图之间移动 |
-| `UP` | 放大模式下上移；否则展开 / 收起详细信息（尺寸 / 文件 / ID） | 回到图片区（按钮行） |
-| `DOWN` | 进入工具按钮行（并弹出控制栏）；放大模式下下移 | 交给焦点系统 |
-| `ENTER` | 图片：切换控制栏显隐；**视频项**：`onOpenVideo` 进播放器 | 触发该按钮 |
-| `TAB` / `MENU` | 跳到工具按钮行 | — |
-| `PREV/NEXT`（媒体键） | 同 LEFT/RIGHT（Compose 映射为方向键时生效） | — |
-| `PLAY/PAUSE`（媒体键） | 幻灯片播放 / 暂停 | — |
-| 任意方向键 | 立刻暂停幻灯片（同一事件继续执行切换动作） | — |
-| 任意按键（控制栏已隐藏时） | 先显示控制栏，**并继续执行原动作**（不吃键） | — |
-| `BACK` / `ESC` | 关闭看图页回到媒体库 | 同左 |
-
-工具按钮（7 个）：`◀ 上一张` `▶ 下一张` `ⓘ 信息` `★ 收藏` `⏵ 幻灯片` `⛶ 放大查看/适应屏幕` `✕ 关闭`。
-幻灯片每 5 秒自动下一张，右下角显示进度条；控制栏 3 秒无操作自动隐藏（焦点在按钮行时不隐藏）。
-
-### 4.3 视频播放 — `ui/video/VideoPlayerScreen`
-
-形状：**全屏播放**（`Box` 铺满，视频用 `PlayerView` + `RESIZE_MODE_FIT` 自适应），控制层是覆盖在画面上的瞬态浮层。
-
-| 键 | 控制层显示中 | 控制层隐藏时 |
-|---|---|---|
-| `UP` / `DOWN` | 唤出 / 隐藏控制层 | 唤出控制层 |
-| `LEFT` / `RIGHT` | 快退 / 快进 10 秒（并唤出控制层） | 同左 |
-| `ENTER` / `DPAD_CENTER` | 播放 / 暂停 | 播放 / 暂停 |
-| `BACK` / `ESC` | 关闭播放器，返回媒体库 | 同左 |
-| 媒体键 | `PLAY/PAUSE/PLAY_PAUSE` 播放暂停；`NEXT` / `SKIP_FORWARD` 下一个视频；`PREVIOUS` / `SKIP_BACKWARD` 上一个视频 | 同左 |
-| 任意按键 | 每次操作都会重启控制层 3 秒倒计时 | 同上 |
-
-其他行为：
-- 控制层在 **3 秒** 无操作后自动隐藏；
-- 顶部条：标题 + `来自 <contextTitle>` + 右上角 `第 n / m 个`；
-- 底部：进度条（已播放青色）+ 当前时间 / 总时长 + 右侧按键提示；
-- 播完分支：`autoPlayNext && 有下一个` → 自动切下一个；否则停下并显示控制层；
-- **解码失败**：`onPlayerError` 会显示「这个视频无法播放」+ 具体原因（设备解码能力不足 / 格式不支持 / 网络失败 / 文件不存在），并提示可用「下一曲」跳过；这对 4K 60fps HEVC 10bit 等超出电视解码能力的素材尤其重要；
-- 列表里混排图片：进入播放器时若初始项是图片，直接把列表交给图片浏览器（`onOpenPhoto`）；
-- `items` 为空 → 直接 `onClose()`。
-
-### 4.4 屏保待机 — `ui/screensaver/ScreensaverScreen`
-
-| 键 | 行为 |
-|---|---|
-| **任意键**（方向键 / 确认 / BACK / 音量 / 数字键…） | 退出屏保回到媒体库。**第一次按键只退出，绝不触发别的页面动作**（事件被 `onKeyEvent` 返回 `true` 吞掉） |
-| BACK（Activity 级兜底） | 通过 `OnBackPressedDispatcher` 也走 `onExit()`，防止 BACK 漏到外壳退两层 |
-
-进入屏保的方式：① 设置页「预览屏保」；② 顶栏「屏保」按钮；③ **空闲自动进入** —— 外壳每秒检测，
-`SettingsStore.screensaver.enabled == true` 且静止时间 ≥ `idleTimeoutSec`（默认 60 秒）时进入；
-在看图页、播放器、屏保预览路由下不自动进入。
-
-### 4.5 设置 — `ui/settings/SettingsScreen`
-
-布局：顶栏（青点 + `设置` + NAS 胶囊 + 右上角键位提示）→ 左列表（420dp）/ 右面板 → 底部状态条（聚焦行提示 + `分组 · 第 n / 36 项`）。
-**初始焦点落在「屏保」开关**（最常改的一项）；若还没配好 NAS，则直接落在「地址」行。左栏共 5 组 31 行（另 5 个组标题，共 36 行）。
-
-| 键 | 行为 |
-|---|---|
-| `UP` / `DOWN` | 在设置行之间移动（自动滚动保证聚焦行可见） |
-| `LEFT` / `RIGHT` | 行内调值：开关 / 屏保各项循环 / 播放各项 / **账号 ←→ 直接切换**。开关行与值行会**吃掉**左右键，不会跑到右面板 |
-| `ENTER` | 执行：动作行立即执行（测试连接 / 刷新媒体库 / 添加账号 / 删除账号 / 预览屏保 / 设计说明 / 恢复默认）；文本行（名称/地址/端口/账号/密码/访问码/备注名）打开电视键盘输入层；其余行等同于"往后调一格" |
-| `BACK` | 输入层打开时先关输入层；「设计说明」展开时先收回；否则关闭设置页回媒体库 |
-
-五组内容（`SettingsKey`）：
-
-| 组 | 行 |
-|---|---|
-| `NAS 连接` | 名称、地址、端口、账号、密码、访问码、测试连接、刷新媒体库 |
-| `账号切换` | 当前账号（`←/→` 秒切）、备注名、添加账号、删除当前账号（两次确认） |
-| `屏保与待机` | 屏保开关、静止后进入、屏保画面、轮播内容、相册、照片停留、时钟样式、背景、显示日期、夜间自动调暗、Ken Burns 动效、预览屏保 |
-| `视频播放` | 自动连播下一集、循环播放 |
-| `关于` | 版本（1.0.0-prototype）、引擎（Compose）、设备（Android TV）、设计说明（ENTER 展开 5 条设计原则）、恢复默认设置（ENTER 两次确认，3 秒超时） |
-
-右面板随聚焦分组切换：`NAS` → 连接拓扑（电视 ↔ 路由器 ↔ NAS 三个胶囊 + 流动光点连线 + 延迟/抖动/带宽/路径/账号 + 连接串）；`账号` → 账号列表（每人一行：首字头像 + 显示名 + 用户名/访问码 + `使用中`/`待填凭据`/`可切换`/`备用` 状态胶囊 + 底部「切换会清缓存」说明）；`屏保` → 16:9 实时小预览（背景 + 五种时钟小样 + 日期叠加 + 夜间调暗暖色 + Ken Burns 慢缩放；屏保不显示任何图片信息），聚焦「时钟样式 / 背景」行时下方出现可选胶囊条；`播放` → 封面卡 + 参数摘要 + 行为说明；`关于` → Logo + 版本 + 统计 + 设计原则。
-
-> 「测试连接」是**真实** WSS 登录 + 签名请求，成功显示延迟、失败显示原因；改地址/端口/凭据后上一次结果自动失效。`SettingsFeedback` 里的 `nasTesting/nasTestOk/nasTestLatency` 是 UI 状态，不写回 `SettingsStore`。
-
-> **设置随时可改、改完即存**：外壳有 `LaunchedEffect(screensaverSettings, playbackSettings, nas) { SettingsStore.persist() }`，`MainActivity.onCreate` 里有 `SettingsStore.restore()`。任何一项（含账号列表、星标分区）改完立即落盘，`BACK` 出设置页再进、甚至杀进程重进都保持。
 
 ---
 
-## 5. 目录结构
+## 遥控器操作
+
+| 键 | 通用行为 |
+|---|---|
+| `DPAD_UP/DOWN/LEFT/RIGHT` | 移动焦点；行内左右、跨行上下由页面显式接管 |
+| `DPAD_CENTER` / `ENTER` | 确认 |
+| `BACK` | 返回上一级；看图 / 播放 / 设置页内为关闭 |
+| 长按 / 双击 / 手势 | 不支持 |
+
+- **媒体库**：Tab 左右移动，`DOWN` 进入内容；`LEFT/RIGHT` 在横排或网格内移动，`UP/DOWN` 跨行；
+  相册、人物详情里 `BACK` 回列表。
+- **看图**：`LEFT/RIGHT` 切上一张 / 下一张；`UP` 展开详细信息；`DOWN` 进入工具行；
+  `ENTER` 切换控制栏；媒体键 `PLAY/PAUSE` 控制幻灯片；`BACK` 关闭。
+- **播放器**：`UP/DOWN` 唤出 / 隐藏控制层；`LEFT/RIGHT` ±10 秒；`ENTER` 播放 / 暂停；
+  媒体键切上一集 / 下一集；`MENU` 临时旋转画面；`BACK` 关闭。
+- **屏保**：任意键退出，第一次按键只退出，不触发下层页面动作。
+- **设置**：`UP/DOWN` 移动行；`LEFT/RIGHT` 调值（账号行可直接切换）；`ENTER` 执行动作或打开输入层；`BACK` 关闭。
+
+---
+
+## 目录结构
 
 ```
 <仓库根目录>
-├─ CONTRACT.md                     团队协作契约（只读参考）
-├─ README.md                       本文
-├─ DESIGN.md                       设计规范（token / 布局 / 焦点 / 屏保 / 动效 / 可访问性）
+├─ README.md / LICENSE / NOTICE / CONTRACT.md / DESIGN.md
 ├─ docs/
-│  ├─ acceptance.md                验收清单（按页面勾选）
-│  └─ screenshots/                 截图（01-library.png … 07-settings.png）
-├─ media_samples/                  素材源文件（1920×1080 jpg，由 tools/gen_assets.py 生成）
-├─ tools/gen_assets.py             占位素材生成脚本（Pillow）：media_samples/*.jpg + res/raw/* + 启动图/图标
-├─ build.gradle.kts                插件版本（AGP 8.7.3 / Kotlin 2.0.21 / compose plugin）
-├─ settings.gradle.kts             仓库配置（google + mavenCentral，FAIL_ON_PROJECT_REPOS）
-├─ gradle.properties               JVM 3G / 开启 parallel + caching
-├─ local.properties                sdk.dir（本机）
-└─ app/
-   ├─ build.gradle.kts             minSdk 24（Android 7.0）/ target 34 / compile 35 / Compose BOM 2024.12.01
-   └─ src/main/
-      ├─ AndroidManifest.xml       leanback + 双入口 + banner
-      ├─ res/raw/                  9 张占位图：wall_aurora / wall_sunset / wall_ocean / wall_forest / wall_mono / wall_candy / video_mountain / video_city / video_family
-      ├─ res/drawable/             app_banner.png(320×180)、app_icon.png(288×288)
-      ├─ res/values/               strings.xml（app_name = "NAS 相册 TV"）、themes.xml（NoActionBar + 黑底 + 边到边）
-      └─ java/com/nasphoto/tv/
-         ├─ MainActivity.kt                      单 Activity：沉浸式全屏 + FLAG_KEEP_SCREEN_ON + 按键时间戳
-         │
-         ├─ ui/                                  ── UI 层 ──
-         │  ├─ NasPhotoTvApp.kt                  外壳：路由 / 屏保空闲检测 / 页面切换（交叉淡入）
-         │  ├─ TvContract.kt                     AppRoute、LibraryState、ViewerRequest、PlayerRequest
-         │  ├─ theme/Tokens.kt                   ★ 设计 token：TvColor / TvDimen / TvType
-         │  ├─ theme/Theme.kt                    NasPhotoTvTheme、TvShapes、M3 ColorScheme/Typography 映射
-         │  ├─ common/MediaImage.kt              MediaImage(url, …)：统一媒体加载 + 渐变占位
-         │  ├─ common/FocusCard.kt               FocusCard：放大 + 白描边 + 青光晕（看图/播放器在用）
-         │  ├─ library/LibraryScreen.kt          媒体库六个 Tab（含年·月·日三级下钻）+ 相册详情 + 人物详情 + 页面级空状态
-         │  ├─ library/LibraryComponents.kt      顶栏（含账号胶囊）/ 区块标题 / Hero / 媒体卡片 / 相册卡片 / 时间线分桶卡片 / 空状态 / 返回头
-         │  ├─ library/PeopleTab.kt             人物 Tab：人物卡片（首字头像兜底）、一排 6 张→6 列网格、加载/空态
-         │  ├─ library/LibraryFocus.kt           TvFocusBox、PendingFocus、scrollRowTo/scrollGridTo、GridContentPadding
-         │  ├─ library/LibraryData.kt            LibraryTab 枚举、HeroInfo、ChronoBucket（年/月/日分桶）、空安全派生与格式化
-         │  ├─ viewer/PhotoViewerScreen.kt       全屏看图（状态机 + 按键 + 全屏舞台 + 幻灯片）
-         │  ├─ viewer/ViewerState.kt             PhotoViewerState：切换/控制栏/收藏/缩放平移/幻灯片
-         │  ├─ viewer/ViewerToolBar.kt           7 个工具按钮 + KeyHint 键位胶囊
-         │  ├─ viewer/ViewerInfoBar.kt           左上瞬态浮层 HUD（LIVE 徽标 + 来源/拍摄/标题/序号）+ 缩略图胶片条
-         │  ├─ video/VideoPlayerScreen.kt        播放器页：全屏 Media3 播放 + 顶部标题条 + 底部进度/播放键 + 解码失败提示
-         │  ├─ screensaver/ScreensaverScreen.kt  屏保入口：背景/遮罩/防烧屏容器/时钟前景/按键退出（不显示图片信息）
-         │  ├─ screensaver/ScreensaverClock.kt   5 种时钟 + GlassCard + EntranceFade
-         │  ├─ screensaver/ScreensaverBackground.kt 照片轮播 + Ken Burns、极光、纯黑、可读性遮罩
-         │  ├─ screensaver/ScreensaverState.kt   每秒时钟、中文日期/星期/农历干支、tabular 数字样式
-         │  └─ settings/
-         │     ├─ SettingsScreen.kt              页面骨架：顶栏 / 左列表 / 右面板 / 底部状态条 / 按键分发
-         │     ├─ SettingsModel.kt               SettingsGroup / SettingsKey（24 行）/ SettingsActions / SettingsFeedback
-         │     ├─ SettingsRow.kt                 一行设置项 + 组标题 + 值文本/开关态判定
-         │     ├─ SettingsFocusRow.kt            可聚焦行（高 62dp、放大 1.02、白 3dp 描边、左右调值）
-         │     ├─ SettingsChips.kt               值胶囊 / 静态胶囊 / TvSwitch / 进度条 / ‹ › 字形
-         │     └─ SettingsNasPanel / SettingsAccountPanel / SettingsScreensaverPanel /
-         │        SettingsPlaybackPanel / SettingsAboutPanel.kt  右栏五个面板
-         │
-         └─ data/                                ── 数据层 ──
-            ├─ model/Models.kt                   ★ MediaItem / Album / AlbumType / MediaType / NasConnection /
-            │                                       NasAccount / Person / ScreensaverSettings / PlaybackSettings
-            ├─ MediaRepository.kt                ★ 仓库接口（唯一需要替换的抽象边界）
-            ├─ FnOsMediaRepository.kt            真实飞牛相册实现（时间线/相册/人物/视频串流）
-            ├─ SettingsStore.kt                  ★ 全局设置（Compose State）+ cycle* 便捷方法 + SharedPreferences persist/restore
-            ├─ MediaCache.kt                    最近一次拉取快照（设置页屏保预览/播放摘要读它）
-            ├─ FavoritesStore.kt                收藏（SharedPreferences，按账号分区，见 §8）
-            ├─ AppContextHolder.kt              全局 applicationContext
-            └─ fn/
-               ├─ FnOsApi.kt                    WSS 握手 + 加密登录 + 签名请求
-               ├─ FnOsTransport.kt              OkHttp 单例（TLS/TOFU/cookie/token 注入）+ ExoPlayer 数据源
-               ├─ FnOsCrypto.kt FnOsSigner.kt FnOsReqId.kt   加密/签名/reqid
-               ├─ FnOsTofu.kt                   首次信任 + 指纹变化检测
-               └─ LanNasDiscovery.kt            局域网 /24 扫描 + 证书识别
+│  ├─ acceptance.md                  验收清单
+│  ├─ appearance/                    浅色 / 深色外观设计与 token、视觉稿
+│  ├─ screenshots/                   实测截图
+│  └─ releases/                      各版本发布说明
+├─ apple/NasPhotoTV/                 tvOS 客户端（SwiftUI）
+├─ media_samples/                    示例图片素材
+├─ tools/gen_assets.py               素材生成脚本（需 Pillow）
+└─ app/src/main/
+   ├─ AndroidManifest.xml            单 Activity、双启动入口、leanback 可选
+   ├─ java/com/nasphoto/tv/
+   │  ├─ MainActivity.kt             沉浸式全屏 + 全局按键时间戳
+   │  ├─ ui/
+   │  │  ├─ NasPhotoTvApp.kt         路由 / 外壳 / 空闲屏保 / 页面切换
+   │  │  ├─ TvContract.kt            AppRoute、LibraryState、请求模型
+   │  │  ├─ theme/                   TvColor / TvDimen / TvType、Appearance、M3 主题、焦点环
+   │  │  ├─ common/                  媒体加载、焦点卡、空闲守卫、幻灯片音乐
+   │  │  ├─ connection/              首次连接页与手动配置表单
+   │  │  ├─ library/                 首页 / 时间线 / 相册 / 文件夹 / 人物 / 地点 / 收藏
+   │  │  ├─ viewer/                  看图、信息浮层、工具条、换片效果
+   │  │  ├─ video/                   播放器、解码能力探测、缓冲计划
+   │  │  ├─ screensaver/             屏保入口、时钟、背景、照片墙、状态工具
+   │  │  ├─ settings/                设置页、7 组设置行与各右栏面板
+   │  │  ├─ transfer/                手机传图页
+   │  │  └─ book/                    艺术画册
+   │  └─ data/
+   │     ├─ fn/                      飞牛登录 / 签名 / 传输 / TOFU / 局域网发现
+   │     ├─ model/                   数据模型
+   │     └─ ...                      仓库、缓存、收藏、设置、放映、地图、上传、更新等
+   └─ res/                           主题、字符串、图标、横幅、放映预览图
 ```
-
-★ = 公共基础文件（契约规定不要改），也是接入真实 NAS 时真正要动的边界。
-
-### 5.1 页面之间的跳转关系
-
-```
-                 ┌──────────────── NasPhotoTvApp (外壳: route + viewer + player) ────────────────┐
-                 │                                                                            │
-  空闲 ≥ idleTimeoutSec │ 顶栏「屏保」按钮                                              │
-                 ▼                           ▼                                                │
-          ScreensaverScreen ◄── 预览屏保 ── LibraryScreen ──ENTER 图片──► PhotoViewerScreen      │
-                 │                           ▲   │                          │  │               │
-                 │ 任意键                     │   └──ENTER 视频──► VideoPlayerScreen ◄──ENTER 视频项
-                 └──────────────► 回到媒体库    │            ◄─ onOpenPhoto ─┘  (= onOpenVideo)  │
-                                             └──────────── SettingsScreen ───────────────────────┘
-                                                            BACK / onOpenLibrary
-```
-
-- 路由是朴素的 `when(route)` + 三个状态（`route` / `ViewerRequest?` / `PlayerRequest?`），没有 navigation-compose；
-- 页面切换用 `AnimatedContent` + `fadeIn(220) / fadeOut(160)`；
-- 进入看图页 / 播放器 / 屏保后，外壳的空闲计时**不触发**屏保（`player == null && viewer == null`）。
 
 ---
 
-## 6. 真实 NAS 接入状态（已实现）
-
-> 本章原为「接入路线图」，数据层与播放层现已全部落地，故改写为**实现说明**。
-
-### 6.1 已实现
+## NAS 接入
 
 | 能力 | 位置 | 说明 |
 |---|---|---|
-| 局域网自动发现 | `data/fn/LanNasDiscovery.kt` | 扫本机所在 /24 网段的 5667 端口，按 TLS 证书里的 `O=fnOS` 识别飞牛设备（兼容自签证书），只读证书不发凭据 |
-| WSS 加密登录 | `data/fn/FnOsApi.kt` | `wss://<host>:5667/websocket?type=main` → `util.crypto.getRSAPub` 取 RSA 公钥与 `si` → AES-CBC 加密 `user.login` → 拿 AccessToken |
-| 签名 HTTP | `data/fn/FnOsSigner.kt` `FnOsCrypto.kt` `FnOsReqId.kt` | 每个业务请求带签名与递增 reqid |
-| TOFU 证书信任 | `data/fn/FnOsTofu.kt` | 首次见到的证书指纹落盘，变化时提示并可重试 |
-| AccessToken 注入 | `data/fn/FnOsTransport.kt` | OkHttp 拦截器统一注入；Coil 图片与 ExoPlayer 视频共用同一客户端 |
-| 相册数据 | `data/FnOsMediaRepository.kt` | 时间线 `gallery/getList`、相册 `album/list` + `album/photos`、共享相册、视频串流 `/p/api/v1/stream/v/<id>` |
-| 人物数据 | `data/FnOsMediaRepository.kt` | `ai-person/list`（过滤 `isHide==1`、字段名多版本兜底）→ `getPeople()`；人物照片走 `ai-person` 的 photoLibrary 系列接口按天拉取（`getPersonPhotos(id)` / 屏保用的 `getPeoplePhotos()`）；NAS 未开 AI 相册时返回空 |
-| 真实解码 | `ui/video/VideoPlayerScreen.kt` | Media3 ExoPlayer + 带 token 的 OkHttp 数据源；解码失败显示可见原因 |
-| 多账号登录 | `data/SettingsStore.kt` `data/model/Models.kt` | `NasConnection.accounts: List<NasAccount>` + `activeAccountId`；`switchAccount/addAccount/removeAccount`；切号时重建仓库 + 清缓存 + 清 token + 按账号重载星标（详见 §4.5 与 §7 P0） |
-
-### 6.2 尚未实现（详见 §8）
-
-- 4K / 10bit / 高帧率素材的自动降级或 NAS 端转码请求；
-- 字幕文件解析（`.srt/.ass`）；
-- 搜索输入界面；
-- 多台 NAS / 跨设备共享照片（同一台 NAS 上的多账号已支持）。
-
-## 7. 量产改造清单
-
-> 以下是"原型 → 可发布产品"的差距清单，按优先级排列；每条都标了动哪一层。
-
-### P0 · 必须做（不做就是 demo）
-
-| 项 | 现状 | 改造方案 | 动的层 |
-|---|---|---|---|
-| **空闲检测** | 外壳用 `System.currentTimeMillis()` + `View.OnKeyListener` 记录最后按键，每秒轮询 | ① 改用 `MainActivity.dispatchKeyEvent` 已有的时间戳 + `onUserInteraction()` + `View.OnGenericMotionListener`（遥控器鼠标/手柄）；② 加入 `PowerManager.isInteractive` 判断，屏幕熄灭时不算空闲（或直接进屏保）；③ 用协程 `select` 替代 1 秒轮询；④ 遮罩：播放视频/幻灯片时不进屏保 | Activity + 外壳 |
-| **真实数据** | ✅ 已接入飞牛相册（WSS 登录 + 签名 HTTP） | 完成 | data |
-| **真实解码** | ✅ 已接入 Media3 ExoPlayer | 补 4K/10bit 素材的降级与转码 | video |
-| **设置持久化** | ✅ 已打通：`MainActivity.onCreate` 调 `SettingsStore.restore()` + `FavoritesStore.restore()`，外壳每个设置变更都 `LaunchedEffect(screensaverSettings, playbackSettings, nas) { SettingsStore.persist() }` 立刻落盘；设置页任何一项随时可改、改完即存、重启仍在 | 量产再补「切后台时落盘」作为双保险（当前是变更即写，已足够） | 外壳 |
-| **多账号隔离** | ✅ 同一台飞牛 NAS 上可保存多个账号并在设置里 ←→ 秒切；切号时重建仓库（`activeAccountId` 进 `remember` key）、清 `MediaCache`、清 Coil 内存/磁盘缓存、清 `FnOsTransport.token`、按账号重载星标分区 | 量产可补「每个账号独立缩略图缓存命名空间」（当前是直接清空，切换后首屏要重新解码） | 外壳 + data |
-| **崩溃与空态** | 已处理大部分空列表 | 给 `NasException` 类错误配 UI 提示 + 重试按钮；NAS 断线时屏保要退回「极光动态」而不是黑屏 | 各页 |
-
-### P1 · 体验（决定"值不值得留在客厅"）
-
-| 项 | 建议 |
-|---|---|
-| **Android TV Daydream（DreamService）** | 原型屏保是 App 内的 Compose 页面。要做到"电视待机自动起屏保"，两条路：① **合规路线**：实现 `DreamService`（`<service android:name=".PhotoDream" android:permission="android.permission.BIND_DREAM_SERVICE">` + `<intent-filter><action android:name="android.service.dreams.DreamService"/></intent-filter>`），在 `onAttachedToWindow` 里用 `setContent { ScreensaverScreen(...) }` 复用现有 Composable（**屏保页面本身不用改**，只要把 `onExit → finish()`）；用户/厂商在系统「屏保」设置里选中本 App，就能在熄屏→待机时自动出现。② **自家设备路线**：TV 厂商把 `DreamService` 设为出厂默认屏保，或盒子侧用 `ACTION_DREAM` 白名单。注意：DreamService 有 `setInteractive(false)`、`setFullscreen(true)`、`setScreenBright(false)` 等选项；进入 Dream 需要系统处于"Daydream 可用"状态（部分国产 TV 系统会裁剪）。 |
-| **防烧屏** | 现有：像素位移 ±8dp / 2 分钟、夜间呼吸 alpha 0.90~1.00（15s 单程）、文字白色 90%、无纯白大面积、背景压暗 30~45%、极光星点不闪。可加强：① 长时间（>2h）后降低整体亮度 10~15%；② 每 30 分钟做一次 3~5 分钟的"文字整体淡出→只留背景"；③ OLED 电视遵循厂商 API（如 `Display.getHdrCapabilities`/厂商私有亮度接口）；④ 时钟/天气按 StandBy 式在 1/2/3 个布局间**换位**，而不是只在原地抖 8dp。 |
-| **低功耗** | 屏保常驻必须做到：① 屏保期间不跑每秒一帧的无限动画（现有 `rememberInfiniteTransition` 会跟 Choreographer 走，被系统暂停时自动冻结，已经是好的基础）；② 时钟只在秒变化的 Text 重组（`ClockParts` 已分层）；③ 背景照片每 10s 才换，Ken Burns 26s 单程；④ `WAKE_LOCK` 目前没用上，用 `FLAG_KEEP_SCREEN_ON` 足够；⑤ 关掉不必要的 `requestAnimationFrame`，屏幕变暗后降帧。 |
-| **开机自启 / 默认启动器** | 客厅设备通常需要"开机即相框"：① TV 厂商预装可以把 App 设为 `HOME`（需要 `<category android:name="android.intent.category.HOME"/>`）；② 普通 Android TV 用 `BOOT_COMPLETED` 广播 + 前台服务拉起（需 `RECEIVE_BOOT_COMPLETED` 权限，Google TV 对后台启动有额外限制）；③ 用 `android.intent.action.MAIN` + `singleTask` 已有，只需加自启；④ 注意 Google Play 对 `HOME`/自启动的政策要求。 |
-| **跨 NAS 共享照片（家庭共享）** | 已实现「同一台 NAS 的多个飞牛账号在设置里切换」（`NasConnection.accounts` + `activeAccountId`）：每人的账号看自己的相册，切号即清缓存、重登、重载星标。**尚未实现**的是「多台不同 NAS / 家人把自己的 NAS 加入这台电视」——那需要设备发现 + 授权码 + 权限模型，属于跨设备共享，和账号切换不是一回事。 |
-| **隐私（家庭照片上云）** | 这是本品最核心的信任点：① 所有数据**端到端留在局域网**，不做任何云端索引/上传；② 联网仅用于天气（可关，`showWeather`）与自动更新；③ 天气接口要用明文隐私说明（城市级定位或手填城市，避免精确定位）；④ 卸载/换机提供"清除本地缓存与凭据"入口；⑤ 若做远程访问（外网看家里照片），必须显式开启 + 二次确认。 |
-| **性能（4K 电视）** | 4K 面板 + 内存小的盒子是最大风险：① **永远不要原图直读全屏**：列表用 320px 缩略图、看图用 1280~1920px、屏保用 1280px（现有 `MediaItem`/`MediaImage` 已带 `targetWidth` 分级，保持这个约束）；② `BitmapFactory`/Coil 都做 `inSampleSize`，并限制位图缓存上限；③ 预取：屏保下一张提前 1 个间隔解码；胶片条按可见范围预取；④ 帧率：屏保动画目标 30fps（10-foot UI 不需要 60）；⑤ 冷启动 < 2s：先渲染缓存快照。 |
-
-### P2 · 工程化
-
-- 单元测试：`PhotoViewerState` / `VideoPlayerState`（纯 Kotlin 状态机，最好测）、`LibraryData` 派生逻辑、`lunarLabel`；
-- UI 测试：`compose-ui-test` 的 `performKeyInput` 覆盖遥控器路径（可用 `createAndroidComposeRule` + 1920×1080）；
-- 基线：`baseline-profile` + `startup` profile；
-- CI：`assembleDebug` + `compileDebugKotlin` + lint + 截图对比（Paparazzi/Roborazzi）；
-- 文案外置：现在所有中文直接写死（原型有意为之），量产抽 `strings.xml` + 多语言；
-- 无障碍：TalkBack 的 `contentDescription` 已部分具备，需补齐卡片/按钮语义与焦点顺序。
+| 局域网自动发现 | `data/fn/LanNasDiscovery.kt` | 扫描本机 /24 网段的 5667 端口，按 TLS 证书识别飞牛设备 |
+| WSS 加密登录 | `data/fn/FnOsApi.kt` | RSA 公钥 + AES-CBC 加密凭据，换取 AccessToken |
+| 签名 HTTP | `data/fn/FnOsSigner.kt` 等 | 业务请求带 `authx` 签名与递增 reqid |
+| TOFU 证书信任 | `data/fn/FnOsTofu.kt` | 首次证书指纹落盘，变化时提示 |
+| Token 注入 | `data/fn/FnOsTransport.kt` | OkHttp 拦截器统一注入；Coil 图片与 ExoPlayer 共用客户端 |
+| 相册与时间线 | `data/FnOsMediaRepository.kt` | 时间线、相册、共享相册、原片串流 |
+| 文件夹 / 人物 / 地点 | `FnOsFolders.kt` `FnOsSmartAlbums.kt` `FnOsMapPlaces.kt` | 分层目录、人脸聚类、地图聚合与按区域分页 |
+| 多账号 | `data/SettingsStore.kt` | 同一台 NAS 多账号切换；切号重建仓库、清缓存、重载收藏 |
+| 在线更新 | `data/AppUpdate.kt` | GitHub latest API（可换镜像），手动确认下载与安装 |
 
 ---
 
-## 8. 已知限制（原型**没有**做的事）
+## 已知限制
 
-> 数据层已接入真实飞牛相册（WSS 加密登录 + 签名 HTTP + AccessToken 注入），
-> 下表只列**仍未实现**的能力。原「全部 Mock」时期的条目已作废。
-
-| # | 限制 | 说明 / 影响 |
-|---|---|---|
-| 1 | **4K / 10bit / 高帧率视频可能无法播放** | 素材直接来自相机/无人机原片。实测 DJI 4K 60fps HEVC 10bit 在模拟器与部分电视盒子上被判 `NO_EXCEEDS_CAPABILITIES`。已加 `onPlayerError` 提示与「下一曲」跳过，但**没有自动转码或降级选流**。 |
-| 2 | **没有字幕文件** | 字幕开关只显示一条写死的中文样片，不解析 `.srt/.ass`。 |
-| 3 | **没有 HEIC 解码（API 26/27）** | 低版本 Android 无系统 HEIC 解码器；RAW 走 NAS 生成的高清 JPG 预览规避。 |
-| 4 | **收藏只在单机、按账号分区** | 星标写在 `SharedPreferences`（`FavoritesStore`，key 前缀 `ids_<accountId>`），跨启动保留、按账号隔离；但**不跨设备同步**，也没有 NAS 侧的收藏增删接口（fnOS 未提供，等接口确认后在 `toggle()` 里补双写即可）。 |
-| 5 | **没有搜索输入 UI** | 顶栏「搜索」只会切到「全部照片」Tab；`MediaRepository.search()` 已实现但无电视端输入界面。 |
-| 6 | **「人物」依赖 NAS 侧 AI 聚类** | 「人物」Tab 读 `ai-person/list`，NAS 未开启「AI 相册 / 人脸识别」时列表为空 —— 此时显示空态并提示去 NAS 开启，不会白屏。人物的封面、姓名、张数都做了字段兜底（字段名各版本不一致），缺失时画首字头像。地点/回忆仍是 `收藏 · 回忆` Tab 里的横排占位。 |
-| 7 | **农历是近似值** | `lunarLabel` 以锚点推算，远日期有偏差。 |
-| 8 | **天气是本地假数据** | `MockWeatherProvider` 按小时轮换预置天气，不请求网络。 |
-| 9 | **不支持长按/双击/手势** | 看图页无双指缩放/旋转/滑动翻页（遥控器 2× 放大 + 方向键平移代替）。 |
-| 10 | **不扫码 / 不投屏 / 不分享** | 无手机端配网、无 DLNA 投屏出口。 |
-| 11 | **性能只验证到 1080p** | 尺寸按 1920×1080 设计；4K 面板未实测。 |
-| 12 | **播放设置里的「转码」只是展示** | `transcode` 只影响角标文案，不真正请求 NAS 转码流。 |
-
-### 本轮文档实测到的环境事实
-
-- **本次实测环境（Linux / 飞牛 fnOS）**：JDK 17 (Temurin) + Gradle 8.10.2 + AGP 8.7.3 + compileSdk 35 + build-tools 34/35；
-- debug APK 已成功产出（`app/build/outputs/apk/debug/app-debug.apk`，约 21 MB）；
-- 运行环境：Android TV 官方系统镜像 `system-images;android-36;android-tv;x86_64`（Android 16、`sdk_google_atv64_x86_64`、1920×1080 / density 320），
-  在 Docker + KVM 中无头运行（`-no-window`），通过 `adb` 驱动遥控器按键；
-- **模拟器稳定性关键参数**（缺一会周期性 SIGSEGV）：
-  `-gpu swangle_indirect`（`swiftshader_indirect` 在渲染 Compose 模糊/辉光时会崩）、
-  `-feature -ModemSimulator`（默认 modem 模拟器会因容器内 IPv6 解析失败而崩）、
-  `--shm-size=2g`（Docker 默认 64MB 不够 1080p 帧缓冲）、`-timezone Asia/Shanghai`；
-- **已用真实 NAS 数据跑通**：登录 → 时间线（9 个年份 / 2470 项）→ 年/月/日四级下钻 → 相册（33 个文件夹）→ 全屏看图 → 屏保待机 → 设置页；
-- 已知差异：本机 NAS 视频素材为 DJI 4K 60fps HEVC 10bit，超出模拟器解码能力，故视频「播放」未取得真实画面，
-  但解码器启动、错误提示、切换视频三条路径均已验证。
+- **视频解码依赖设备能力**：4K / 10bit / 高帧率原片可能超出电视解码能力；已提供错误提示与「下一曲」跳过，但没有自动转码或降级选流。
+- **不解析字幕文件**：没有 `.srt` / `.ass` 字幕支持。
+- **无搜索输入界面**：没有电视端键盘搜索页；目录浏览与时间线是主要检索方式。
+- **屏保是 App 内页面**：未实现系统级 `DreamService`，不能由系统待机直接唤起。
+- **仅支持同一台 NAS 的多账号**：跨多台 NAS 的家庭共享需要设备授权与权限模型，尚未实现。
+- **收藏只存本机**：按账号分区保存在 SharedPreferences，不写回 NAS、不跨设备同步。
+- **农历为近似值**：年干支准确，农历日期使用内置锚点推算，远日期可能有偏差。
+- **部分格式依赖系统 / NAS 兼容**：HEIC、等特殊格式在低版本 Android 上依赖系统解码器或 NAS 生成的预览。
+- **4K 面板未完整实测**：布局按 1920×1080 设计，高密度屏幕经归一化适配，性能与画质未做全机型验收。
 
 ---
 
-## 9. 相关文档
+## 相关文档
 
 | 文档 | 内容 |
 |---|---|
-| [CONTRACT.md](CONTRACT.md) | 团队协作契约：代码所有权、公共 API、遥控器交互规范、编译方式 |
-| [DESIGN.md](DESIGN.md) | 设计规范：设计原则、**完整设计 token 表**、六个页面的 ASCII 结构图（含尺寸）、焦点规范、屏保设计（StandBy 对应关系 + 防烧屏）、动效规范、可访问性 |
-| [docs/acceptance.md](docs/acceptance.md) | 验收清单：按页面列出的可勾选检查项（含空态/边界/防烧屏/遥控器全路径） |
-| [tools/gen_assets.py](tools/gen_assets.py) | 占位素材生成脚本（`python tools/gen_assets.py`，需要 Pillow） |
+| [CONTRACT.md](CONTRACT.md) | 团队协作契约：公共文件、遥控器交互、编译约定 |
+| [DESIGN.md](DESIGN.md) | 设计规范：token、布局、焦点、屏保、动效、可访问性 |
+| [docs/acceptance.md](docs/acceptance.md) | 按页面列出的验收清单 |
+| [docs/appearance/](docs/appearance/) | 浅色 / 深色外观规范、token 导出与交互视觉稿 |
+| [apple/README.md](apple/README.md) | tvOS 版本构建、签名与分发说明 |
+| [docs/releases/](docs/releases/) | 历史发布说明 |
+| [tools/gen_assets.py](tools/gen_assets.py) | 示例素材生成脚本 |

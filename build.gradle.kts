@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 SMTM-PH and NasPhotoTV contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 // Top-level build file
 plugins {
     id("com.android.application") version "8.7.3" apply false

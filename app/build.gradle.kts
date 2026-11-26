@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 SMTM-PH and NasPhotoTV contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")

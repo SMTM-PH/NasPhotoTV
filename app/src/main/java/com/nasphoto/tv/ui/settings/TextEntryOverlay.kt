@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 SMTM-PH and NasPhotoTV contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 @file:Suppress("KDocUnresolvedReference")
 
 package com.nasphoto.tv.ui.settings

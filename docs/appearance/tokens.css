@@ -1,0 +1,99 @@
+/* ============================================================
+ * NAS Photo TV · Appearance Tokens
+ * Dark  = 影院黑 Cinema (default, shipped values)
+ * Light = 画廊白 Gallery
+ * Scope: set data-mode="light" on any subtree to switch.
+ * Cinema-panel / scrim are shared constants (overlays on photos).
+ * Stage is a normal semantic surface that flips; photo viewer / player /
+ * screensaver force the dark palette so their stage stays #0B202F.
+ * Generated from docs/appearance/README.md — keep in sync.
+ * ============================================================ */
+
+:root,
+[data-mode="dark"] {
+  /* surfaces */
+  --tv-bg: #06131e;
+  --tv-bg-elevated: #12141b;
+  --tv-surface: #1a1d26;
+  --tv-surface-high: #252935;
+  --tv-surface-glass: rgba(255, 255, 255, 0.40);
+  --tv-surface-soft: #122a3a;
+  --tv-divider: rgba(255, 255, 255, 0.12);
+
+  /* text */
+  --tv-text-primary: #f5f7fa;
+  --tv-text-secondary: #a9b0be;
+  --tv-text-tertiary: #8c97a8;
+  --tv-text-muted: #8d9aa8;
+  --tv-warm: #cdba98;
+  --tv-ink-on-accent: #002232;
+
+  /* brand */
+  --tv-accent: #31b6ed;
+  --tv-accent-dim: rgba(49, 182, 237, 0.20);
+  --tv-accent-alt: #5b8cff;
+  --tv-accent-alt-dim: rgba(91, 140, 255, 0.20);
+  --tv-danger: #ff6b6b;
+  --tv-warn: #ffc857;
+
+  /* focus */
+  --tv-focus-ring: #ffffff;
+  --tv-focus-ring-glow: rgba(49, 182, 237, 0.50);
+
+  /* fixed dark stage — identical in both modes */
+  --tv-stage: #0b202f;
+  --tv-cinema-panel: rgba(8, 29, 43, 0.80);
+  --tv-scrim-top: rgba(0, 0, 0, 0.70);
+  --tv-scrim-bottom: rgba(0, 0, 0, 0.85);
+  --tv-time-white: rgba(245, 247, 250, 0.90);
+
+  /* elevation cues */
+  --tv-card-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  --tv-focus-shadow: 0 0 28px var(--tv-focus-ring-glow);
+}
+
+[data-mode="light"] {
+  /* surfaces */
+  --tv-bg: #e9eef4;
+  --tv-bg-elevated: #f3f6fa;
+  --tv-surface: #ffffff;
+  --tv-surface-high: #dde5ee;
+  --tv-surface-glass: rgba(255, 255, 255, 0.70);
+  --tv-surface-soft: #d7e6f1;
+  --tv-divider: rgba(18, 38, 58, 0.12);
+
+  /* text */
+  --tv-text-primary: #0e1a28;
+  --tv-text-secondary: #44566b;
+  --tv-text-tertiary: #546579;
+  --tv-text-muted: #516376;
+  --tv-warm: #755a34;
+  --tv-ink-on-accent: #ffffff;
+
+  /* brand (deepened for >=4.5:1 on light surfaces) */
+  --tv-accent: #096494;
+  --tv-accent-dim: rgba(9, 100, 148, 0.12);
+  --tv-accent-alt: #3557b8;
+  --tv-accent-alt-dim: rgba(53, 87, 184, 0.12);
+  --tv-danger: #af2e26;
+  --tv-warn: #8a5700;
+
+  /* focus: white ring would vanish -> ink-blue ring + soft shadow */
+  --tv-focus-ring: #0b3a5c;
+  --tv-focus-ring-glow: rgba(11, 58, 92, 0.20);
+
+  /* browsing panel surface — flips with the mode */
+  --tv-stage: #dde7f0;
+  /* overlays on photos — unchanged (fixed dark stage) */
+  --tv-cinema-panel: rgba(8, 29, 43, 0.80);
+  --tv-scrim-top: rgba(0, 0, 0, 0.70);
+  --tv-scrim-bottom: rgba(0, 0, 0, 0.85);
+  --tv-time-white: rgba(245, 247, 250, 0.90);
+
+  --tv-card-shadow: 0 14px 36px rgba(11, 33, 58, 0.14);
+  --tv-focus-shadow: 0 10px 30px var(--tv-focus-ring-glow);
+}
+
+/* Convenience: apply to the whole document with <html data-mode="light"> */
+html[data-mode="light"] body { background: var(--tv-bg); color: var(--tv-text-primary); }
+html[data-mode="dark"]  body { background: var(--tv-bg); color: var(--tv-text-primary); }

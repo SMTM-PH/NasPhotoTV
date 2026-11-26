@@ -1,0 +1,40 @@
+NasPhotoTV
+==========
+
+Copyright 2026 SMTM-PH and NasPhotoTV contributors
+
+This product includes software developed by the NasPhotoTV contributors.
+
+The source code of this project is licensed under the Apache License,
+Version 2.0 (the "License"). You may obtain a copy of the License at
+http://www.apache.org/licenses/LICENSE-2.0 or in the LICENSE file at the
+root of this repository.
+
+Third-party materials
+---------------------
+
+This NOTICE is provided for informational purposes only and does not
+modify the terms of the Apache License, Version 2.0.
+
+* Sample photographs used in documentation and promotional previews
+  (including docs/promotion/**, docs/design-next/qa/**, and media_samples/)
+  are obtained from Unsplash and are governed by the Unsplash License:
+  https://unsplash.com/license
+  The original photographs remain the property of their respective
+  photographers and are not distributed under this project's License.
+
+* Build-time and runtime dependencies (AndroidX Jetpack Compose, Kotlin,
+  OkHttp, Media3, zxing, and others) remain under their own respective
+  licenses as declared by their authors. Refer to each dependency's
+  distribution for details.
+
+* The tvOS build and distribution instructions mention external tools
+  (for example scrcpy, Apache-2.0); such tools are not bundled in this
+  repository.
+
+Trademarks
+----------
+
+"fnOS" / "飞牛" and other third-party product names are trademarks of
+their respective owners. This project is an independent, unofficial
+client and is not affiliated with or endorsed by those owners.

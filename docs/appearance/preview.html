@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NAS Photo TV · 外观模式 · 设计评审预览</title>
+<style>
+/* ==========================================================================
+   NAS Photo TV — Appearance Design Preview
+   Single file, no network, no build. Open directly via file://
+   --------------------------------------------------------------------------
+   The product has TWO appearance modes, scoped by data-mode on each .tv:
+     data-mode="dark"  → 影院黑 Cinema
+     data-mode="light" → 画廊白 Gallery
+   Scenes C & D use .is-stage, which FORCES the shared fixed-dark-stage
+   constants. They stay dark in both modes — the photos are the subject.
+   ========================================================================== */
+
+/* ---------- Document (review canvas) chrome ---------- */
+:root{
+  --doc-ink:#EAF2F9;
+  --doc-sub:#8FA4B8;
+  --doc-line:rgba(255,255,255,.09);
+  --doc-accent:#31B6ED;
+  --doc-panel:rgba(255,255,255,.035);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","Hiragino Sans GB",
+              system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  color:var(--doc-ink);
+  background:
+    radial-gradient(1100px 640px at 12% -8%, #17304A 0%, transparent 62%),
+    radial-gradient(900px 560px at 96% -4%, #14243A 0%, transparent 58%),
+    linear-gradient(180deg,#0A1018 0%,#070C13 60%,#060A11 100%);
+  background-attachment:fixed;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+.wrap{max-width:1760px;margin:0 auto;padding:0 40px 90px;}
+
+/* ---------- Top control bar ---------- */
+.topbar{
+  position:sticky;top:0;z-index:60;
+  background:rgba(7,12,19,.80);
+  backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+  border-bottom:1px solid var(--doc-line);
+  box-shadow:0 12px 40px rgba(0,0,0,.28);
+}
+.tb-inner{
+  max-width:1760px;margin:0 auto;padding:20px 40px;
+  display:flex;align-items:center;justify-content:space-between;gap:30px;flex-wrap:wrap;
+}
+.tb-left{display:flex;align-items:center;gap:18px;min-width:0;}
+.doc-mark{
+  width:50px;height:50px;flex:none;border-radius:15px;
+  background:linear-gradient(135deg,#31B6ED,#5B8CFF);
+  display:grid;place-items:center;position:relative;
+  box-shadow:0 10px 30px rgba(49,182,237,.28);
+}
+.doc-mark::before{content:"";width:22px;height:22px;border-radius:50%;border:5px solid #002232;}
+.doc-mark::after{content:"";position:absolute;right:9px;top:9px;width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.85);}
+.tb-left h1{margin:0;font-size:23px;font-weight:720;letter-spacing:.01em;line-height:1.25;}
+.tb-left h1 span{color:#8FD8F8;font-weight:520;}
+.tb-left p{margin:5px 0 0;font-size:12.5px;color:var(--doc-sub);letter-spacing:.02em;}
+.tb-right{display:flex;align-items:center;gap:22px;flex-wrap:wrap;}
+.seg{
+  display:inline-flex;gap:4px;padding:6px;border-radius:16px;
+  background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.10);
+}
+.seg button{
+  appearance:none;border:0;background:transparent;cursor:pointer;
+  font-family:inherit;font-size:14.5px;font-weight:620;color:#9CAFC2;
+  padding:11px 22px;border-radius:11px;white-space:nowrap;
+  transition:background-color .25s ease,color .25s ease,box-shadow .25s ease,transform .25s ease;
+}
+.seg button:hover{color:#F2F8FD;}
+.seg button.is-active{
+  color:#002232;
+  background:linear-gradient(135deg,#31B6ED,#5B8CFF);
+  box-shadow:0 8px 26px rgba(49,182,237,.30);
+}
+.keyhint{font-size:12.5px;color:var(--doc-sub);display:flex;align-items:center;gap:7px;white-space:nowrap;}
+kbd{
+  display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 5px;
+  font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+  color:#CFE4F3;background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.16);border-bottom-width:2px;border-radius:6px;
+}
+
+/* ---------- Fixed dark stage rule banner ---------- */
+.rule-banner{
+  margin:34px 0 6px;padding:28px 32px;border-radius:24px;
+  display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:28px;
+  background:linear-gradient(115deg,rgba(11,32,47,.94),rgba(10,22,34,.92) 55%,rgba(9,20,30,.94));
+  border:1px solid rgba(49,182,237,.24);
+  box-shadow:0 26px 60px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.05);
+}
+.rule-icon{
+  width:62px;height:62px;flex:none;border-radius:20px;display:grid;place-items:center;
+  color:#8FD8F8;background:rgba(49,182,237,.12);border:1px solid rgba(49,182,237,.28);
+}
+.rule-tag{
+  display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.18em;color:#7FD3F7;
+  padding:5px 11px;border-radius:6px;background:rgba(49,182,237,.10);
+  border:1px solid rgba(49,182,237,.25);margin-bottom:10px;
+}
+.rule-text h2{margin:0 0 8px;font-size:24px;font-weight:720;letter-spacing:.01em;}
+.rule-text h2 span{font-size:15px;font-weight:500;color:#8FB6CC;margin-left:8px;letter-spacing:.04em;}
+.rule-text p{margin:0;font-size:13.5px;line-height:1.75;color:#A8BDCE;max-width:720px;}
+.rule-text strong{color:#EAF6FF;font-weight:650;}
+.rule-diagram{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end;}
+.rd-chip{
+  display:flex;align-items:center;gap:9px;font-size:12.5px;color:#CBDBE8;
+  padding:10px 14px;border-radius:12px;background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.10);
+}
+.rd-chip i{width:20px;height:20px;border-radius:6px;display:inline-block;border:1px solid rgba(255,255,255,.22);}
+.rd-arrow{color:#5FBEEB;font-size:20px;line-height:1;}
+.rd-stage{
+  display:flex;align-items:center;gap:12px;padding:10px 16px;border-radius:14px;
+  background:#0B202F;border:1px solid rgba(49,182,237,.38);
+  box-shadow:0 10px 30px rgba(0,0,0,.35);
+}
+.rd-stage i{width:30px;height:30px;border-radius:9px;display:inline-block;border:1px solid rgba(255,255,255,.18);}
+.rd-stage span{font-size:12px;line-height:1.5;color:#C6E4F5;}
+.rd-stage b{color:#8FD8F8;font-weight:650;}
+
+/* ---------- Section headings ---------- */
+.section{margin-top:62px;}
+.section-bar{display:flex;align-items:baseline;gap:16px;margin-bottom:8px;flex-wrap:wrap;}
+.section-bar .num{font-size:12px;font-weight:700;letter-spacing:.16em;color:#5FBEEB;}
+.section-bar h2{margin:0;font-size:26px;font-weight:720;letter-spacing:.01em;}
+.section-bar h2 em{font-style:normal;font-size:15px;font-weight:500;color:#8FA4B8;margin-left:10px;}
+.section-desc{margin:0 0 26px;font-size:13.5px;color:var(--doc-sub);line-height:1.7;max-width:900px;}
+
+/* ---------- Mode columns + scene cards ---------- */
+.mode-grid{display:grid;gap:30px;margin-top:34px;}
+.mode-grid.is-compare{grid-template-columns:repeat(2,minmax(0,1fr));}
+.mode-grid.is-single{grid-template-columns:1fr;}
+.mode-col{min-width:0;}
+.mode-col-head{
+  display:flex;align-items:center;gap:14px;margin-bottom:22px;padding:14px 18px;
+  border-radius:16px;background:rgba(255,255,255,.045);border:1px solid var(--doc-line);
+}
+.mch-dot{width:24px;height:24px;flex:none;border-radius:8px;border:1px solid rgba(255,255,255,.22);box-shadow:0 4px 14px rgba(0,0,0,.25);}
+.mch-txt{display:flex;flex-direction:column;gap:3px;min-width:0;}
+.mch-txt b{font-size:15px;font-weight:680;color:#E6F0F8;}
+.mch-txt small{font-size:11.5px;color:#8298AC;}
+.mch-tag{margin-left:auto;font:700 10.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.14em;color:#7FD3F7;padding:7px 11px;border-radius:8px;background:rgba(49,182,237,.10);border:1px solid rgba(49,182,237,.22);}
+.scenes{display:grid;gap:32px;}
+.mode-grid.is-compare .scenes{grid-template-columns:1fr;}
+.mode-grid.is-single .scenes{grid-template-columns:repeat(2,minmax(0,1fr));}
+
+.scene-card{margin:0;min-width:0;animation:sceneIn .28s ease both;}
+@keyframes sceneIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+.scene-cap{display:flex;align-items:center;gap:11px;margin-bottom:12px;flex-wrap:wrap;}
+.scene-idx{
+  width:29px;height:29px;flex:none;border-radius:9px;display:grid;place-items:center;
+  font-size:13px;font-weight:700;color:#8FD8F8;
+  background:rgba(49,182,237,.14);border:1px solid rgba(49,182,237,.28);
+}
+.scene-name{font-size:16px;font-weight:660;color:#E8F1F9;}
+.scene-sub{font-size:11.5px;color:#7F94A8;}
+.mode-pill{
+  margin-left:auto;font-size:11.5px;font-weight:620;padding:6px 12px;border-radius:999px;
+  border:1px solid rgba(255,255,255,.14);color:#B9C8D8;background:rgba(255,255,255,.05);
+  transition:background-color .25s ease,color .25s ease,border-color .25s ease;
+}
+.mode-pill.light{background:#E9EEF4;color:#0E1A28;border-color:#CFDCE9;}
+.mode-pill.dark{background:#06131E;color:#F5F7FA;border-color:#2A3D4D;}
+.mode-pill.is-stage{background:rgba(11,32,47,.92);color:#8FD8F8;border-color:rgba(49,182,237,.38);}
+
+/* ---------- TV frame: 1920x1080 design canvas, scaled to fit ---------- */
+.tv-frame{
+  --tv-scale:.4;
+  position:relative;width:100%;aspect-ratio:16/9;overflow:hidden;border-radius:18px;
+  background:#0B202F;
+  box-shadow:0 28px 64px rgba(0,0,0,.44),0 0 0 1px rgba(255,255,255,.075),
+             inset 0 0 0 1px rgba(255,255,255,.05);
+}
+.tv{
+  --ring:calc(3px / var(--tv-scale,.4));
+  position:absolute;top:0;left:0;width:1920px;height:1080px;
+  transform-origin:0 0;overflow:hidden;
+  background:var(--bg);color:var(--text-primary);
+  font-family:"PingFang SC","Microsoft YaHei","Noto Sans CJK SC","Hiragino Sans GB",system-ui,sans-serif;
+}
+.tv,.tv *{
+  transition:background-color .25s ease,color .25s ease,border-color .25s ease,
+             box-shadow .25s ease,transform .25s cubic-bezier(.2,.8,.2,1);
+}
+.frame-tag{
+  position:absolute;right:10px;bottom:9px;z-index:20;pointer-events:none;
+  font:600 10px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;
+  color:rgba(255,255,255,.62);background:rgba(0,0,0,.38);
+  padding:5px 9px;border-radius:6px;border:1px solid rgba(255,255,255,.10);
+}
+
+/* ---------- THEME: 影院黑 Cinema (dark) ---------- */
+.tv[data-mode="dark"]{
+  --bg:#06131E; --bg-elevated:#12141B; --surface:#1A1D26; --surface-high:#252935;
+  --surface-glass:rgba(255,255,255,.40); --stage:#0B202F; --surface-soft:#122A3A;
+  --ink-on-accent:#002232; --cinema-panel:rgba(8,29,43,.80); --text-muted:#8D9AA8;
+  --warm:#CDBA98; --divider:rgba(255,255,255,.12);
+  --text-primary:#F5F7FA; --text-secondary:#A9B0BE; --text-tertiary:#8C97A8;
+  --accent:#31B6ED; --accent-dim:rgba(49,182,237,.20); --accent-alt:#5B8CFF;
+  --accent-alt-dim:rgba(91,140,255,.20); --danger:#FF6B6B; --warn:#FFC857;
+  --focus-ring:#FFFFFF; --focus-ring-glow:rgba(49,182,237,.50);
+  --scrim-top:rgba(0,0,0,.70); --scrim-bottom:rgba(0,0,0,.85);
+  --elev:0 18px 48px rgba(0,0,0,.45);
+}
+/* ---------- THEME: 画廊白 Gallery (light) ---------- */
+.tv[data-mode="light"]{
+  --bg:#E9EEF4; --bg-elevated:#F3F6FA; --surface:#FFFFFF; --surface-high:#DDE5EE;
+  --surface-glass:rgba(255,255,255,.70); --stage:#DDE7F0; --surface-soft:#D7E6F1;
+  --ink-on-accent:#FFFFFF; --cinema-panel:rgba(8,29,43,.80); --text-muted:#516376;
+  --warm:#755A34; --divider:rgba(18,38,58,.12);
+  --text-primary:#0E1A28; --text-secondary:#44566B; --text-tertiary:#546579;
+  --accent:#096494; --accent-dim:rgba(9,100,148,.12); --accent-alt:#3557B8;
+  --accent-alt-dim:rgba(53,87,184,.12); --danger:#AF2E26; --warn:#8A5700;
+  --focus-ring:#0B3A5C; --focus-ring-glow:rgba(11,58,92,.20);
+  --scrim-top:rgba(0,0,0,.70); --scrim-bottom:rgba(0,0,0,.85);
+  --elev:0 14px 36px rgba(11,33,58,.14);
+}
+/* CRITICAL RULE — 固定暗场. Higher specificity than data-mode, so C/D are
+   IDENTICAL in light and dark. These are the shared stage constants. */
+.tv[data-mode].is-stage{
+  --bg:#06131E; --bg-elevated:#12141B; --surface:#1A1D26; --surface-high:#252935;
+  --surface-glass:rgba(255,255,255,.40); --stage:#0B202F; --surface-soft:#122A3A;
+  --ink-on-accent:#002232; --cinema-panel:rgba(8,29,43,.80); --text-muted:#8D9AA8;
+  --warm:#CDBA98; --divider:rgba(255,255,255,.12);
+  --text-primary:#F5F7FA; --text-secondary:#A9B0BE; --text-tertiary:#8C97A8;
+  --accent:#31B6ED; --accent-dim:rgba(49,182,237,.20); --accent-alt:#5B8CFF;
+  --accent-alt-dim:rgba(91,140,255,.20); --danger:#FF6B6B; --warn:#FFC857;
+  --focus-ring:#FFFFFF; --focus-ring-glow:rgba(49,182,237,.50);
+  --scrim-top:rgba(0,0,0,.70); --scrim-bottom:rgba(0,0,0,.85);
+  --elev:0 18px 48px rgba(0,0,0,.45);
+  background:var(--stage);color:#F5F7FA;
+}
+
+/* ---------- Shared photo primitive (gradient fallback via onerror) ---------- */
+.ph{position:relative;width:100%;height:100%;overflow:hidden;}
+.ph img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;}
+
+/* ---------- Scene A + B common TV shell ---------- */
+.tv-inner{position:absolute;inset:0;display:flex;flex-direction:column;padding:44px 80px 36px;}
+.tv-topbar{height:96px;flex:none;display:flex;align-items:center;gap:46px;}
+.brand{display:flex;align-items:center;gap:18px;flex:none;}
+.brand-mark{
+  width:58px;height:58px;border-radius:18px;display:grid;place-items:center;position:relative;
+  background:linear-gradient(135deg,var(--accent),var(--accent-alt));
+  box-shadow:0 10px 26px var(--accent-dim);
+}
+.brand-lens{width:26px;height:26px;border-radius:50%;border:5px solid var(--ink-on-accent);opacity:.92;}
+.brand-name{font-size:42px;font-weight:740;letter-spacing:.01em;color:var(--text-primary);white-space:nowrap;}
+.tabs{display:flex;align-items:center;gap:12px;margin-left:18px;}
+.tab{font-size:36px;color:var(--text-secondary);padding:15px 30px;border-radius:999px;white-space:nowrap;}
+.tab.is-active{color:var(--accent);background:var(--accent-dim);font-weight:700;}
+.tb-title{margin-left:14px;font-size:40px;font-weight:720;color:var(--text-primary);white-space:nowrap;}
+.tb-title .tb-crumb{font-weight:500;color:var(--text-tertiary);margin-left:10px;}
+.tb-actions{margin-left:auto;display:flex;align-items:center;gap:16px;}
+.icon-btn{
+  width:64px;height:64px;flex:none;border-radius:18px;display:grid;place-items:center;
+  color:var(--text-secondary);background:var(--surface);border:1px solid var(--divider);
+}
+.avatar{
+  width:64px;height:64px;flex:none;border-radius:50%;display:grid;place-items:center;
+  font-size:31px;font-weight:760;color:var(--ink-on-accent);
+  background:linear-gradient(135deg,var(--accent-alt),var(--accent));
+}
+
+/* ---------- Scene A: hero ---------- */
+.hero{height:462px;flex:none;margin-top:34px;position:relative;border-radius:28px;overflow:hidden;box-shadow:var(--elev);}
+.hero>.ph{position:absolute;inset:0;}
+.hero-scrim{
+  position:absolute;inset:0;
+  background:
+    linear-gradient(90deg,rgba(3,13,21,.90) 0%,rgba(3,13,21,.58) 38%,rgba(3,13,21,.06) 80%),
+    linear-gradient(0deg,var(--scrim-bottom) 0%,transparent 62%);
+}
+.hero-content{position:absolute;left:64px;bottom:56px;width:980px;}
+.hero-kicker{
+  display:inline-flex;align-items:center;gap:12px;font-size:29px;letter-spacing:.05em;
+  color:rgba(255,255,255,.88);padding:10px 20px;border-radius:999px;
+  background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.20);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+}
+.kicker-dot{width:12px;height:12px;border-radius:50%;background:var(--accent);box-shadow:0 0 14px var(--accent);}
+.hero-title{
+  margin:20px 0 10px;font-size:100px;line-height:1.04;font-weight:780;letter-spacing:.01em;
+  color:#FFFFFF;text-shadow:0 8px 34px rgba(0,0,0,.48);
+}
+.hero-sub{margin:0 0 30px;font-size:33px;color:rgba(255,255,255,.82);}
+.hero-actions{display:flex;gap:20px;}
+.btn-primary,.btn-ghost{
+  display:inline-flex;align-items:center;gap:14px;border-radius:18px;
+  font-size:37px;font-weight:700;padding:20px 38px;border:0;white-space:nowrap;
+}
+.btn-primary{background:var(--accent);color:var(--ink-on-accent);box-shadow:0 14px 38px rgba(0,0,0,.30);}
+.btn-ghost{
+  color:#FFFFFF;font-weight:600;background:rgba(255,255,255,.12);
+  border:1px solid rgba(255,255,255,.28);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+}
+.hero-meta{position:absolute;right:52px;bottom:54px;display:flex;flex-direction:column;align-items:flex-end;gap:16px;color:rgba(255,255,255,.84);font-size:29px;}
+.hero-dots{display:flex;gap:10px;}
+.hero-dots i{width:12px;height:12px;border-radius:50%;background:rgba(255,255,255,.4);display:block;}
+.hero-dots i.on{width:36px;border-radius:8px;background:#FFFFFF;}
+
+.section-head{height:78px;flex:none;display:flex;align-items:center;justify-content:space-between;margin-top:32px;}
+.section-head h3{margin:0;font-size:64px;font-weight:720;color:var(--text-primary);letter-spacing:.01em;}
+.section-link{display:inline-flex;align-items:center;gap:10px;font-size:31px;font-weight:600;color:var(--accent);}
+.card-row{flex:1;min-height:0;display:flex;gap:26px;align-items:stretch;}
+.photo-card{
+  flex:1;min-width:0;position:relative;display:flex;flex-direction:column;overflow:hidden;
+  border-radius:20px;background:var(--surface);border:1px solid var(--divider);
+  box-shadow:var(--elev);
+}
+.pc-img{height:216px;flex:none;}
+.pc-info{flex:1;padding:13px 18px;display:flex;flex-direction:column;gap:4px;justify-content:center;}
+.pc-title{font-size:33px;font-weight:640;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pc-meta{font-size:26px;color:var(--text-tertiary);}
+.photo-card.is-focused{
+  z-index:4;transform:scale(1.05);
+  box-shadow:0 0 0 var(--ring) var(--focus-ring),0 0 46px var(--focus-ring-glow),0 22px 54px rgba(0,0,0,.40);
+}
+
+/* ---------- Scene B: settings ---------- */
+.settings-body{display:flex;gap:44px;margin-top:34px;flex:1;min-height:0;}
+.settings-left{width:620px;flex:none;display:flex;flex-direction:column;gap:16px;}
+.settings-eyebrow{font-size:29px;color:var(--text-tertiary);letter-spacing:.1em;padding-left:8px;margin-bottom:2px;}
+.setting-row{
+  height:116px;flex:none;position:relative;display:flex;align-items:center;gap:24px;padding:0 28px;
+  border-radius:22px;background:var(--surface);border:1px solid var(--divider);
+  box-shadow:var(--elev);
+}
+.sr-icon{
+  width:72px;height:72px;flex:none;border-radius:20px;display:grid;place-items:center;
+  color:var(--accent);background:var(--surface-high);
+}
+.sr-text{display:flex;flex-direction:column;gap:5px;min-width:0;}
+.sr-text b{font-size:41px;font-weight:660;color:var(--text-primary);}
+.sr-text small{font-size:27px;color:var(--text-tertiary);white-space:nowrap;}
+.sr-chev{margin-left:auto;color:var(--text-tertiary);flex:none;}
+.setting-row.is-focused{
+  z-index:3;transform:scale(1.02);background:var(--accent-dim);border-color:transparent;
+  box-shadow:0 0 0 var(--ring) var(--focus-ring),0 0 46px var(--focus-ring-glow);
+}
+.setting-row.is-focused::before{
+  content:"";position:absolute;left:0;top:26px;bottom:26px;width:8px;
+  border-radius:0 6px 6px 0;background:var(--accent);
+}
+.setting-row.is-focused .sr-text b{color:var(--accent);}
+.setting-row.is-focused .sr-icon{color:var(--ink-on-accent);background:var(--accent);}
+.settings-hint{
+  margin-top:auto;display:flex;align-items:center;gap:14px;font-size:27px;color:var(--text-tertiary);
+  padding:18px 24px;border-radius:18px;background:var(--surface-soft);border:1px solid var(--divider);
+}
+.settings-right{
+  flex:1;min-width:0;display:flex;flex-direction:column;gap:22px;
+  border-radius:28px;background:var(--bg-elevated);border:1px solid var(--divider);
+  padding:34px 38px;box-shadow:var(--elev);
+}
+.panel-head{display:flex;align-items:center;justify-content:space-between;}
+.panel-head h3{margin:0;font-size:54px;font-weight:720;color:var(--text-primary);}
+.panel-badge{font-size:29px;font-weight:620;color:var(--accent);background:var(--accent-dim);padding:10px 22px;border-radius:999px;}
+.mini{
+  flex:1;min-height:270px;border-radius:22px;background:var(--bg);border:1px solid var(--divider);
+  padding:24px;display:flex;flex-direction:column;gap:16px;overflow:hidden;
+}
+.mini-label{font-size:25px;letter-spacing:.06em;color:var(--text-tertiary);}
+.mini-bar{
+  height:50px;flex:none;border-radius:14px;background:var(--surface);border:1px solid var(--divider);
+  display:flex;align-items:center;gap:14px;padding:0 18px;
+}
+.mini-dot{width:26px;height:26px;flex:none;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent-alt));}
+.mini-line{height:12px;border-radius:6px;background:var(--text-tertiary);opacity:.5;}
+.mini-line.w1{width:150px;} .mini-line.w2{width:88px;}
+.mini-main{display:flex;gap:16px;flex:1;min-height:0;}
+.mini-hero{flex:2;position:relative;border-radius:16px;overflow:hidden;}
+.mini-hero>.ph{position:absolute;inset:0;}
+.mini-hero-scrim{position:absolute;inset:0;background:linear-gradient(0deg,var(--scrim-bottom),transparent 76%);}
+.mini-hero-text{position:absolute;left:22px;bottom:18px;font-size:34px;font-weight:700;color:#FFFFFF;}
+.mini-cards{flex:1;display:flex;flex-direction:column;gap:12px;}
+.mini-card{flex:1;border-radius:12px;background:var(--surface);border:1px solid var(--divider);}
+.mini-accent{align-self:flex-start;background:var(--accent);color:var(--ink-on-accent);font-size:29px;font-weight:700;padding:13px 26px;border-radius:12px;}
+.value-chips{display:flex;gap:16px;flex-wrap:wrap;}
+.vchip{
+  font-size:33px;font-weight:560;padding:17px 32px;border-radius:16px;
+  background:var(--surface);border:1px solid var(--divider);color:var(--text-secondary);white-space:nowrap;
+}
+.vchip.is-active{
+  color:var(--ink-on-accent);background:var(--accent);border-color:transparent;font-weight:720;
+  box-shadow:0 10px 28px var(--accent-dim);
+}
+.panel-note{
+  display:flex;align-items:center;gap:13px;border-top:1px solid var(--divider);padding-top:18px;
+  font-size:27px;color:var(--text-tertiary);
+}
+.panel-note svg{color:var(--accent);flex:none;}
+
+/* ---------- Scenes C + D: fixed dark stage ---------- */
+.stage-fill{position:absolute;inset:0;background:var(--stage);overflow:hidden;color:#F5F7FA;}
+.stage-fill>.ph{position:absolute;inset:0;}
+.stage-vignette{position:absolute;inset:0;background:radial-gradient(125% 95% at 50% 44%,transparent 38%,rgba(3,10,16,.58) 100%);}
+.stage-scrim-top{position:absolute;left:0;right:0;top:0;height:300px;background:linear-gradient(180deg,var(--scrim-top),transparent);}
+.stage-scrim-bottom{position:absolute;left:0;right:0;bottom:0;height:580px;background:linear-gradient(0deg,var(--scrim-bottom),transparent);}
+.stage-badge{
+  display:inline-flex;align-items:center;gap:13px;
+  background:var(--cinema-panel);border:1px solid rgba(49,182,237,.36);border-radius:16px;
+  padding:15px 22px;color:#EAF6FF;font-size:29px;font-weight:620;
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  box-shadow:0 12px 36px rgba(0,0,0,.36);
+}
+.stage-badge svg{color:#5FC8F5;flex:none;}
+.stage-badge em{
+  font-style:normal;font-size:23px;font-weight:500;color:#8FB6CC;
+  border-left:1px solid rgba(255,255,255,.22);padding-left:15px;
+}
+.stage-badge.pos-tr{position:absolute;top:138px;right:80px;}
+.viewer-top{
+  position:absolute;top:52px;left:80px;right:80px;display:flex;align-items:center;gap:26px;
+  color:#F5F7FA;font-size:33px;
+}
+.v-back,.v-close{
+  display:inline-flex;align-items:center;gap:12px;padding:14px 24px;border-radius:16px;
+  background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+}
+.v-counter{margin-left:auto;font-size:31px;color:rgba(255,255,255,.84);}
+.viewer-bottom{position:absolute;left:80px;right:80px;bottom:44px;color:#F5F7FA;}
+.vb-info h3{margin:0 0 9px;font-size:56px;font-weight:720;color:#FFFFFF;text-shadow:0 4px 24px rgba(0,0,0,.52);}
+.vb-info p{margin:0;font-size:29px;color:rgba(255,255,255,.80);}
+.vb-tools{display:flex;gap:18px;margin:26px 0 24px;flex-wrap:wrap;}
+.tool-chip{
+  display:inline-flex;align-items:center;gap:12px;font-size:30px;padding:15px 25px;border-radius:16px;
+  background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);color:#F1F7FC;
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+}
+.tool-chip.is-focused{
+  z-index:3;transform:scale(1.05);background:rgba(255,255,255,.17);
+  box-shadow:0 0 0 var(--ring) var(--focus-ring),0 0 40px var(--focus-ring-glow);
+}
+.filmstrip{display:flex;align-items:center;gap:18px;}
+.film-thumb{
+  width:176px;height:112px;flex:none;position:relative;border-radius:14px;overflow:hidden;
+  border:2px solid rgba(255,255,255,.16);opacity:.72;
+}
+.film-thumb.is-focused{
+  opacity:1;border-color:transparent;z-index:3;transform:scale(1.08);
+  box-shadow:0 0 0 var(--ring) var(--focus-ring),0 0 36px var(--focus-ring-glow);
+}
+.fs-label{margin-left:auto;font-size:27px;color:rgba(255,255,255,.66);white-space:nowrap;}
+
+/* Scene D: StandBy clock */
+.standby-scrim{
+  position:absolute;inset:0;
+  background:
+    linear-gradient(90deg,rgba(4,14,22,.88) 0%,rgba(4,14,22,.44) 47%,rgba(4,14,22,.72) 100%),
+    linear-gradient(0deg,var(--scrim-bottom) 0%,transparent 66%);
+}
+.standby-top{position:absolute;top:52px;left:80px;right:80px;display:flex;align-items:center;justify-content:space-between;gap:20px;}
+.standby-brand{display:inline-flex;align-items:center;gap:12px;font-size:29px;letter-spacing:.05em;color:rgba(255,255,255,.84);}
+.standby-main{position:absolute;left:80px;right:80px;top:286px;display:flex;align-items:center;justify-content:space-between;gap:60px;}
+.clock-block{display:flex;flex-direction:column;min-width:0;}
+.clock{
+  font-size:220px;line-height:1;font-weight:280;letter-spacing:-.02em;color:#FFFFFF;
+  font-variant-numeric:tabular-nums;text-shadow:0 10px 60px rgba(0,0,0,.46);
+}
+.clock-date{font-size:52px;font-weight:520;color:rgba(255,255,255,.94);margin-top:24px;}
+.clock-sub{font-size:33px;color:rgba(255,255,255,.64);margin-top:12px;letter-spacing:.03em;}
+.glass-stack{width:520px;flex:none;display:flex;flex-direction:column;gap:22px;}
+.glass-card{
+  border-radius:28px;background:var(--cinema-panel);border:1px solid rgba(255,255,255,.16);
+  backdrop-filter:blur(26px);-webkit-backdrop-filter:blur(26px);
+  padding:30px 34px;color:#F5F7FA;
+  box-shadow:0 20px 50px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.10);
+}
+.weather-top{display:flex;align-items:center;gap:24px;}
+.wc-sun{
+  width:88px;height:88px;flex:none;border-radius:26px;display:grid;place-items:center;
+  color:#0B3A5C;background:var(--surface-glass);border:1px solid rgba(255,255,255,.28);
+}
+.wc-temp{font-size:86px;font-weight:620;line-height:1;color:#FFFFFF;}
+.wc-temp span{font-size:40px;font-weight:500;color:rgba(255,255,255,.90);margin-left:10px;}
+.wc-place{font-size:29px;color:rgba(255,255,255,.68);margin-top:8px;}
+.wc-extra{margin-top:22px;padding-top:18px;border-top:1px solid rgba(255,255,255,.14);font-size:27px;color:rgba(255,255,255,.66);}
+.gc-row{display:flex;align-items:center;justify-content:space-between;font-size:27px;color:rgba(255,255,255,.66);}
+.gc-count{font-variant-numeric:tabular-nums;}
+.gc-title{font-size:38px;font-weight:640;color:#FFFFFF;margin:14px 0 18px;}
+.gc-progress{height:8px;border-radius:6px;background:rgba(255,255,255,.16);overflow:hidden;}
+.gc-progress i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,#31B6ED,#5B8CFF);}
+.gc-foot{font-size:25px;color:rgba(255,255,255,.58);margin-top:14px;}
+.standby-bottom{position:absolute;bottom:50px;left:80px;display:flex;gap:16px;flex-wrap:wrap;}
+.sb-chip{
+  display:inline-flex;align-items:center;gap:11px;font-size:28px;color:rgba(255,255,255,.84);
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  padding:13px 23px;border-radius:999px;
+}
+
+/* ---------- Tokens / 色板 ---------- */
+.token-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(246px,1fr));gap:15px;}
+.token-card{background:var(--doc-panel);border:1px solid var(--doc-line);border-radius:18px;padding:16px;}
+.tc-name{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;}
+.tc-name b{font-size:13.5px;font-weight:650;color:#DDE9F4;}
+.tc-name small{font:600 9.5px/1 ui-monospace,Menlo,monospace;letter-spacing:.1em;color:#657C91;}
+.tc-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.tc-sw{border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,.10);}
+.tc-chip{height:50px;display:flex;align-items:flex-end;padding:7px 9px;font:700 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.01em;}
+.tc-meta{padding:7px 9px;background:rgba(0,0,0,.30);font-size:10.5px;color:#9FB3C5;}
+.shared-strip{
+  margin-top:20px;padding:18px 20px;border-radius:18px;
+  background:rgba(11,32,47,.48);border:1px solid rgba(49,182,237,.22);
+}
+.shared-strip h4{margin:0 0 12px;font-size:13.5px;font-weight:660;color:#C6E4F5;}
+.shared-strip h4 span{font-weight:500;color:#8FB6CC;margin-left:8px;}
+.shared-items{display:flex;flex-wrap:wrap;gap:10px;}
+.shared-item{
+  display:inline-flex;align-items:center;gap:10px;font-size:12px;color:#BBD3E4;
+  background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
+  border-radius:12px;padding:9px 13px;
+}
+.shared-item i{width:22px;height:22px;flex:none;border-radius:7px;border:1px solid rgba(255,255,255,.18);}
+.shared-item b{font:600 11.5px/1 ui-monospace,Menlo,monospace;color:#8FD8F8;}
+.shared-note{margin:12px 0 0;font-size:12.5px;color:#8FA8BC;line-height:1.65;}
+.var-table{width:100%;border-collapse:collapse;margin-top:18px;font-size:12.5px;}
+.var-table th{
+  text-align:left;font-weight:620;color:#7E93A8;padding:11px 14px;
+  border-bottom:1px solid rgba(255,255,255,.12);font-size:11.5px;letter-spacing:.03em;
+}
+.var-table td{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.055);color:#AFC2D3;}
+.var-table td:first-child{color:#DDE9F4;font-weight:620;}
+.var-table .v{font:500 11.5px/1.4 ui-monospace,Menlo,monospace;color:#9FD4EF;}
+.var-table tr:last-child td{border-bottom:0;}
+
+/* ---------- Contrast ---------- */
+.contrast-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(272px,1fr));gap:15px;}
+.cr-card{background:var(--doc-panel);border:1px solid var(--doc-line);border-radius:18px;padding:20px;}
+.cr-top{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.cr-label{font-size:12.5px;color:#9FB3C6;line-height:1.4;}
+.cr-pass{
+  flex:none;display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:650;
+  color:#7FE0A8;background:rgba(60,200,130,.12);border:1px solid rgba(60,200,130,.30);
+  padding:4px 9px;border-radius:999px;
+}
+.cr-ratio{font-size:31px;font-weight:760;color:#EAF4FB;margin:10px 0 2px;font-variant-numeric:tabular-nums;}
+.cr-pair{display:flex;gap:6px;margin:14px 0 4px;}
+.cr-pair i{width:32px;height:32px;border-radius:9px;border:1px solid rgba(255,255,255,.16);}
+.cr-pair span{font:500 11px/1 ui-monospace,Menlo,monospace;color:#7F94A8;align-self:center;margin-left:6px;}
+.cr-bar{height:8px;border-radius:6px;background:rgba(255,255,255,.08);position:relative;margin-top:14px;}
+.cr-bar>i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,#096494,#31B6ED);}
+.cr-bar::after{content:"";position:absolute;left:28.125%;top:-4px;bottom:-4px;width:2px;background:rgba(255,255,255,.55);border-radius:2px;}
+.cr-foot{margin-top:10px;font-size:11px;color:#6E8399;}
+.contrast-note{
+  margin-top:18px;padding:16px 20px;border-radius:14px;font-size:13px;line-height:1.7;color:#A8BDCE;
+  background:rgba(49,182,237,.06);border:1px solid rgba(49,182,237,.18);
+}
+.contrast-note strong{color:#8FD8F8;}
+
+/* ---------- Design notes ---------- */
+.notes-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px;}
+.note{display:flex;gap:15px;background:var(--doc-panel);border:1px solid var(--doc-line);border-radius:16px;padding:18px 20px;}
+.note-n{
+  width:31px;height:31px;flex:none;border-radius:10px;display:grid;place-items:center;
+  font-size:12.5px;font-weight:700;color:#8FD8F8;
+  background:rgba(49,182,237,.13);border:1px solid rgba(49,182,237,.25);
+}
+.note h4{margin:0 0 6px;font-size:14.5px;font-weight:660;color:#E4EEF7;}
+.note p{margin:0;font-size:12.5px;line-height:1.7;color:#93A7BA;}
+.note code{font:500 11.5px/1 ui-monospace,Menlo,monospace;color:#8FD8F8;}
+
+/* ---------- Footer ---------- */
+.foot{
+  margin-top:64px;padding-top:22px;border-top:1px solid var(--doc-line);
+  display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;
+  font-size:12px;color:#6E8399;line-height:1.6;
+}
+.foot b{color:#9FB6C9;font-weight:600;}
+
+/* ---------- Responsive ---------- */
+@media (max-width:1180px){
+  .mode-grid.is-single .scenes{grid-template-columns:1fr;}
+  .rule-banner{grid-template-columns:auto 1fr;}
+  .rule-diagram{grid-column:1/-1;justify-content:flex-start;}
+}
+@media (max-width:820px){
+  .wrap{padding:0 20px 70px;}
+  .tb-inner{padding:16px 20px;}
+  .mode-grid.is-compare{grid-template-columns:1fr;}
+  .rule-banner{padding:22px;grid-template-columns:1fr;}
+  .rule-icon{display:none;}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important;}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="tb-inner">
+    <div class="tb-left">
+      <span class="doc-mark" aria-hidden="true"></span>
+      <div>
+        <h1>NAS Photo TV <span>· 外观模式</span></h1>
+        <p>10-foot 相框应用 · 1920 × 1080 · 3 米观看距离 · 设计评审预览</p>
+      </div>
+    </div>
+    <div class="tb-right">
+      <div class="seg" role="tablist" aria-label="外观模式切换">
+        <button type="button" role="tab" data-set="light" aria-selected="false">浅色</button>
+        <button type="button" role="tab" data-set="dark" aria-selected="false">深色</button>
+        <button type="button" role="tab" data-set="compare" aria-selected="true">并排对比</button>
+      </div>
+      <div class="keyhint">按 <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 切换</div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- CRITICAL RULE -->
+  <section class="rule-banner" aria-label="固定暗场规则">
+    <div class="rule-icon" id="ruleIcon"></div>
+    <div class="rule-text">
+      <span class="rule-tag">CRITICAL DESIGN RULE</span>
+      <h2>固定暗场 <span>Fixed dark stage</span></h2>
+      <p>全屏看图、视频播放与屏保时钟在<strong>浅色与深色外观下都保持暗场</strong>。照片才是主角；只有浏览界面（媒体库、设置、对话框）随外观切换。下方场景 C / D 在两列中完全一致。</p>
+    </div>
+    <div class="rule-diagram" aria-hidden="true">
+      <span class="rd-chip">浅色 <i style="background:#E9EEF4"></i></span>
+      <span class="rd-chip">深色 <i style="background:#06131E"></i></span>
+      <span class="rd-arrow">&#8594;</span>
+      <span class="rd-stage"><i style="background:#0B202F"></i><span><b>舞台子树 #0B202F</b><br>强制深色板 · 不随外观切换</span></span>
+    </div>
+  </section>
+
+  <!-- SCENES -->
+  <section class="section" aria-label="四个场景预览">
+    <div class="section-bar"><span class="num">01 / SCENES</span><h2>四个真实场景<em>16:9 TV 画布 · D-pad 焦点态</em></h2></div>
+    <p class="section-desc">每个场景按 1920 × 1080 设计画布绘制并等比缩放到列宽。默认并排对比：左列为「画廊白 Gallery」，右列为「影院黑 Cinema」。按 <kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> 或点击顶部分段控件切换，切换时色板以 250ms 平滑过渡。</p>
+    <div id="modeGrid" class="mode-grid is-compare"></div>
+  </section>
+
+  <!-- TOKENS -->
+  <section class="section" aria-label="色板与设计变量">
+    <div class="section-bar"><span class="num">02 / TOKENS</span><h2>色板 / Tokens<em>两套外观并排 · 十六进制原值</em></h2></div>
+    <p class="section-desc">关键语义变量在两套外观下的取值。浅色并非简单反色：背景用雾白、强调色加深、焦点环换成墨蓝、按钮上的文字墨色反转。</p>
+    <div id="tokenGrid" class="token-grid"></div>
+
+    <div class="shared-strip">
+      <h4>压在照片上的常量 <span>Overlays on photos · 两种外观完全一致</span></h4>
+      <div id="sharedItems" class="shared-items"></div>
+      <p class="shared-note">scrimTop / scrimBottom / cinemaPanel 不随外观切换。stage 是普通语义面、会随模式变（见上方色板），但全屏看图、视频播放、屏保时钟由 ProvideTvStage 在子树层面强制使用深色板，因此舞台恒为 #0B202F，场景 C 与 D 在两列中渲染结果完全相同。</p>
+    </div>
+
+    <table class="var-table">
+      <thead><tr><th>其余语义变量</th><th>画廊白 Gallery</th><th>影院黑 Cinema</th></tr></thead>
+      <tbody id="varTable"></tbody>
+    </table>
+  </section>
+
+  <!-- CONTRAST -->
+  <section class="section" aria-label="对比度">
+    <div class="section-bar"><span class="num">03 / CONTRAST</span><h2>对比度 <em>WCAG AA</em></h2></div>
+    <p class="section-desc">在 3 米观看距离与电视面板的低对比环境下，文字与焦点指示必须留足余量。以下为 sRGB 相对亮度计算结果。</p>
+    <div id="contrastGrid" class="contrast-grid"></div>
+    <div class="contrast-note"><strong>所有正文文本 ≥ 4.5:1</strong>（WCAG 2.1 AA 正常字号），大字号与焦点环等图形指示 ≥ 3:1。柱状图刻度为 0–16:1，白色竖线标记 4.5:1 门槛。</div>
+  </section>
+
+  <!-- NOTES -->
+  <section class="section" aria-label="设计要点">
+    <div class="section-bar"><span class="num">04 / NOTES</span><h2>设计要点<em>10-foot UI 决策摘要</em></h2></div>
+    <div id="notesGrid" class="notes-grid"></div>
+  </section>
+
+  <footer class="foot">
+    <span><b>NAS Photo TV</b> · 外观模式设计评审 · 单文件离线预览（可直接通过 file:// 打开，无 CDN / 无构建）</span>
+    <span>示例照片按相对路径引用 <b>../../media_samples/</b>，缺失时自动回退为 CSS 渐变。</span>
+  </footer>
+
+</main>
+
+<script>
+/* ==========================================================================
+   NAS Photo TV appearance preview — all rendering is generated here.
+   ========================================================================== */
+(function(){
+'use strict';
+
+/* ---------- Inline SVG icon set (no emoji, one consistent stroke family) --- */
+var ICONS = {
+  search:'<circle cx="11" cy="11" r="7"/><path d="M20.5 20.5 16.8 16.8"/>',
+  cast:'<path d="M3 18.5h.01"/><path d="M3 14.5a4 4 0 0 1 4 4"/><path d="M3 10.5a8 8 0 0 1 8 8"/><path d="M3 6.5h18v11h-6"/>',
+  gear:'<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.2 5.2l1.9 1.9M16.9 16.9l1.9 1.9M18.8 5.2l-1.9 1.9M7.1 16.9l-1.9 1.9"/>',
+  chevronLeft:'<path d="M15 5l-7 7 7 7"/>',
+  chevronRight:'<path d="M9 5l7 7-7 7"/>',
+  arrowRight:'<path d="M4 12h15M13 6l6 6-6 6"/>',
+  play:'<path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/>',
+  grid:'<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
+  palette:'<path d="M12 3a9 9 0 1 0 0 18h1.2a2 2 0 0 0 1.5-3.3 1.9 1.9 0 0 1 1.4-3.2H18A3 3 0 0 0 21 11.5 8.5 8.5 0 0 0 12 3z"/><circle cx="7.5" cy="11" r="1.1" fill="currentColor" stroke="none"/><circle cx="10" cy="7" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="7.2" r="1.1" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10" r="1.1" fill="currentColor" stroke="none"/>',
+  moon:'<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/>',
+  sliders:'<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+  heart:'<path d="M12 20.5S3.5 15 3.5 9.2A4.7 4.7 0 0 1 12 6.4a4.7 4.7 0 0 1 8.5 2.8C20.5 15 12 20.5 12 20.5z" fill="currentColor" stroke="none"/>',
+  share:'<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.3M8.2 13.2l7.6 4.3"/>',
+  rotate:'<path d="M20 11a8 8 0 1 0-2.3 6.2"/><path d="M20 4.5V11h-6.5"/>',
+  close:'<path d="M6 6l12 12M18 6L6 18"/>',
+  lock:'<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1.1" fill="currentColor" stroke="none"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5.3l3.4 2"/>',
+  wifi:'<path d="M2.5 8.5a15 15 0 0 1 19 0M5.5 12a10.5 10.5 0 0 1 13 0M8.5 15.4a6 6 0 0 1 7 0"/><circle cx="12" cy="19" r="1.1" fill="currentColor" stroke="none"/>',
+  photo:'<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="8.5" cy="10" r="1.8"/><path d="M4 17.5l5-5 3.5 3.5 3-3 4.5 4.5"/>',
+  check:'<path d="M5 12.5l4.5 4.5L19 7"/>',
+  monitor:'<rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8.5 21h7M12 17v4"/>',
+  sparkle:'<path d="M12 3l1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7z"/>',
+  sun:'<circle cx="12" cy="12" r="4.2" fill="currentColor" stroke="none"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/>',
+  layers:'<path d="M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5"/>'
+};
+function ic(name,size){
+  size=size||36;
+  return '<svg viewBox="0 0 24 24" width="'+size+'" height="'+size+'" fill="none" stroke="currentColor" '+
+         'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+
+         (ICONS[name]||'')+'</svg>';
+}
+
+/* ---------- Local sample photos + CSS gradient fallbacks ---------- */
+var IMG = {
+  ocean:'../../media_samples/wall_ocean.jpg',
+  sunset:'../../media_samples/wall_sunset.jpg',
+  forest:'../../media_samples/wall_forest.jpg',
+  mono:'../../media_samples/wall_mono.jpg',
+  aurora:'../../media_samples/wall_aurora.jpg',
+  candy:'../../media_samples/wall_candy.jpg',
+  city:'../../media_samples/video_city.jpg',
+  family:'../../media_samples/video_family.jpg',
+  mountain:'../../media_samples/video_mountain.jpg'
+};
+var GRAD = {
+  ocean:'linear-gradient(135deg,#062B45 0%,#12688F 45%,#5FB6C4 100%)',
+  sunset:'linear-gradient(135deg,#3A1638 0%,#B4474F 45%,#F0A05A 100%)',
+  forest:'linear-gradient(135deg,#0C2A22 0%,#2C6B4A 48%,#8FBF7A 100%)',
+  mono:'linear-gradient(135deg,#1B2026 0%,#59626C 50%,#AEB7BF 100%)',
+  aurora:'linear-gradient(135deg,#0A1730 0%,#1D5A6B 42%,#6FC79B 78%,#8A6FC0 100%)',
+  candy:'linear-gradient(135deg,#3A1B4A 0%,#B45A93 48%,#F2A6B8 100%)',
+  city:'linear-gradient(135deg,#101A35 0%,#2B4A7A 50%,#6E8FC4 100%)',
+  family:'linear-gradient(135deg,#4A2A20 0%,#A9714C 50%,#E6B98B 100%)',
+  mountain:'linear-gradient(135deg,#182B3A 0%,#4A6B7C 50%,#B4C9D2 100%)'
+};
+/* onerror removes the broken <img>, revealing the gradient underneath. */
+function photo(key,cls,alt){
+  return '<div class="ph '+(cls||'')+'" style="background:'+GRAD[key]+'">'+
+         '<img src="'+IMG[key]+'" alt="'+(alt||'')+'" onerror="this.remove()"></div>';
+}
+
+/* ---------- Palette (hex values used verbatim) ---------- */
+var P = {
+  dark:{
+    bg:'#06131E', bgElevated:'#12141B', surface:'#1A1D26', surfaceHigh:'#252935',
+    surfaceGlass:'rgba(255,255,255,.40)', stage:'#0B202F', surfaceSoft:'#122A3A',
+    inkOnAccent:'#002232', cinemaPanel:'rgba(8,29,43,.80)', textMuted:'#8D9AA8',
+    warm:'#CDBA98', divider:'rgba(255,255,255,.12)',
+    textPrimary:'#F5F7FA', textSecondary:'#A9B0BE', textTertiary:'#8C97A8',
+    accent:'#31B6ED', accentDim:'rgba(49,182,237,.20)', accentAlt:'#5B8CFF',
+    accentAltDim:'rgba(91,140,255,.20)', danger:'#FF6B6B', warn:'#FFC857',
+    focusRing:'#FFFFFF', focusRingGlow:'rgba(49,182,237,.50)',
+    scrimTop:'rgba(0,0,0,.70)', scrimBottom:'rgba(0,0,0,.85)'
+  },
+  light:{
+    bg:'#E9EEF4', bgElevated:'#F3F6FA', surface:'#FFFFFF', surfaceHigh:'#DDE5EE',
+    surfaceGlass:'rgba(255,255,255,.70)', stage:'#DDE7F0', surfaceSoft:'#D7E6F1',
+    inkOnAccent:'#FFFFFF', cinemaPanel:'rgba(8,29,43,.80)', textMuted:'#516376',
+    warm:'#755A34', divider:'rgba(18,38,58,.12)',
+    textPrimary:'#0E1A28', textSecondary:'#44566B', textTertiary:'#546579',
+    accent:'#096494', accentDim:'rgba(9,100,148,.12)', accentAlt:'#3557B8',
+    accentAltDim:'rgba(53,87,184,.12)', danger:'#AF2E26', warn:'#8A5700',
+    focusRing:'#0B3A5C', focusRingGlow:'rgba(11,58,92,.20)',
+    scrimTop:'rgba(0,0,0,.70)', scrimBottom:'rgba(0,0,0,.85)'
+  }
+};
+var M = {
+  light:{name:'画廊白 Gallery', short:'浅色', bg:'#E9EEF4', tag:'LIGHT'},
+  dark:{name:'影院黑 Cinema', short:'深色', bg:'#06131E', tag:'DARK'}
+};
+
+/* ---------- Scene A: 媒体库 · 首页 ---------- */
+var RECENTS = [
+  {k:'sunset', t:'海边落日', d:'今天 18:20'},
+  {k:'forest', t:'林间晨雾', d:'今天 17:42'},
+  {k:'city',   t:'城市夜色', d:'昨天 21:08'},
+  {k:'mono',   t:'黑白街角', d:'昨天 20:15'},
+  {k:'candy',  t:'糖果天空', d:'11 月 23 日'}
+];
+function topbar(o){
+  var nav = o.tabs
+    ? '<nav class="tabs"><span class="tab is-active">全部照片</span><span class="tab">相册</span><span class="tab">人物</span><span class="tab">地点</span></nav>'
+    : '<div class="tb-title">设置 <span class="tb-crumb">/ 外观</span></div>';
+  var back = o.tabs ? '' : '<span class="icon-btn">'+ic('chevronLeft',34)+'</span>';
+  return '<div class="tv-topbar">'+
+    back+
+    '<div class="brand"><span class="brand-mark"><span class="brand-lens"></span></span><span class="brand-name">NAS 相册</span></div>'+
+    nav+
+    '<div class="tb-actions">'+
+      '<span class="icon-btn">'+ic('search',34)+'</span>'+
+      '<span class="icon-btn">'+ic('cast',34)+'</span>'+
+      '<span class="icon-btn">'+ic('gear',34)+'</span>'+
+      '<span class="avatar">L</span>'+
+    '</div></div>';
+}
+function sceneA(){
+  var cards = RECENTS.map(function(r,i){
+    return '<div class="photo-card'+(i===2?' is-focused':'')+'">'+
+      '<div class="pc-img">'+photo(r.k,'',r.t)+'</div>'+
+      '<div class="pc-info"><span class="pc-title">'+r.t+'</span><span class="pc-meta">'+r.d+'</span></div>'+
+    '</div>';
+  }).join('');
+  return '<div class="tv-inner">'+topbar({tabs:true})+
+    '<div class="hero">'+
+      photo('ocean','','海岸与日落的主题照片')+
+      '<div class="hero-scrim"></div>'+
+      '<div class="hero-content">'+
+        '<span class="hero-kicker"><span class="kicker-dot"></span>精选回忆 · 2024</span>'+
+        '<h2 class="hero-title">客厅影廊</h2>'+
+        '<p class="hero-sub">2,418 张照片 · 12 个相册 · 上次更新 今天 18:20</p>'+
+        '<div class="hero-actions">'+
+          '<span class="btn-primary">'+ic('play',34)+'开始放映</span>'+
+          '<span class="btn-ghost">'+ic('grid',32)+'浏览相册</span>'+
+        '</div>'+
+      '</div>'+
+      '<div class="hero-meta"><span class="hero-count">01 / 08</span>'+
+        '<span class="hero-dots"><i class="on"></i><i></i><i></i><i></i><i></i></span></div>'+
+    '</div>'+
+    '<div class="section-head"><h3>最近添加</h3>'+
+      '<span class="section-link">查看全部 '+ic('arrowRight',28)+'</span></div>'+
+    '<div class="card-row">'+cards+'</div>'+
+  '</div>';
+}
+
+/* ---------- Scene B: 设置 · 外观 ---------- */
+var SETTINGS = [
+  {i:'palette', t:'外观', d:'主题、强调色与外观模式'},
+  {i:'moon',    t:'屏保', d:'时钟样式、轮播与息屏'},
+  {i:'sliders', t:'播放', d:'转场、时长与顺序'},
+  {i:'server',  t:'NAS',  d:'连接、索引与同步'},
+  {i:'info',    t:'关于', d:'版本、许可与诊断'}
+];
+function sceneB(mode){
+  var rows = SETTINGS.map(function(s,i){
+    return '<div class="setting-row'+(i===0?' is-focused':'')+'">'+
+      '<span class="sr-icon">'+ic(s.i,42)+'</span>'+
+      '<span class="sr-text"><b>'+s.t+'</b><small>'+s.d+'</small></span>'+
+      '<span class="sr-chev">'+ic('chevronRight',34)+'</span>'+
+    '</div>';
+  }).join('');
+  var chips = [
+    {v:'system',t:'跟随系统'},{v:'light',t:'浅色'},{v:'dark',t:'深色'}
+  ].map(function(c){
+    return '<span class="vchip'+(c.v===mode?' is-active':'')+'" data-vchip="'+c.v+'">'+c.t+'</span>';
+  }).join('');
+  return '<div class="tv-inner">'+topbar({tabs:false})+
+    '<div class="settings-body">'+
+      '<div class="settings-left">'+
+        '<span class="settings-eyebrow">偏好设置</span>'+rows+
+        '<div class="settings-hint">'+ic('monitor',32)+'使用方向键移动焦点 · 按 OK 确认</div>'+
+      '</div>'+
+      '<div class="settings-right">'+
+        '<div class="panel-head"><h3>外观</h3><span class="panel-badge">当前：<span data-current-mode>'+M[mode].short+'</span></span></div>'+
+        '<div class="mini">'+
+          '<span class="mini-label">界面预览 · 由当前色板实时渲染 <span data-current-mode>'+M[mode].short+'</span></span>'+
+          '<div class="mini-bar"><span class="mini-dot"></span><span class="mini-line w1"></span><span class="mini-line w2"></span></div>'+
+          '<div class="mini-main">'+
+            '<div class="mini-hero">'+photo('forest','','森林照片')+'<div class="mini-hero-scrim"></div><span class="mini-hero-text">客厅影廊</span></div>'+
+            '<div class="mini-cards"><span class="mini-card"></span><span class="mini-card"></span><span class="mini-card"></span></div>'+
+          '</div>'+
+          '<span class="mini-accent">开始放映</span>'+
+        '</div>'+
+        '<div class="value-chips">'+chips+'</div>'+
+        '<div class="panel-note">'+ic('info',30)+'看图 / 视频 / 屏保保持固定暗场，不随此项切换</div>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+
+/* ---------- Shared stage badge ---------- */
+function stageBadge(pos){
+  return '<div class="stage-badge'+(pos?' '+pos:'')+'">'+ic('lock',30)+
+         '<span>固定暗场 · 不随外观切换</span><em>stage #0B202F</em></div>';
+}
+
+/* ---------- Scene C: 全屏看图 (FIXED DARK) ---------- */
+var FILM = [
+  {k:'city',a:'城市夜色'},{k:'forest',a:'林间晨雾'},{k:'mono',a:'黑白街角'},
+  {k:'aurora',a:'北极光'},{k:'candy',a:'糖果天空'},{k:'mountain',a:'远山'}
+];
+var TOOLS = [
+  {i:'heart',t:'收藏',f:true},{i:'play',t:'幻灯片'},{i:'info',t:'信息'},
+  {i:'rotate',t:'旋转'},{i:'share',t:'分享'}
+];
+function sceneC(){
+  var tools = TOOLS.map(function(t){
+    return '<span class="tool-chip'+(t.f?' is-focused':'')+'">'+ic(t.i,32)+t.t+'</span>';
+  }).join('');
+  var film = FILM.map(function(f,i){
+    return '<div class="film-thumb'+(i===2?' is-focused':'')+'">'+photo(f.k,'',f.a)+'</div>';
+  }).join('');
+  return '<div class="stage-fill">'+
+      photo('sunset','stage-photo','全屏显示的日落海岸照片')+
+      '<div class="stage-vignette"></div>'+
+      '<div class="stage-scrim-top"></div>'+
+      '<div class="stage-scrim-bottom"></div>'+
+      '<div class="viewer-top">'+
+        '<span class="v-back">'+ic('chevronLeft',34)+'返回</span>'+
+        '<span class="v-counter">全部照片 · 12 / 248</span>'+
+        '<span class="v-close">'+ic('close',32)+'</span>'+
+      '</div>'+
+      stageBadge('pos-tr')+
+      '<div class="viewer-bottom">'+
+        '<div class="vb-info"><h3>冰岛 · 维克黑沙滩</h3>'+
+          '<p>2024-08-17 21:45 · 4032 × 3024 · RAW · NAS / 旅行</p></div>'+
+        '<div class="vb-tools">'+tools+'</div>'+
+        '<div class="filmstrip">'+film+'<span class="fs-label">胶片导航 · 左右键切换</span></div>'+
+      '</div>'+
+    '</div>';
+}
+
+/* ---------- Scene D: 屏保时钟 (FIXED DARK) ---------- */
+function sceneD(){
+  return '<div class="stage-fill">'+
+      photo('aurora','stage-photo','极光照片作为屏保背景')+
+      '<div class="standby-scrim"></div>'+
+      '<div class="stage-scrim-top"></div>'+
+      '<div class="standby-top">'+
+        '<span class="standby-brand">'+ic('photo',30)+'NAS 相册 · 屏保时钟</span>'+
+        stageBadge('')+
+      '</div>'+
+      '<div class="standby-main">'+
+        '<div class="clock-block">'+
+          '<div class="clock">21:45</div>'+
+          '<div class="clock-date">11 月 25 日 星期二</div>'+
+          '<div class="clock-sub">晚安，今天也辛苦了</div>'+
+        '</div>'+
+        '<div class="glass-stack">'+
+          '<div class="glass-card">'+
+            '<div class="weather-top"><span class="wc-sun">'+ic('sun',62)+'</span>'+
+              '<div><div class="wc-temp">22°<span>晴</span></div>'+
+              '<div class="wc-place">北京 · 海淀区</div></div></div>'+
+            '<div class="wc-extra">湿度 38% · 微风 2 级 · 体感 21°</div>'+
+          '</div>'+
+          '<div class="glass-card">'+
+            '<div class="gc-row"><span>正在轮播</span><span class="gc-count">08 / 24</span></div>'+
+            '<div class="gc-title">客厅影廊 · 北极光</div>'+
+            '<div class="gc-progress"><i style="width:38%"></i></div>'+
+            '<div class="gc-foot">下一张 · 30 秒后</div>'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+      '<div class="standby-bottom">'+
+        '<span class="sb-chip">'+ic('clock',27)+'每 30 秒切换</span>'+
+        '<span class="sb-chip">'+ic('moon',27)+'22:30 后息屏</span>'+
+        '<span class="sb-chip">'+ic('wifi',27)+'NAS 已连接</span>'+
+      '</div>'+
+    '</div>';
+}
+
+/* ---------- Scene registry ---------- */
+var SCENES = [
+  {key:'A',name:'媒体库 · 首页',sub:'浏览界面 · 随外观切换',stage:false,build:sceneA},
+  {key:'B',name:'设置 · 外观',sub:'两栏布局 · 色板实时预览',stage:false,build:sceneB},
+  {key:'C',name:'全屏看图',sub:'固定暗场 · 两列完全一致',stage:true,build:sceneC},
+  {key:'D',name:'屏保时钟',sub:'固定暗场 · 两列完全一致',stage:true,build:sceneD}
+];
+
+function headInner(m){
+  return '<span class="mch-dot" style="background:'+M[m].bg+'"></span>'+
+    '<span class="mch-txt"><b>'+M[m].name+'</b><small>bg '+M[m].bg+' · 浏览界面随外观切换</small></span>'+
+    '<span class="mch-tag">'+M[m].tag+'</span>';
+}
+function sceneCard(s,m){
+  var pill = s.stage
+    ? '<span class="mode-pill is-stage">固定暗场</span>'
+    : '<span class="mode-pill '+m+'" data-pill>'+M[m].short+'</span>';
+  var body = (s.key==='B') ? s.build(m) : s.build();
+  return '<figure class="scene-card">'+
+    '<figcaption class="scene-cap">'+
+      '<span class="scene-idx">'+s.key+'</span>'+
+      '<span class="scene-name">'+s.name+'</span>'+
+      '<span class="scene-sub">'+s.sub+'</span>'+pill+
+    '</figcaption>'+
+    '<div class="tv-frame">'+
+      '<div class="tv'+(s.stage?' is-stage':'')+'" data-mode="'+m+'" data-scene="'+s.key+'">'+body+'</div>'+
+      '<span class="frame-tag">1920 × 1080 · 3 m</span>'+
+    '</div>'+
+  '</figure>';
+}
+function modeColumn(m){
+  return '<section class="mode-col" data-col-mode="'+m+'">'+
+    '<div class="mode-col-head" data-col-head="'+m+'">'+headInner(m)+'</div>'+
+    '<div class="scenes">'+SCENES.map(function(s){return sceneCard(s,m);}).join('')+'</div>'+
+  '</section>';
+}
+
+/* ---------- Scale each 1920x1080 TV canvas to its frame width ---------- */
+var ro = null;
+function fitFrame(frame){
+  var w = frame.clientWidth;
+  if(!w) return;
+  var s = w/1920;
+  frame.style.setProperty('--tv-scale', s);
+  var tv = frame.querySelector('.tv');
+  if(tv) tv.style.transform = 'scale('+s+')';
+}
+function fitAll(){
+  document.querySelectorAll('.tv-frame').forEach(fitFrame);
+}
+function watchFrames(){
+  if(ro) ro.disconnect();
+  if(typeof ResizeObserver !== 'undefined'){
+    ro = new ResizeObserver(function(entries){
+      entries.forEach(function(e){ fitFrame(e.target); });
+    });
+    document.querySelectorAll('.tv-frame').forEach(function(f){ ro.observe(f); });
+  }
+  fitAll();
+}
+
+/* ---------- Token / contrast / note sections ---------- */
+function onColor(hex){
+  var h = hex.replace('#','');
+  if(h.length===3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  var n = parseInt(h,16);
+  var r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+  var lum = (0.2126*r + 0.7152*g + 0.0722*b)/255;
+  return lum > 0.58 ? '#0B1A26' : '#FFFFFF';
+}
+var KEY_TOKENS = [
+  ['bg','背景'],['bgElevated','抬升背景'],['surface','卡片'],['surfaceHigh','高亮面'],
+  ['textPrimary','主文本'],['textSecondary','次文本'],['textTertiary','三级文本'],
+  ['accent','强调色'],['accentAlt','辅助强调'],['danger','危险'],['warn','警示'],
+  ['focusRing','焦点环'],['stage','照片舞台 / 面板']
+];
+function renderTokens(){
+  document.getElementById('tokenGrid').innerHTML = KEY_TOKENS.map(function(t){
+    var k=t[0];
+    function sw(m){
+      var v=P[m][k];
+      return '<div class="tc-sw"><div class="tc-chip" style="background:'+v+';color:'+onColor(v.indexOf('#')===0?v:'#FFFFFF')+'">'+v+'</div>'+
+             '<div class="tc-meta">'+(m==='light'?'画廊白':'影院黑')+'</div></div>';
+    }
+    return '<div class="token-card"><div class="tc-name"><b>'+k+'</b><small>'+t[1]+'</small></div>'+
+      '<div class="tc-pair">'+sw('light')+sw('dark')+'</div></div>';
+  }).join('');
+}
+var SHARED = [
+  ['stageDark（舞台子树强制值）','#0B202F'],['scrimTop','rgba(0,0,0,.70)'],
+  ['scrimBottom','rgba(0,0,0,.85)'],['cinemaPanel','rgba(8,29,43,.80)']
+];
+function renderShared(){
+  document.getElementById('sharedItems').innerHTML = SHARED.map(function(s){
+    return '<span class="shared-item"><i style="background:'+s[1]+'"></i>'+s[0]+' <b>'+s[1]+'</b></span>';
+  }).join('');
+}
+var OTHER_VARS = ['surfaceGlass','surfaceSoft','inkOnAccent','textMuted','warm',
+  'divider','accentDim','accentAltDim','focusRingGlow','scrimTop','scrimBottom'];
+function renderVarTable(){
+  document.getElementById('varTable').innerHTML = OTHER_VARS.map(function(k){
+    return '<tr><td>'+k+'</td><td class="v">'+P.light[k]+'</td><td class="v">'+P.dark[k]+'</td></tr>';
+  }).join('');
+}
+var CONTRAST = [
+  {l:'浅色 · TextPrimary / bg',fg:'#0E1A28',bg:'#E9EEF4',r:'15.04:1',n:15.04},
+  {l:'浅色 · Accent / bg',fg:'#096494',bg:'#E9EEF4',r:'5.52:1',n:5.52},
+  {l:'深色 · TextTertiary / bg',fg:'#8C97A8',bg:'#06131E',r:'6.35:1',n:6.35},
+  {l:'浅色 · focusRing / 白',fg:'#0B3A5C',bg:'#FFFFFF',r:'11.84:1',n:11.84}
+];
+function renderContrast(){
+  document.getElementById('contrastGrid').innerHTML = CONTRAST.map(function(c){
+    return '<div class="cr-card">'+
+      '<div class="cr-top"><span class="cr-label">'+c.l+'</span>'+
+        '<span class="cr-pass">'+ic('check',12)+'AA 通过</span></div>'+
+      '<div class="cr-ratio">'+c.r+'</div>'+
+      '<div class="cr-pair"><i style="background:'+c.fg+'"></i><i style="background:'+c.bg+'"></i>'+
+        '<span>'+c.fg+' / '+c.bg+'</span></div>'+
+      '<div class="cr-bar"><i style="width:'+(c.n/16*100)+'%"></i></div>'+
+      '<div class="cr-foot">≥ 4.5:1 门槛</div>'+
+    '</div>';
+  }).join('');
+}
+var NOTES = [
+  ['10-foot UI 最小 16sp','远距离可读：正文最小 <code>16sp</code>，分区标题约 <code>28sp</code>，主视觉可达 <code>40sp</code> 以上，时钟用 200sp+ 的超轻字重。'],
+  ['不用纯白全屏','浅色底是雾白 <code>#E9EEF4</code>，卡片才是 <code>#FFFFFF</code>。避免 3 米观看时的整屏眩光与光晕。'],
+  ['焦点环反向','深色用白 <code>#FFFFFF</code>，浅色切换为墨蓝 <code>#0B3A5C</code>；始终 <code>3px</code> 描边 + 外发光 + <code>scale(1.05)</code> 放大。'],
+  ['强调色加深','accent 由 <code>#31B6ED</code> 加深为 <code>#096494</code>，在浅色底上仍保持 ≥ 4.5:1 的可读对比。'],
+  ['inkOnAccent 反向','深色模式按钮上用深墨 <code>#002232</code>，浅色模式翻转为纯白 <code>#FFFFFF</code>，保证强调色按钮上的文字始终清晰。'],
+  ['alpha 语义变量','divider / surfaceGlass / scrim 均按 alpha 定义并逐模式重定义；只有 stage、scrimTop、scrimBottom、cinemaPanel 是共享常量。']
+];
+function renderNotes(){
+  document.getElementById('notesGrid').innerHTML = NOTES.map(function(n,i){
+    return '<div class="note"><span class="note-n">'+(i+1)+'</span>'+
+      '<div><h4>'+n[0]+'</h4><p>'+n[1]+'</p></div></div>';
+  }).join('');
+}
+
+/* ---------- Mode switching ---------- */
+var state = {mode:'compare'};
+function updateSeg(){
+  document.querySelectorAll('.seg button').forEach(function(b){
+    var on = b.dataset.set === state.mode;
+    b.classList.toggle('is-active',on);
+    b.setAttribute('aria-selected',on?'true':'false');
+  });
+}
+function render(){
+  var g = document.getElementById('modeGrid');
+  var modes = state.mode==='compare' ? ['light','dark'] : [state.mode];
+  g.className = 'mode-grid '+(state.mode==='compare'?'is-compare':'is-single');
+  g.innerHTML = modes.map(modeColumn).join('');
+  watchFrames();
+}
+/* Pure light<->dark flip within single mode: change data-mode in place so all
+   themed properties animate over 250ms instead of rebuilding the DOM. */
+function retint(m){
+  document.querySelectorAll('#modeGrid .tv[data-mode]').forEach(function(t){
+    t.setAttribute('data-mode',m);
+  });
+  var col = document.querySelector('#modeGrid .mode-col');
+  if(col) col.setAttribute('data-col-mode',m);
+  var head = document.querySelector('#modeGrid [data-col-head]');
+  if(head){ head.setAttribute('data-col-head',m); head.innerHTML = headInner(m); }
+  document.querySelectorAll('#modeGrid [data-pill]').forEach(function(p){
+    p.className = 'mode-pill '+m; p.textContent = M[m].short;
+  });
+  document.querySelectorAll('#modeGrid [data-vchip]').forEach(function(c){
+    c.classList.toggle('is-active', c.dataset.vchip===m);
+  });
+  document.querySelectorAll('#modeGrid [data-current-mode]').forEach(function(e){
+    e.textContent = M[m].short;
+  });
+}
+function setMode(mode){
+  if(mode===state.mode) return;
+  var prev = state.mode;
+  state.mode = mode;
+  updateSeg();
+  if(prev!=='compare' && mode!=='compare') retint(mode);
+  else render();
+}
+document.querySelectorAll('.seg button').forEach(function(b){
+  b.addEventListener('click',function(){ setMode(b.dataset.set); });
+});
+document.addEventListener('keydown',function(e){
+  if(e.altKey||e.ctrlKey||e.metaKey) return;
+  if(e.key==='1') setMode('light');
+  else if(e.key==='2') setMode('dark');
+  else if(e.key==='3') setMode('compare');
+});
+window.addEventListener('resize',fitAll);
+
+/* ---------- Boot ---------- */
+document.getElementById('ruleIcon').innerHTML = ic('moon',34);
+renderTokens();
+renderShared();
+renderVarTable();
+renderContrast();
+renderNotes();
+updateSeg();
+render();
+})();
+</script>
+</body>
+</html>
