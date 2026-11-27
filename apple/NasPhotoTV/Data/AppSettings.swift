@@ -1,8 +1,48 @@
 import Foundation
 
+enum SaverDisplay: String, Codable, CaseIterable, Identifiable {
+    case clock, photos, wall
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .clock: return "时钟待机"
+        case .photos: return "纯照片"
+        case .wall: return "照片墙"
+        }
+    }
+
+    var next: Self {
+        switch self {
+        case .clock: return .photos
+        case .photos: return .wall
+        case .wall: return .clock
+        }
+    }
+}
+
+enum SlideshowMotion: String, CaseIterable, Codable {
+    case dissolve, slide, cut
+    var title: String {
+        switch self {
+        case .dissolve: return "叠化"
+        case .slide: return "滑动"
+        case .cut: return "直接切换"
+        }
+    }
+
+    var next: Self {
+        switch self {
+        case .dissolve: return .slide
+        case .slide: return .cut
+        case .cut: return .dissolve
+        }
+    }
+}
+
 /// 屏保配置（对齐 Android `ScreensaverSettings` 的常用子集 + 时钟样式）。
 struct ScreensaverSettings: Equatable, Codable {
-    var enabled: Bool = true
+    var enabled: Bool = false
+    var display: SaverDisplay = .clock
     /// 静止多久后进入屏保（秒）：30 / 60 / 120 / 300 / 600 / 1800
     var idleTimeoutSec: Int = 60
     /// 单张照片停留时长（秒）：5 / 10 / 15 / 30 / 60
@@ -25,6 +65,7 @@ struct ScreensaverSettings: Equatable, Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        display = try c.decodeIfPresent(SaverDisplay.self, forKey: .display) ?? .clock
         idleTimeoutSec = try c.decodeIfPresent(Int.self, forKey: .idleTimeoutSec) ?? 60
         photoIntervalSec = try c.decodeIfPresent(Int.self, forKey: .photoIntervalSec) ?? 10
         showDate = try c.decodeIfPresent(Bool.self, forKey: .showDate) ?? true
@@ -60,12 +101,23 @@ enum VideoFit: String, CaseIterable, Codable {
     }
 }
 
+enum VideoRotation: Int, Codable {
+    case upright = 0, clockwise = 90, inverted = 180, counterclockwise = 270
+
+    var next: VideoRotation { VideoRotation(rawValue: (rawValue + 90) % 360) ?? .upright }
+    var swapsAxes: Bool { self == .clockwise || self == .counterclockwise }
+    var title: String { "\(rawValue)°" }
+}
+
 struct PlaybackSettings: Equatable, Codable {
     /// 播完自动播下一个
     var autoPlayNext: Bool = true
     /// 单条循环
     var loopMode: Bool = false
     var videoFit: VideoFit = .automatic
+    var rotation: VideoRotation = .upright
+    var photoMotion: SlideshowMotion = .dissolve
+    var photoIntervalSec: Int = 5
 
     init() {}
 
@@ -74,6 +126,22 @@ struct PlaybackSettings: Equatable, Codable {
         autoPlayNext = try values.decodeIfPresent(Bool.self, forKey: .autoPlayNext) ?? true
         loopMode = try values.decodeIfPresent(Bool.self, forKey: .loopMode) ?? false
         videoFit = try values.decodeIfPresent(VideoFit.self, forKey: .videoFit) ?? .automatic
+        rotation = try values.decodeIfPresent(VideoRotation.self, forKey: .rotation) ?? .upright
+        photoMotion = try values.decodeIfPresent(SlideshowMotion.self, forKey: .photoMotion) ?? .dissolve
+        photoIntervalSec = max(3, try values.decodeIfPresent(Int.self, forKey: .photoIntervalSec) ?? 5)
+    }
+}
+
+enum TvAppearance: String, CaseIterable, Identifiable {
+    case dark, light, system
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .dark: return "深色 · 影院黑"
+        case .light: return "浅色 · 画廊白"
+        case .system: return "跟随系统"
+        }
     }
 }
 
@@ -92,6 +160,9 @@ final class AppSettings: ObservableObject {
     /// 开机自动重连上次 NAS（默认关）
     @Published var autoReconnect: Bool {
         didSet { defaults.set(autoReconnect, forKey: "nas.autoReconnect") }
+    }
+    @Published var appearance: TvAppearance {
+        didSet { defaults.set(appearance.rawValue, forKey: "tv.appearance") }
     }
     @Published var screensaver: ScreensaverSettings {
         didSet {
@@ -115,6 +186,7 @@ final class AppSettings: ObservableObject {
         password = defaults.string(forKey: "nas.password") ?? ""
         accessCode = defaults.string(forKey: "nas.accessCode") ?? ""
         autoReconnect = defaults.bool(forKey: "nas.autoReconnect")
+        appearance = defaults.string(forKey: "tv.appearance").flatMap(TvAppearance.init(rawValue:)) ?? .dark
         if let data = defaults.data(forKey: "screensaver.settings"),
            let saved = try? JSONDecoder().decode(ScreensaverSettings.self, from: data) {
             screensaver = saved

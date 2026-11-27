@@ -23,5 +23,6 @@ struct RootView: View {
             }
         }
         .background(Tv.Color.bg.ignoresSafeArea())
+        .preferredColorScheme(settings.appearance.colorScheme)
     }
 }

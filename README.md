@@ -6,7 +6,7 @@ Android TV 客户端（Kotlin + Jetpack Compose，单 Activity、纯 Compose）�
 局域网自动发现、WSS 加密登录、签名 HTTP、AccessToken 串流原片；屏保对标 iPhone StandBy ——
 大号时钟、照片氛围、防烧屏。另有原生 tvOS 版本，见 [apple/README.md](apple/README.md)。
 
-- 当前版本：Android `1.2.15`（versionCode 21） / tvOS `1.2.8`（build 14）
+- 当前版本：Android `1.2.15`（versionCode 21） / tvOS 开发版 `1.2.15`（build 21）
 - 技术栈：Kotlin 2.0.21 / AGP 8.7.3 / Compose BOM 2024.12.01 / Media3 1.5.1 / Coil 2.7.0 / OkHttp 4.12.0
 - 兼容范围：minSdk 24（Android 7.0）、targetSdk 34、compileSdk 35；`java.time` 通过脱糖支持
 - 仓库：[github.com/SMTM-PH/NasPhotoTV](https://github.com/SMTM-PH/NasPhotoTV)

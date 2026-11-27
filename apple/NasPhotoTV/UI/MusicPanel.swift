@@ -35,7 +35,7 @@ struct MusicEffect: View {
 struct MusicPanel: View {
 
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var server = MusicUploadServer()
+    @StateObject private var server = LocalUploadServer()
     @ObservedObject private var store = MusicStore.shared
     @ObservedObject private var settings = AppSettings.shared
 

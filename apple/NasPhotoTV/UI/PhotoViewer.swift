@@ -36,7 +36,9 @@ struct PhotoViewer: View {
     @State private var panX: CGFloat = 0
     @State private var panY: CGFloat = 0
     @State private var panoramaOffset: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var slideshowPlaying = false
+    @State private var preparedSlide: (index: Int, image: UIImage)?
     @State private var liveRequest = 0
     @State private var videoRequest: VideoSession?
     @State private var chromeNonce = 0
@@ -70,7 +72,10 @@ struct PhotoViewer: View {
         }
         .onChange(of: index) { _ in
             resetTransforms()
-            showChrome()
+            if !slideshowPlaying {
+                preparedSlide = nil
+                showChrome()
+            }
         }
         .onMoveCommand { direction in
             slideshowPlaying = false
@@ -125,11 +130,7 @@ struct PhotoViewer: View {
         }
         .task(id: slideshowPlaying) {
             guard slideshowPlaying else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                if Task.isCancelled { break }
-                await MainActor.run { advanceSlideshow() }
-            }
+            await playSlideshow()
         }
         .fullScreenCover(item: $videoRequest) { session in
             VideoPlayerView(items: session.items, initialIndex: session.index, contextTitle: session.title) {
@@ -151,6 +152,8 @@ struct PhotoViewer: View {
                         videoOverlay(item)
                     } else {
                         photoStage(item, geo: geo)
+                            .id(slideshowPlaying ? "slide-" + item.id : "photo")
+                            .transition(slideshowTransition)
                     }
                 } else {
                     Text("没有可显示的照片")
@@ -164,13 +167,22 @@ struct PhotoViewer: View {
         .ignoresSafeArea()
     }
 
+    private var slideshowTransition: AnyTransition {
+        guard slideshowPlaying, !reduceMotion else { return .identity }
+        switch settings.playback.photoMotion {
+        case .dissolve: return .opacity
+        case .slide: return .asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading))
+        case .cut: return .identity
+        }
+    }
+
     private func photoStage(_ item: MediaItem, geo: GeometryProxy) -> some View {
         let panoramic = item.isPanorama
         return ZStack {
             if panoramic && !zoomed {
                 panoramaImage(item, geo: geo)
             } else {
-                RemoteImage(url: item.url, contentMode: .fit)
+                photoImage(item, contentMode: .fit)
                     .ignoresSafeArea()
                     .scaleEffect(zoomed ? 2 : 1)
                     .offset(x: panX * geo.size.width, y: panY * geo.size.height)
@@ -204,9 +216,20 @@ struct PhotoViewer: View {
         let aspect = item.pixelSize.map { CGFloat($0.0) / CGFloat($0.1) } ?? 2
         let imageWidth = geo.size.height * aspect
         let travel = max(0, imageWidth - geo.size.width)
-        return RemoteImage(url: item.url, contentMode: .fill)
+        return photoImage(item, contentMode: .fill)
             .frame(width: imageWidth, height: geo.size.height)
             .offset(x: -travel * panoramaOffset)
+    }
+
+    @ViewBuilder
+    private func photoImage(_ item: MediaItem, contentMode: ContentMode) -> some View {
+        if let preparedSlide, preparedSlide.index == index {
+            Image(uiImage: preparedSlide.image)
+                .resizable()
+                .aspectRatio(contentMode: contentMode)
+        } else {
+            RemoteImage(url: item.url, contentMode: contentMode)
+        }
     }
 
     private func videoOverlay(_ item: MediaItem) -> some View {
@@ -506,21 +529,37 @@ struct PhotoViewer: View {
         showChrome()
     }
 
-    private func advanceSlideshow() {
-        guard items.count > 1 else { return }
-        var step = 1
-        while step <= items.count {
-            let candidate = (index + step) % items.count
-            if !items[candidate].isVideo {
-                index = candidate
-                return
+    private func playSlideshow() async {
+        let photos = items.indices.filter { !items[$0].isVideo }
+        guard !photos.isEmpty else { return }
+        var candidate = photos.firstIndex { $0 > index } ?? photos.startIndex
+        while !Task.isCancelled, slideshowPlaying {
+            let target = photos[candidate]
+            if photos.count == 1, target == index { return }
+            let item = items[target]
+            async let interval: Void = Task.sleep(for: .seconds(settings.playback.photoIntervalSec))
+            var decoded = await MediaImageLoader.image(at: item.url)
+            if decoded == nil, item.thumbnailUrl != item.url {
+                decoded = await MediaImageLoader.image(at: item.thumbnailUrl)
             }
-            step += 1
+            guard (try? await interval) != nil, !Task.isCancelled, slideshowPlaying else { return }
+            if let decoded {
+                let animation: Animation? = reduceMotion || settings.playback.photoMotion == .cut
+                    ? nil : .easeInOut(duration: 0.45)
+                withAnimation(animation) {
+                    preparedSlide = (target, decoded)
+                    index = target
+                }
+            }
+            candidate = photos.indices.contains(candidate + 1) ? candidate + 1 : photos.startIndex
         }
     }
 
     private func openVideo() {
-        videoRequest = VideoSession(items: items, index: index, title: contextTitle)
+        guard let current else { return }
+        let videos = items.filter(\.isVideo)
+        guard let start = videos.firstIndex(where: { $0.id == current.id }) else { return }
+        videoRequest = VideoSession(items: videos, index: start, title: contextTitle)
     }
 
     // MARK: - 格式化

@@ -55,21 +55,23 @@ final class MusicStore: ObservableObject {
 
 // MARK: - 上传服务（对标 Android MusicUploadServer：8899 起 10 个端口，token 路径鉴权）
 
-final class MusicUploadServer: ObservableObject {
+final class LocalUploadServer: ObservableObject {
 
-    private let token: String
+    private let token = UUID().uuidString.lowercased()
+    private let photoHandler: (@MainActor (Data) async -> (Int, String))?
+    private let photoSlot = DispatchSemaphore(value: 1)
     private var listenFd: Int32 = -1
     private var worker: Thread?
     @Published private(set) var urls: [String] = []
 
-    init() {
-        var bytes = [UInt8](repeating: 0, count: 6)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        token = bytes.map { String(format: "%02x", $0) }.joined()
+    init(photoHandler: (@MainActor (Data) async -> (Int, String))? = nil) {
+        self.photoHandler = photoHandler
     }
 
     func start() -> Bool {
-        for port in 8899..<8909 {
+        guard listenFd < 0 else { return true }
+        let ports = photoHandler == nil ? 8899..<8909 : 8910..<8920
+        for port in ports {
             let fd = socket(AF_INET, SOCK_STREAM, 0)
             guard fd >= 0 else { continue }
             var reuse: Int32 = 1
@@ -88,7 +90,7 @@ final class MusicUploadServer: ObservableObject {
                 urls = Self.lanAddresses().map { "http://\($0):\(port)/u/\(token)/" }
                 let capturedFd = fd
                 worker = Thread { Self.acceptLoop(fd: capturedFd, server: self) }
-                worker?.name = "music-upload"
+                worker?.name = "local-upload"
                 worker?.start()
                 return true
             }
@@ -98,12 +100,18 @@ final class MusicUploadServer: ObservableObject {
     }
 
     func stop() {
-        if listenFd >= 0 { close(listenFd); listenFd = -1 }
+        if listenFd >= 0 {
+            let fd = listenFd
+            listenFd = -1
+            shutdown(fd, SHUT_RDWR)
+            close(fd)
+        }
+        urls = []
         worker = nil
     }
 
-    private static func acceptLoop(fd: Int32, server: MusicUploadServer) {
-        while server.listenFd >= 0 {
+    private static func acceptLoop(fd: Int32, server: LocalUploadServer) {
+        while true {
             let client = accept(fd, nil, nil)
             if client < 0 { break }
             DispatchQueue.global(qos: .userInitiated).async {
@@ -114,6 +122,11 @@ final class MusicUploadServer: ObservableObject {
     }
 
     private func handle(client: Int32) {
+        var timeout = timeval(tv_sec: 15, tv_usec: 0)
+        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var noPipe: Int32 = 1
+        setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noPipe, socklen_t(MemoryLayout<Int32>.size))
         var buffer = [UInt8]()
         var chunk = [UInt8](repeating: 0, count: 4096)
         var headerEnd: Int?
@@ -148,12 +161,39 @@ final class MusicUploadServer: ObservableObject {
 
         switch (method, route) {
         case ("GET", ""), ("GET", "/"):
-            respond(client: client, code: 200, type: "text/html; charset=utf-8", body: pageHtml)
-        case ("GET", "/list"):
+            respond(client: client, code: 200, type: "text/html; charset=utf-8", body: photoHandler == nil ? pageHtml : Self.photoPage)
+        case ("GET", "/list") where photoHandler == nil:
             let names = MusicStore.shared.trackNames
             let json = "[" + names.map { "\"\($0.replacingOccurrences(of: "\"", with: "\\\""))\"" }.joined(separator: ",") + "]"
             respond(client: client, code: 200, type: "application/json; charset=utf-8", body: json)
-        case ("POST", _) where route.hasPrefix("/upload"):
+        case ("POST", "/upload") where photoHandler != nil:
+            guard let photoHandler, contentLength > 0, contentLength <= 32 * 1024 * 1024 else {
+                respond(client: client, code: 413, type: "text/plain; charset=utf-8", body: "照片需小于 32 MB")
+                return
+            }
+            guard photoSlot.wait(timeout: .now()) == .success else {
+                respond(client: client, code: 429, type: "text/plain; charset=utf-8", body: "电视正在保存另一张，请稍后再试")
+                return
+            }
+            defer { photoSlot.signal() }
+            var body = Data(buffer[end...])
+            while body.count < contentLength {
+                let n = chunk.withUnsafeMutableBytes { recv(client, $0.baseAddress, 4096, 0) }
+                guard n > 0 else { break }
+                body.append(contentsOf: chunk[..<n])
+            }
+            guard body.count == contentLength else {
+                respond(client: client, code: 400, type: "text/plain; charset=utf-8", body: "照片数据未传完")
+                return
+            }
+            let finished = DispatchSemaphore(value: 0)
+            Task { @MainActor in
+                let (status, message) = await photoHandler(body)
+                self.respond(client: client, code: status, type: "text/plain; charset=utf-8", body: message)
+                finished.signal()
+            }
+            finished.wait()
+        case ("POST", _) where photoHandler == nil && route.hasPrefix("/upload"):
             guard contentLength > 0 else {
                 respond(client: client, code: 400, type: "text/plain; charset=utf-8", body: "empty"); return
             }
@@ -209,7 +249,15 @@ final class MusicUploadServer: ObservableObject {
             + "Content-Type: \(type)\r\nContent-Length: \(bytes.count)\r\nConnection: close\r\n\r\n"
         var data = [UInt8](head.utf8)
         data.append(contentsOf: bytes)
-        _ = data.withUnsafeBytes { send(client, $0.baseAddress, data.count, 0) }
+        data.withUnsafeBytes { bytes in
+            guard let pointer = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                let count = send(client, pointer.advanced(by: offset), bytes.count - offset, 0)
+                guard count > 0 else { return }
+                offset += count
+            }
+        }
     }
 
     private static func lanAddresses() -> [String] {
@@ -241,6 +289,36 @@ final class MusicUploadServer: ObservableObject {
         }
         return false
     }
+
+    private static let photoPage = """
+        <!doctype html><html lang="zh"><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>NasPhotoTV · 手机传图</title>
+        <style>body{font:18px system-ui;background:#06131e;color:#f5f7fa;max-width:35rem;margin:auto;padding:2rem}
+        button,input{font:inherit;margin-top:1rem}button{padding:.7rem 1.4rem}p{line-height:1.6}</style>
+        <h1>手机传图</h1><p>选择照片上传，原图保存到电视已连接的飞牛 NAS。</p>
+        <input id="photo" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple>
+        <br><button id="send">开始上传</button><p id="status" role="status"></p>
+        <script>
+        const button=document.querySelector('#send'), status=document.querySelector('#status');
+        button.onclick=async()=>{
+          const photos=[...document.querySelector('#photo').files];
+          if(!photos.length){status.textContent='请先选择照片';return}
+          button.disabled=true;
+          let saved=0;
+          try{
+            for(const photo of photos){
+              status.textContent='正在保存 '+(saved+1)+' / '+photos.length;
+              const response=await fetch('./upload',{method:'POST',body:photo,headers:{'Content-Type':'application/octet-stream'}});
+              if(!response.ok)throw Error(await response.text());
+              saved++;
+            }
+            status.textContent='已保存 '+saved+' 张到飞牛 NAS';
+          }catch(error){status.textContent='本批已保存 '+saved+' 张。'+error.message+'。请先查看电视和飞牛相册再重试。'}
+          finally{button.disabled=false;document.querySelector('#photo').value=''}
+        };
+        </script></html>
+        """
 
     /// 与 Android `pageHtml()` 文案一致（用浏览器打开后上传一个音频文件）。
     private var pageHtml: String {

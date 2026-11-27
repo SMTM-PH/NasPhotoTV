@@ -45,28 +45,29 @@ final class MediaImageLoader: ObservableObject {
 
     private static let session = FnOsTransport.shared.session
 
+    @MainActor
     func load(_ urlString: String) async {
-        if urlString.isEmpty { return }
-        if let cached = Self.cache.object(forKey: urlString as NSString) {
-            image = cached
-            return
-        }
-        guard let url = URL(string: urlString) else { return }
+        let decoded = await Self.image(at: urlString)
+        if !Task.isCancelled { image = decoded }
+    }
+
+    static func image(at urlString: String) async -> UIImage? {
+        guard !Task.isCancelled, !urlString.isEmpty, let url = URL(string: urlString) else { return nil }
+        if let cached = cache.object(forKey: urlString as NSString) { return cached }
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
         if let token = FnOsTransport.shared.token {
             request.setValue(token, forHTTPHeaderField: "AccessToken")
         }
-        do {
-            let (data, response) = try await Self.session.data(for: request)
-            guard let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode),
-                  let decoded = UIImage(data: data) else { return }
-            let cost = decoded.size.width * decoded.size.height * decoded.scale * decoded.scale * 4
-            Self.cache.setObject(decoded, forKey: urlString as NSString, cost: Int(cost))
-            image = decoded
-        } catch {
-            // 失败保持占位图；网格刷新或重进后会重试
-        }
+        guard let (data, response) = try? await session.data(for: request),
+              !Task.isCancelled,
+              let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let source = UIImage(data: data) else { return nil }
+        let decoded = source.preparingForDisplay() ?? source
+        guard !Task.isCancelled else { return nil }
+        let cost = decoded.size.width * decoded.size.height * decoded.scale * decoded.scale * 4
+        cache.setObject(decoded, forKey: urlString as NSString, cost: Int(cost))
+        return decoded
     }
 }

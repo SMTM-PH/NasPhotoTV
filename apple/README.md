@@ -3,9 +3,10 @@
 > Android TV 版的 **原生 tvOS 重写**（Swift + SwiftUI）。与 Android 端共用同一套飞牛 fnOS 私有协议，
 > 在 Apple TV 上直连 NAS 看照片，并把电视变成电子相框（屏保）。
 
-- 版本：`1.2.8`（build 14），对齐 Android 1.2.8 的图库及文件夹协议
+- 当前开发版本：`1.2.15`（build 21），同步 Android TV 1.2.15 的画册、地点、回忆、手机传图和设置体验。
+- 同步内容：按目录补齐媒体地址与封面，幻灯片保留上一张直到下一张就绪，屏保叠化，视频按实际呈现尺寸判断方向并支持四档手动旋转。tvOS 已有分层目录和可滚动网格。
 - 工程：`apple/NasPhotoTV.xcodeproj`（SwiftUI，tvOS 17.0+，Bundle ID `com.nasphoto.tv.apple`）
-- 验证：在 Apple TV 4K（tvOS 27.2）模拟器连接真实 NAS，全库 5,294 项与统计一致，覆盖 11 个年份。目录接口实测 156 个目录、最深 8 层，其中一个深层目录含 19 项媒体。真机签名和播放仍待验证。
+- 此前版本实测：在 Apple TV 4K（tvOS 27.2）模拟器连接真实 NAS，全库 5,294 项与统计一致，覆盖 11 个年份。目录接口实测 156 个目录、最深 8 层，其中一个深层目录含 19 项媒体。真机签名和播放仍待验证。
 
 > **真实 NAS 实测（2026-11-17）**：登录 200ms、`user_photo/stat` 照片 4550 / 视频 744、图库首屏/相册 34/人物 36（老婆 516 张、我 421 张）/文件夹 2（Photos 2943 项）/智能分类 80（「天空云彩」821 张）/人物详情/缩略图下载（251KB JPEG）全部通过。截图见 [simulator-live-connected.png](simulator-live-connected.png)。
 
@@ -21,14 +22,19 @@
 | 局域网自动发现 NAS | ✅ | /24 逐 IP 探测 TCP 5667（350ms 超时）+ TLS 证书主题含 `fnOS` 判定 |
 | 图库（全库按年份） | ✅ | 读取 `gallery/timeline` 后按年分页校验数量，必要时按天补齐。支持文件名、日期和格式搜索 |
 | 相册（自己的 + 分享给我的） | ✅ | `album/list` + `album_grant/list_to_me` 去重合并 |
-| 文件夹 | ✅ | 根目录、子目录与媒体分别请求，按进入的层级加载 |
+| 文件夹 | ✅ | 根目录、子目录与媒体分别请求，按进入的层级加载，并批量获取该层封面 |
 | 人物 | ✅ | `ai-person/list` + 按天时间线逐日翻页拉全（对齐 Android 1.2.3 修复）+ 屏保人物照片池 |
 | 智能分类（场景事物） | ✅ | `ai-smart-rec/categories` + `magic-search/do` 语义搜索，旧版响应走 `gallery/getOne` 补全 |
+| 地点 | ✅ | 读取飞牛地图聚合，复用 Android 的离线市界和城市索引。打开地点后按范围分页读取媒体 |
+| 艺术画册 | ✅ | 每年一本。按月份翻页，再选日期打开当天原片 |
+| 回忆与瀑布浏览 | ✅ | 预览飞牛智能分类。聚焦底部分类按下键，或选择「瀑布浏览」打开分类网格 |
+| 手机扫码传图 | ✅ | 同局域网打开二维码。以原始文件传入飞牛相册默认文件夹，成功后电视显示预览 |
+| 外观和设置预览 | ✅ | 浅色、深色和跟随系统。设置按功能分组，右侧预览放映转场和屏保 |
 | 收藏 | ✅ | NAS `isCollect` ∪ 本地 `FavoritesStore`（按账号分区 UserDefaults），看图页可切换 |
-| 视频播放 | ✅ | AVPlayer 自建控制条：←→ 快退/快进 10 秒、播放暂停切换、3.2s 自动隐藏、自动连播、单条循环、竖屏自动/完整/填满、错误文案 |
+| 视频播放 | ✅ | AVPlayer 自建控制条：←→ 快退/快进 10 秒、播放暂停切换、3.2s 自动隐藏、自动连播、单条循环、竖屏自动/完整/填满、四档旋转、错误文案 |
 | 实况照片按需播放 | ✅ | 静音、播一次、角标 `LIVE · 实况`、提示 `实况播放中 · 播完自动回到静态` |
-| 全屏看图增强 | ✅ | 2× 放大 + ±0.5 平移、全景 0.33 步长巡览（贴边翻页）、5s 幻灯片跳过视频、工具条 5 chip、胶片条、信息 HUD |
-| 屏保 | ✅ | 5 种时钟样式（←→ 切换）、日期/夜间调暗/Ken Burns 开关、人物照片池、退出只按键 |
+| 全屏看图增强 | ✅ | 2× 放大 + ±0.5 平移、全景 0.33 步长巡览（贴边翻页）、5s 幻灯片预加载下一张并跳过视频、工具条 5 chip、胶片条、信息 HUD |
+| 屏保 | ✅ | 5 种时钟样式（←→ 切换）、日期/夜间调暗/Ken Burns 开关、人物照片池、预加载与叠化、退出只按键 |
 | 屏保背景音乐 + 手机上传 | ✅ | 面板打开期间启动 8899–8908 本地 HTTP 服务（token 路径鉴权、`/upload?name=`、`/list`），AVAudioPlayer 单曲循环 |
 | 访问码（访问控制网关） | ✅ | `/access_code_verify` + `x-access-code`，HTTP 401 自动重试 |
 | 设置页 | ✅ | 待机档位 `[30,60,120,300,600,1800]`、停留档位 `[5,10,15,30,60]`、时钟样式、播放、音乐、关于 |
@@ -93,7 +99,7 @@ xcrun simctl launch booted com.nasphoto.tv.apple
 
 ### Release 与真机分发
 
-[GitHub tvOS 1.2.8 预览版](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/tvos-v1.2.8)
+[上次发布的 GitHub tvOS 1.2.8 预览版](https://github.com/SMTM-PH/NasPhotoTV/releases/tag/tvos-v1.2.8)
 提供模拟器安装包和未签名真机归档。将模拟器 ZIP 解压后，用 `xcrun simctl install <模拟器 UDID> NasPhotoTV.app` 安装。
 
 真机分发需在 Xcode **Settings → Accounts** 登录 Apple Developer 团队，再在 **Signing & Capabilities** 指定团队。

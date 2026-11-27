@@ -8,11 +8,12 @@ struct HomeView: View {
     var onDisconnect: () -> Void
 
     enum Tab: String, CaseIterable, Identifiable {
+        case smart = "回忆"
         case gallery = "图库"
         case albums = "相册"
         case folders = "文件夹"
         case people = "人物"
-        case smart = "智能分类"
+        case places = "地点"
         case favorites = "收藏"
         case settings = "设置"
         var id: String { rawValue }
@@ -27,7 +28,7 @@ struct HomeView: View {
 
     /// 统一的集合卡片（相册 / 文件夹 / 人物 / 智能分类）
     struct Collection: Identifiable, Hashable {
-        enum Kind: String { case album, folder, person, smart }
+        enum Kind: String { case album, folder, person, smart, place }
         let kind: Kind
         let rawId: String
         let name: String
@@ -41,19 +42,23 @@ struct HomeView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var favorites = FavoritesStore.shared
 
-    @State private var tab: Tab = .gallery
+    @State private var tab: Tab = .smart
     @State private var items: [MediaItem] = []
     @State private var yearGroups: [YearGroup] = []
     @State private var albums: [Album] = []
     @State private var folders: [NasFolder] = []
     @State private var people: [Person] = []
     @State private var smartAlbums: [Album] = []
+    @State private var places: [Album] = []
+    @State private var showArtBook = false
+    @State private var showPhonePhotos = false
     @State private var favoriteItems: [MediaItem] = []
     @State private var screensaverPhotos: [MediaItem] = []
     @State private var displayAlbumIDs: Set<String> = []
     @State private var screensaverSourceLoading = true
     @State private var screensaverSourceError: String?
     @State private var hasLoadedLibrary = false
+    @State private var libraryRevision = 0
     @State private var searchText = ""
     @State private var searchResults: [MediaItem] = []
     @State private var loading = true
@@ -82,6 +87,7 @@ struct HomeView: View {
                 viewer = nil
                 touch()
             }
+            .preferredColorScheme(.dark)
         }
         .fullScreenCover(item: $openCollection) { collection in
             NavigationStack {
@@ -91,17 +97,24 @@ struct HomeView: View {
                     }
             }
         }
+        .fullScreenCover(isPresented: $showArtBook, onDismiss: { touch(); focusedId = "art-book" }) {
+            ArtBookView(items: items) { showArtBook = false }
+        }
+        .fullScreenCover(isPresented: $showPhonePhotos, onDismiss: { touch(); focusedId = "phone-photo" }) {
+            PhonePhotoPanel(repository: repository) { Task { await load() } }
+        }
         .fullScreenCover(isPresented: $screensaverActive) {
             ScreensaverView(photos: screensaverPhotos, settings: settings) {
                 screensaverActive = false
                 touch()
             }
+            .preferredColorScheme(.dark)
         }
         .onAppear {
             favorites.load(accountId: settings.username)
             displayAlbumIDs = settings.displayAlbumIDs()
         }
-        .task(id: ScreensaverSource(libraryReady: hasLoadedLibrary, albumIDs: displayAlbumIDs)) {
+        .task(id: ScreensaverSource(libraryReady: hasLoadedLibrary, revision: libraryRevision, albumIDs: displayAlbumIDs)) {
             await loadScreensaverPhotos()
         }
         .onChange(of: focusedId) { _ in touch() }
@@ -136,25 +149,41 @@ struct HomeView: View {
                 let isActive = tab == candidate
                 Button { tab = candidate } label: {
                     Text(candidate.rawValue)
-                        .font(.system(size: Tv.Font.caption, weight: .semibold))
+                        .font(.system(size: Tv.Font.body, weight: .semibold))
                         .padding(.horizontal, Tv.Dimen.spaceM)
                         .padding(.vertical, 10)
                         .background(Capsule().fill(isActive ? Tv.Color.accent : Tv.Color.surface))
                         .foregroundColor(isActive ? Tv.Color.bg : Tv.Color.textSecondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(TvRemoteButtonStyle())
                 .focused($focusedId, equals: "tab-\(candidate.rawValue)")
                 .tvFocus(focusedId == "tab-\(candidate.rawValue)")
             }
-            Spacer()
+            Spacer(minLength: 0)
+            navShortcut("艺术画册", icon: "book", id: "art-book") { showArtBook = true }
+                .disabled(!hasLoadedLibrary)
+            navShortcut("传图", icon: "qrcode", id: "phone-photo") { showPhonePhotos = true }
         }
+    }
+
+
+    private func navShortcut(_ title: String, icon: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.system(size: Tv.Font.body, weight: .semibold))
+                .padding(Tv.Dimen.spaceS)
+                .background(Tv.Color.surface, in: Capsule())
+        }
+        .buttonStyle(TvRemoteButtonStyle())
+        .focused($focusedId, equals: id)
+        .tvFocus(focusedId == id)
     }
 
     @ViewBuilder
     private var content: some View {
-        if loading {
+        if loading && [.gallery, .albums, .favorites].contains(tab) {
             centered(Text("正在从 NAS 加载照片…").font(.system(size: Tv.Font.body)).foregroundColor(Tv.Color.textSecondary))
-        } else if let loadError, items.isEmpty {
+        } else if let loadError, items.isEmpty, [.gallery, .albums, .favorites].contains(tab) {
             VStack(spacing: Tv.Dimen.spaceL) {
                 Spacer()
                 Text("加载失败")
@@ -165,7 +194,7 @@ struct HomeView: View {
                     .foregroundColor(Tv.Color.textSecondary)
                     .multilineTextAlignment(.center)
                 Button("重试") { Task { await load() } }
-                    .buttonStyle(.plain)
+                    .buttonStyle(TvRemoteButtonStyle())
                     .focused($focusedId, equals: "retry")
                     .tvFocus(focusedId == "retry")
                 Spacer()
@@ -193,7 +222,16 @@ struct HomeView: View {
             case .people:
                 collectionContent(collections: personCollections, emptyText: "还没有人物分组")
             case .smart:
-                collectionContent(collections: smartCollections, emptyText: "还没有智能分类")
+                if collectionLoading || collectionError != nil || smartCollections.isEmpty {
+                    collectionContent(collections: smartCollections, emptyText: "请先在飞牛相册开启 AI 识别")
+                } else {
+                    MemoriesView(collections: smartCollections, focus: $focusedId) { openCollection = $0 }
+                }
+            case .places:
+                collectionContent(collections: places.map {
+                    Collection(kind: .place, rawId: $0.id, name: $0.name, coverUrl: $0.coverUrl,
+                               itemCount: $0.itemCount, subtitle: $0.subtitle, isPerson: false)
+                }, emptyText: "飞牛相册还没有带位置的照片")
             case .favorites:
                 FavoritesTab(items: favoriteItems, focusedId: $focusedId) { media, index in
                     viewer = ViewerSession(items: media, index: index)
@@ -201,6 +239,7 @@ struct HomeView: View {
             case .settings:
                 SettingsTab(
                     settings: settings, albums: albums, displayAlbumIDs: $displayAlbumIDs,
+                    previewPhotos: screensaverPhotos,
                     screensaverStatus: screensaverSourceError ?? (screensaverSourceLoading ? "加载中…" : ""),
                     focusedId: $focusedId,
                     onPreview: { if !screensaverSourceLoading { screensaverActive = true } },
@@ -240,7 +279,7 @@ struct HomeView: View {
     }
 
     static func folderCollection(_ folder: NasFolder) -> Collection {
-        Collection(kind: .folder, rawId: folder.id, name: folder.name, coverUrl: "",
+        Collection(kind: .folder, rawId: folder.id, name: folder.name, coverUrl: folder.coverUrl,
                    itemCount: folder.photoCount + folder.videoCount,
                    subtitle: folder.path, isPerson: false)
     }
@@ -266,7 +305,7 @@ struct HomeView: View {
             Color.clear
                 .frame(width: 0, height: 0)
                 .onChange(of: context.date) { date in
-                    guard !screensaverActive, viewer == nil, openCollection == nil else { return }
+                    guard !screensaverActive, !showArtBook, !showPhonePhotos, viewer == nil, openCollection == nil else { return }
                     guard settings.screensaver.enabled, !screensaverSourceLoading else { return }
                     let timeout = max(15, settings.screensaver.idleTimeoutSec)
                     if date.timeIntervalSince(lastInteraction) >= Double(timeout) {
@@ -290,6 +329,7 @@ struct HomeView: View {
             yearGroups = makeYearGroups(items)
             albums = (try? await albumList) ?? []
             hasLoadedLibrary = true
+            libraryRevision += 1
         } catch {
             loadError = FnOsApi.describe(error, access: repository.access)
             let pending = await repository.hasPendingTwoFactor()
@@ -300,6 +340,7 @@ struct HomeView: View {
 
     private struct ScreensaverSource: Equatable {
         let libraryReady: Bool
+        let revision: Int
         let albumIDs: Set<String>
     }
 
@@ -311,9 +352,7 @@ struct HomeView: View {
         screensaverPhotos = []
         do {
             if selection.isEmpty {
-                let portraits = (try? await repository.getPeoplePhotos()) ?? []
-                try Task.checkCancellation()
-                screensaverPhotos = portraits.isEmpty ? repository.screensaverPhotos : portraits
+                screensaverSourceError = "请先选择客厅展示相册"
             } else {
                 var seen = Set<String>()
                 var photos: [MediaItem] = []
@@ -344,6 +383,7 @@ struct HomeView: View {
                 folders = roots
             case .people: people = try await repository.getPeople()
             case .smart: smartAlbums = try await repository.getSmartAlbums()
+            case .places: places = try await repository.getPlaces()
             case .favorites: favoriteItems = try await repository.getFavorites(favorites)
             default: break
             }
@@ -523,10 +563,9 @@ struct MediaCard: View {
     var body: some View {
         Button(action: onSelect) {
             VStack(alignment: .leading, spacing: Tv.Dimen.spaceXs) {
-                RemoteImage(url: item.thumbnailUrl)
-                    .aspectRatio(1, contentMode: .fill)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 240)
+                Color.clear
+                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                    .overlay { RemoteImage(url: item.thumbnailUrl) }
                     .clipShape(RoundedRectangle(cornerRadius: Tv.Dimen.radiusM))
                 HStack {
                     Text(item.title)
@@ -539,9 +578,10 @@ struct MediaCard: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(6)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(TvRemoteButtonStyle())
         .focused(focusedId, equals: focusKey)
         .tvFocus(focusedId.wrappedValue == focusKey)
     }
@@ -549,7 +589,7 @@ struct MediaCard: View {
 
 // MARK: - 集合网格（相册 / 文件夹 / 人物 / 智能分类）
 
-private struct CollectionsTab: View {
+struct CollectionsTab: View {
 
     let collections: [HomeView.Collection]
     var focusedId: FocusState<String?>.Binding
@@ -605,7 +645,14 @@ private struct CollectionCard: View {
                         Spacer()
                     }
                 } else {
-                    RemoteImage(url: collection.coverUrl)
+                    ZStack {
+                        if collection.kind == .folder && collection.coverUrl.isEmpty {
+                            RoundedRectangle(cornerRadius: Tv.Dimen.radiusM).fill(Tv.Color.surfaceHigh)
+                            Image(systemName: "folder").foregroundStyle(Tv.Color.textSecondary)
+                        } else {
+                            RemoteImage(url: collection.coverUrl)
+                        }
+                    }
                         .frame(height: 180)
                         .frame(maxWidth: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: Tv.Dimen.radiusM))
@@ -629,7 +676,7 @@ private struct CollectionCard: View {
             }
             .padding(6)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(TvRemoteButtonStyle())
         .focused(focusedId, equals: focusKey)
         .tvFocus(focusedId.wrappedValue == focusKey)
     }
@@ -680,8 +727,16 @@ struct CollectionDetailView: View {
                                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 300))]) {
                                     ForEach(children) { folder in
                                         NavigationLink(value: HomeView.folderCollection(folder)) {
-                                            Label(folder.name, systemImage: "folder")
-                                                .lineLimit(2)
+                                            VStack(alignment: .leading, spacing: Tv.Dimen.spaceXs) {
+                                                if !folder.coverUrl.isEmpty {
+                                                    RemoteImage(url: folder.coverUrl)
+                                                        .frame(height: 120)
+                                                        .clipped()
+                                                }
+                                                Label(folder.name, systemImage: "folder")
+                                                    .lineLimit(1)
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .leading)
                                         }
                                     }
                                 }
@@ -708,6 +763,7 @@ struct CollectionDetailView: View {
         }
         .fullScreenCover(item: $viewer) { session in
             PhotoViewer(items: session.items, initialIndex: session.index) { viewer = nil }
+                .preferredColorScheme(.dark)
         }
         .task {
             do {
@@ -719,6 +775,7 @@ struct CollectionDetailView: View {
                     (children, media) = try await (subfolders, files)
                 case .person: media = try await repository.getPersonPhotos(personId: collection.rawId)
                 case .smart: media = try await repository.getSmartAlbumMedia(albumId: collection.rawId)
+                case .place: media = try await repository.getPlaceMedia(id: collection.rawId)
                 }
             } catch {
                 self.error = FnOsApi.describe(error, access: repository.access)
@@ -753,60 +810,49 @@ private struct SettingsTab: View {
     @ObservedObject var settings: AppSettings
     let albums: [Album]
     @Binding var displayAlbumIDs: Set<String>
+    let previewPhotos: [MediaItem]
     let screensaverStatus: String
     var focusedId: FocusState<String?>.Binding
     var onPreview: () -> Void
     var onDisconnect: () -> Void
 
+    private enum Group: String, CaseIterable, Identifiable {
+        case appearance = "外观", screensaver = "屏保", playback = "放映与视频"
+        case music = "音乐", connection = "NAS", about = "关于"
+        var id: String { rawValue }
+    }
+
+    @State private var active: Group = .appearance
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Tv.Dimen.spaceL) {
-                section("屏保与待机") {
-                    row("自动进入屏保", value: settings.screensaver.enabled ? "开" : "关") { settings.screensaver.enabled.toggle() }
-                    row("静止多久进入", value: settings.formatIdleTimeout()) { settings.cycleIdleTimeout() }
-                    row("单张照片停留", value: "\(settings.screensaver.photoIntervalSec) 秒") { settings.cyclePhotoInterval() }
-                    row("展示相册", value: displayAlbumIDs.isEmpty ? "自动" : "已选 \(displayAlbumIDs.count) 个") {
-                        openAlbumPicker = true
+        VStack(alignment: .leading, spacing: Tv.Dimen.spaceM) {
+            HStack(spacing: Tv.Dimen.spaceM) {
+                ForEach(Group.allCases) { group in
+                    let key = "settings-group-" + group.id
+                    Button {
+                        active = group
+                    } label: {
+                        Text(group.rawValue)
+                            .padding(.horizontal, Tv.Dimen.spaceM).padding(.vertical, Tv.Dimen.spaceS)
+                            .foregroundStyle(group == active ? Tv.Color.bg : Tv.Color.textPrimary)
+                            .background(group == active ? Tv.Color.accent : Tv.Color.surface, in: Capsule())
                     }
-                    row("预览屏保", value: screensaverStatus, action: onPreview)
-                    row("显示农历", value: settings.screensaver.showLunarDate ? "开" : "关") {
-                        settings.screensaver.showLunarDate.toggle()
-                    }
-                    row("显示日期", value: settings.screensaver.showDate ? "开" : "关") { settings.screensaver.showDate.toggle() }
-                    row("夜间调暗", value: settings.screensaver.nightDim ? "开" : "关") { settings.screensaver.nightDim.toggle() }
-                    row("Ken Burns 防烧屏", value: settings.screensaver.kenBurns ? "开" : "关") { settings.screensaver.kenBurns.toggle() }
-                    row("时钟样式", value: Self.clockLabel(settings.screensaver.clockStyle)) { settings.screensaver.clockStyle = Self.nextClock(settings.screensaver.clockStyle) }
-                }
-
-                section("播放设置") {
-                    row("竖屏视频画面", value: settings.playback.videoFit.title) {
-                        settings.playback.videoFit = settings.playback.videoFit.next
-                    }
-                    row("播完自动播下一个", value: settings.playback.autoPlayNext ? "开" : "关") { settings.playback.autoPlayNext.toggle() }
-                    row("单条循环", value: settings.playback.loopMode ? "开" : "关") { settings.playback.loopMode.toggle() }
-                }
-
-                section("背景音乐") {
-                    row("幻灯片 / 屏保时播放", value: settings.screensaver.musicEnabled ? "开" : "关") { settings.screensaver.musicEnabled.toggle() }
-                    row("音量", value: "\(Int(settings.screensaver.musicVolume * 100))%") {
-                        settings.screensaver.musicVolume = settings.screensaver.musicVolume >= 0.9 ? 0.3 : settings.screensaver.musicVolume + 0.2
-                    }
-                    row("上传背景音乐", value: MusicStore.shared.latestName ?? "未上传") { openMusicPanel = true }
-                }
-
-                section("NAS 连接") {
-                    row("地址", value: "\(settings.access.baseUrl)", action: {})
-                    row("账号", value: settings.username, action: {})
-                    row("开机自动重连", value: settings.autoReconnect ? "开" : "关") { settings.autoReconnect.toggle() }
-                    row("断开连接", value: "") { onDisconnect() }
-                }
-
-                section("关于") {
-                    row("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "", action: {})
-                    row("数据来源", value: "飞牛 fnOS · 局域网直连原片", action: {})
+                    .buttonStyle(TvRemoteButtonStyle())
+                    .focused(focusedId, equals: key)
+                    .tvFocus(focusedId.wrappedValue == key)
+                    .accessibilityAddTraits(group == active ? .isSelected : [])
                 }
             }
-            .padding(.bottom, Tv.Dimen.spaceXl)
+            HStack(alignment: .top, spacing: Tv.Dimen.spaceL) {
+                ScrollView {
+                    controls
+                        .padding(Tv.Dimen.spaceS)
+                }
+                .id(active.id)
+                .frame(maxWidth: .infinity)
+                preview
+                    .frame(maxWidth: .infinity)
+            }
         }
         .sheet(isPresented: $openMusicPanel) { MusicPanel() }
         .sheet(isPresented: $openAlbumPicker) {
@@ -834,6 +880,99 @@ private struct SettingsTab: View {
         }
     }
 
+    @ViewBuilder private var controls: some View {
+        switch active {
+        case .appearance:
+            section("外观模式") {
+                ForEach(TvAppearance.allCases) { mode in
+                    row(mode.title, value: settings.appearance == mode ? "当前使用" : "") {
+                        settings.appearance = mode
+                    }
+                }
+            }
+        case .screensaver:
+            section("屏保与待机") {
+                row("自动进入屏保", value: settings.screensaver.enabled ? "开" : "关") { settings.screensaver.enabled.toggle() }
+                row("静止多久进入", value: settings.formatIdleTimeout()) { settings.cycleIdleTimeout() }
+                row("单张照片停留", value: "\(settings.screensaver.photoIntervalSec) 秒") { settings.cyclePhotoInterval() }
+                row("展示相册", value: displayAlbumIDs.isEmpty ? "未选择" : "已选 \(displayAlbumIDs.count) 个") {
+                    openAlbumPicker = true
+                }
+                row("屏保画面", value: settings.screensaver.display.title) {
+                    settings.screensaver.display = settings.screensaver.display.next
+                }
+                row("预览屏保", value: screensaverStatus, action: onPreview)
+                row("显示农历", value: settings.screensaver.showLunarDate ? "开" : "关") {
+                    settings.screensaver.showLunarDate.toggle()
+                }
+                row("显示日期", value: settings.screensaver.showDate ? "开" : "关") { settings.screensaver.showDate.toggle() }
+                row("夜间调暗", value: settings.screensaver.nightDim ? "开" : "关") { settings.screensaver.nightDim.toggle() }
+                row("Ken Burns 防烧屏", value: settings.screensaver.kenBurns ? "开" : "关") { settings.screensaver.kenBurns.toggle() }
+                row("时钟样式", value: Self.clockLabel(settings.screensaver.clockStyle)) { settings.screensaver.clockStyle = Self.nextClock(settings.screensaver.clockStyle) }
+            }
+
+        case .playback:
+            section("播放设置") {
+                row("照片转场", value: settings.playback.photoMotion.title) {
+                    settings.playback.photoMotion = settings.playback.photoMotion.next
+                }
+                row("放映停留", value: "\(settings.playback.photoIntervalSec) 秒") {
+                    let durations = [3, 5, 10, 15, 30, 60]
+                    settings.playback.photoIntervalSec =
+                        durations.first { $0 > settings.playback.photoIntervalSec } ?? durations[0]
+                }
+                row("视频默认旋转", value: settings.playback.rotation.title) {
+                    settings.playback.rotation = settings.playback.rotation.next
+                }
+                row("竖屏视频画面", value: settings.playback.videoFit.title) {
+                    settings.playback.videoFit = settings.playback.videoFit.next
+                }
+                row("播完自动播下一个", value: settings.playback.autoPlayNext ? "开" : "关") { settings.playback.autoPlayNext.toggle() }
+                row("单条循环", value: settings.playback.loopMode ? "开" : "关") { settings.playback.loopMode.toggle() }
+            }
+
+        case .music:
+            section("背景音乐") {
+                row("幻灯片 / 屏保时播放", value: settings.screensaver.musicEnabled ? "开" : "关") { settings.screensaver.musicEnabled.toggle() }
+                row("音量", value: "\(Int(settings.screensaver.musicVolume * 100))%") {
+                    settings.screensaver.musicVolume = settings.screensaver.musicVolume >= 0.9 ? 0.3 : settings.screensaver.musicVolume + 0.2
+                }
+                row("上传背景音乐", value: MusicStore.shared.latestName ?? "未上传") { openMusicPanel = true }
+            }
+
+        case .connection:
+            section("NAS 连接") {
+                row("地址", value: "\(settings.access.baseUrl)", action: {})
+                row("账号", value: settings.username, action: {})
+                row("开机自动重连", value: settings.autoReconnect ? "开" : "关") { settings.autoReconnect.toggle() }
+                row("断开连接", value: "") { onDisconnect() }
+            }
+
+        case .about:
+            section("关于") {
+                row("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "", action: {})
+                row("数据来源", value: "飞牛 fnOS · 局域网直连原片", action: {})
+            }
+        }
+    }
+
+    @ViewBuilder private var preview: some View {
+        switch active {
+        case .appearance:
+            SettingsAppearancePreview(current: settings.appearance)
+        case .playback:
+            SettingsMotionPreview(photos: previewPhotos, motion: settings.playback.photoMotion)
+        case .screensaver:
+            SettingsSaverPreview(photos: previewPhotos, settings: settings.screensaver)
+        case .music:
+            SettingsSummary(title: "背景音乐", text: "手机和电视连接同一局域网后，可以上传自己的音乐。")
+        case .connection:
+            SettingsSummary(title: "飞牛 NAS", text: "当前账号只读取有权限的相册。可以返回连接页更换账号。")
+        case .about:
+            SettingsSummary(title: "NAS Photo TV", text: "在 Apple TV 上看飞牛相册。")
+        }
+    }
+
     @State private var openMusicPanel = false
     @State private var openAlbumPicker = false
 
@@ -858,7 +997,7 @@ private struct SettingsTab: View {
             .padding(.vertical, 16)
             .background(RoundedRectangle(cornerRadius: Tv.Dimen.radiusM).fill(Tv.Color.surface))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(TvRemoteButtonStyle())
         .focused(focusedId, equals: key)
         .tvFocus(focusedId.wrappedValue == key)
     }

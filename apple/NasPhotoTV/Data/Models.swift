@@ -93,6 +93,7 @@ struct NasFolder: Identifiable, Hashable {
     var name: String
     var photoCount: Int
     var videoCount: Int
+    var coverUrl: String = ""
 }
 
 /// 飞牛登录会话（WebSocket 登录成功后的凭证）。

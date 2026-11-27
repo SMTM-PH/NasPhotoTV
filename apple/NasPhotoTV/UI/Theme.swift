@@ -1,26 +1,41 @@
 import SwiftUI
+import UIKit
 
 /// NAS Photo TV 设计规范（Design Tokens）—— 与 Android 端 `Tokens.kt` 对齐。
 /// 10-foot UI：按 1920×1080 逻辑画布设计，Apple TV 上 1pt ≈ 2px（1080p）。
 enum Tv {
     enum Color {
-        static let bg = SwiftUI.Color(hex: 0x06131E)          // 深空黑（带冷调）
-        static let bgElevated = SwiftUI.Color(hex: 0x12141B)
-        static let surface = SwiftUI.Color(hex: 0x1A1D26)
-        static let surfaceHigh = SwiftUI.Color(hex: 0x252935)
-        static let stage = SwiftUI.Color(hex: 0x0B202F)       // 客厅影廊的照片舞台
-        static let surfaceSoft = SwiftUI.Color(hex: 0x122A3A)
+        static let bg = adaptive(dark: 0x06131E, light: 0xE9EEF4)
+        static let bgElevated = adaptive(dark: 0x12141B, light: 0xF3F6FA)
+        static let surface = adaptive(dark: 0x1A1D26, light: 0xFFFFFF)
+        static let surfaceHigh = adaptive(dark: 0x252935, light: 0xDDE5EE)
+        static let stage = adaptive(dark: 0x0B202F, light: 0xDDE7F0)
+        static let surfaceSoft = adaptive(dark: 0x122A3A, light: 0xD7E6F1)
         static let cinemaPanel = SwiftUI.Color(hex: 0x081D2B, alpha: 0.8)
-        static let textPrimary = SwiftUI.Color(hex: 0xF5F7FA)
-        static let textSecondary = SwiftUI.Color(hex: 0xA9B0BE)
-        static let textTertiary = SwiftUI.Color(hex: 0x6F7787)
-        static let accent = SwiftUI.Color(hex: 0x31B6ED)      // 冰蓝主色
-        static let accentDim = SwiftUI.Color(hex: 0x31B6ED, alpha: 0.2)
-        static let accentAlt = SwiftUI.Color(hex: 0x5B8CFF)   // 星蓝
-        static let danger = SwiftUI.Color(hex: 0xFF6B6B)
-        static let divider = SwiftUI.Color(hex: 0xFFFFFF, alpha: 0.12)
-        static let focusRing = SwiftUI.Color.white
-        static let focusGlow = SwiftUI.Color(hex: 0x31B6ED, alpha: 0.5)
+        static let textPrimary = adaptive(dark: 0xF5F7FA, light: 0x0E1A28)
+        static let textSecondary = adaptive(dark: 0xA9B0BE, light: 0x44566B)
+        static let textTertiary = adaptive(dark: 0x8C97A8, light: 0x546579)
+        static let accent = adaptive(dark: 0x31B6ED, light: 0x096494)
+        static let accentDim = adaptive(dark: 0x31B6ED, light: 0x096494, alpha: 0.2)
+        static let accentAlt = adaptive(dark: 0x5B8CFF, light: 0x3557B8)
+        static let danger = adaptive(dark: 0xFF6B6B, light: 0xAF2E26)
+        static let divider = adaptive(dark: 0xFFFFFF, light: 0x12263A, alpha: 0.12)
+        static let focusRing = adaptive(dark: 0xFFFFFF, light: 0x0B3A5C)
+        static let focusGlow = adaptive(dark: 0x31B6ED, light: 0x0B3A5C, alpha: 0.30)
+        static let paper = SwiftUI.Color(hex: 0xF1E7D7)
+        static let paperInk = SwiftUI.Color(hex: 0x291F18)
+
+        private static func adaptive(dark: UInt32, light: UInt32, alpha: Double = 1) -> SwiftUI.Color {
+            SwiftUI.Color(uiColor: UIColor { traits in
+                let hex = traits.userInterfaceStyle == .light ? light : dark
+                return UIColor(
+                    red: CGFloat((hex >> 16) & 0xff) / 255,
+                    green: CGFloat((hex >> 8) & 0xff) / 255,
+                    blue: CGFloat(hex & 0xff) / 255,
+                    alpha: alpha
+                )
+            })
+        }
     }
 
     enum Dimen {
@@ -77,8 +92,26 @@ struct TvFocusStyle: ViewModifier {
     }
 }
 
+struct TvRemoteButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.82 : 1)
+    }
+}
+
 extension View {
     func tvFocus(_ isFocused: Bool) -> some View {
-        modifier(TvFocusStyle(isFocused: isFocused))
+        focusEffectDisabled()
+            .modifier(TvFocusStyle(isFocused: isFocused))
+    }
+}
+
+
+extension TvAppearance {
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .dark: return .dark
+        case .light: return .light
+        case .system: return nil
+        }
     }
 }

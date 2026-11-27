@@ -10,22 +10,17 @@ struct ScreensaverView: View {
     @ObservedObject var settings: AppSettings
     var onExit: () -> Void
 
-    @State private var photoIndex = 0
+    @State private var displayedPhoto: (index: Int, image: UIImage)?
+    @State private var outgoingPhoto: (index: Int, image: UIImage)?
     @State private var now = Date()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let clockTimer: Publishers.Autoconnect<Timer.TimerPublisher>
-    private let photoTimer: Publishers.Autoconnect<Timer.TimerPublisher>
-
     init(photos: [MediaItem], settings: AppSettings, onExit: @escaping () -> Void) {
         self.photos = photos
         self.settings = settings
         self.onExit = onExit
         self.clockTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-        self.photoTimer = Timer.publish(
-            every: TimeInterval(max(5, settings.screensaver.photoIntervalSec)),
-            on: .main,
-            in: .common,
-        ).autoconnect()
     }
 
     private var style: ClockStyle { ClockStyle(raw: settings.screensaver.clockStyle) }
@@ -34,13 +29,21 @@ struct ScreensaverView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            if !photos.isEmpty {
-                let item = photos[photoIndex % photos.count]
-                RemoteImage(url: item.thumbnailUrl)
-                    .ignoresSafeArea()
-                    .id(item.id)
-                    .scaleEffect(settings.screensaver.kenBurns && !photoIndex.isMultiple(of: 2) ? 1.06 : 1.0)
-                    .animation(.easeInOut(duration: 0.8), value: item.id)
+            if settings.screensaver.display == .wall, !photos.isEmpty {
+                ScreensaverPhotoWall(photos: photos, interval: settings.screensaver.photoIntervalSec)
+            } else if let photo = displayedPhoto {
+                GeometryReader { geometry in
+                    ZStack {
+                        if let outgoingPhoto {
+                            photoLayer(outgoingPhoto, size: geometry.size)
+                        }
+                        photoLayer(photo, size: geometry.size)
+                            .id(photo.index)
+                            .transition(.asymmetric(insertion: .opacity, removal: .identity))
+                            .zIndex(1)
+                    }
+                }
+                .ignoresSafeArea()
                 LinearGradient(
                     colors: [.black.opacity(0.55), .clear, .black.opacity(0.55)],
                     startPoint: .top, endPoint: .bottom,
@@ -53,9 +56,9 @@ struct ScreensaverView: View {
                 auroraBackground
             }
 
-            clockLayer
+            if settings.screensaver.display == .clock { clockLayer }
 
-            if settings.screensaver.showLunarDate {
+            if settings.screensaver.display == .clock && settings.screensaver.showLunarDate {
                 VStack {
                     HStack {
                         Text(lunarDateText)
@@ -72,7 +75,7 @@ struct ScreensaverView: View {
                 Spacer()
                 HStack {
                     Spacer()
-                    Text("← → 换样式 · 其他键返回")
+                    Text(settings.screensaver.display == .clock ? "← → 换样式 · 其他键返回" : "按遥控器返回")
                         .font(.system(size: Tv.Font.tiny))
                         .foregroundColor(.white.opacity(0.4))
                         .padding(Tv.Dimen.spaceM)
@@ -82,11 +85,11 @@ struct ScreensaverView: View {
             MusicEffect(active: true)
         }
         .onReceive(clockTimer) { date in now = date }
-        .onReceive(photoTimer) { _ in
-            guard photos.count > 1 else { return }
-            photoIndex = (photoIndex + 1) % photos.count
+        .task(id: [settings.screensaver.display.rawValue, String(settings.screensaver.photoIntervalSec)]) {
+            if settings.screensaver.display != .wall { await playPhotos() }
         }
         .onMoveCommand { direction in
+            guard settings.screensaver.display == .clock else { onExit(); return }
             switch direction {
             case .left: settings.screensaver.clockStyle = style.previous.rawValue
             case .right: settings.screensaver.clockStyle = style.next.rawValue
@@ -95,6 +98,39 @@ struct ScreensaverView: View {
         }
         .onPlayPauseCommand { onExit() }
         .onExitCommand { onExit() }
+    }
+
+    private func photoLayer(_ photo: (index: Int, image: UIImage), size: CGSize) -> some View {
+        Image(uiImage: photo.image)
+            .resizable()
+            .aspectRatio(contentMode: .fill)
+            .frame(width: size.width, height: size.height)
+            .scaleEffect(settings.screensaver.kenBurns && !reduceMotion && !photo.index.isMultiple(of: 2) ? 1.06 : 1.0)
+            .clipped()
+    }
+
+    private func playPhotos() async {
+        guard !photos.isEmpty else { return }
+        let interval = max(5, settings.screensaver.photoIntervalSec)
+        var candidate = displayedPhoto.map { ($0.index + 1) % photos.count } ?? 0
+        while !Task.isCancelled {
+            let item = photos[candidate]
+            let seconds = displayedPhoto == nil ? 0 : interval
+            async let delay: Void = Task.sleep(for: .seconds(seconds))
+            let decoded = await MediaImageLoader.image(at: item.thumbnailUrl)
+            guard (try? await delay) != nil, !Task.isCancelled else { return }
+            if let decoded, candidate != displayedPhoto?.index {
+                let photo = (index: candidate, image: decoded)
+                outgoingPhoto = displayedPhoto
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.8)) { displayedPhoto = photo } completion: {
+                    if displayedPhoto?.index == photo.index { outgoingPhoto = nil }
+                }
+                if photos.count == 1 { return }
+            } else if displayedPhoto == nil {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
+            candidate = (candidate + 1) % photos.count
+        }
     }
 
     private var auroraBackground: some View {
@@ -108,7 +144,7 @@ struct ScreensaverView: View {
                            startRadius: 0, endRadius: 900)
         }
         .ignoresSafeArea()
-        .animation(.easeInOut(duration: 12), value: raised)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 12), value: raised)
     }
 
     @ViewBuilder

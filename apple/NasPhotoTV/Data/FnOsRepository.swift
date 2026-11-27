@@ -19,6 +19,28 @@ final class FnOsRepository {
     /// 非相册类集合（人物/文件夹/智能分类/收藏）的媒体缓存，key 为集合 id
     private var collectionCache: [String: [MediaItem]] = [:]
 
+    private lazy var mapPlaces = makeMapPlaces()
+
+    private func makeMapPlaces() -> FnOsMapPlaces {
+        let base = access.baseUrl
+        return FnOsMapPlaces(api: api, parseMedia: { Self.parseMedia($0, baseUrl: base) },
+                            cover: {
+            let photo = Self.parseMedia($0.dict("poster"), baseUrl: base)
+            return photo.flatMap { $0.thumbnailUrl.isEmpty ? nil : $0.thumbnailUrl }
+                ?? Self.categoryCover($0, baseUrl: base)
+        })
+    }
+
+    func savePhonePhoto(_ photo: PhonePhoto) async throws {
+        try await api.savePhonePhoto(photo)
+        mapPlaces = makeMapPlaces()
+        albumCache.removeAll()
+        collectionCache.removeAll()
+    }
+
+    func getPlaces() async throws -> [Album] { try await mapPlaces.albums() }
+    func getPlaceMedia(id: String) async throws -> [MediaItem] { try await mapPlaces.photos(in: id) }
+
     init(access: FnOsAccess) {
         self.access = access
         self.api = FnOsApi(access: access)
@@ -251,33 +273,37 @@ final class FnOsRepository {
         let id = json.int64("id")
         guard id > 0 else { return nil }
 
-        let thumb = json.dict("additional").dict("thumbnail")
-        let fileName = json.string("fileName")
-        let isVideo = json.string("category").lowercased() == "video"
-
-        let mUrl = thumb.string("mUrl")
-        let sUrl = thumb.string("sUrl")
-        let xsUrl = thumb.string("xsUrl")
-        let originalUrl = thumb.string("originalUrl")
-        let videoUrl = thumb.string("videoUrl")
-
-        let ext = (fileName.split(separator: ".").last.map(String.init) ?? "").uppercased()
-        let isRaw = rawExtensions.contains(ext)
-
-        let thumbUrl = absolute(mUrl.isEmpty ? (sUrl.isEmpty ? xsUrl : sUrl) : mUrl, baseUrl: baseUrl)
-        let fullUrl: String
-        if isVideo {
-            fullUrl = absolute(videoUrl.isEmpty ? "/p/api/v1/stream/v/\(id)" : videoUrl, baseUrl: baseUrl)
-        } else if isRaw {
-            // RAW 端侧没有解码器：直接看 NAS 生成的高清 JPG 预览（m = 1280px）
-            fullUrl = absolute(mUrl.isEmpty ? (sUrl.isEmpty ? originalUrl : sUrl) : mUrl, baseUrl: baseUrl)
-        } else {
-            fullUrl = absolute(originalUrl.isEmpty ? mUrl : originalUrl, baseUrl: baseUrl)
+        let fileName = firstString(json, "fileName", "name")
+        let ext = fileName.lastIndex(of: ".").map { fileName[fileName.index(after: $0)...].uppercased() } ?? ""
+        let isVideo = ["category", "fileType"].contains { json.string($0).lowercased() == "video" }
+        let sources = [json.dict("additional").dict("thumbnail"), json.dict("thumbnail"), json.dict("thumb"), json]
+        func field(_ keys: String...) -> String {
+            for key in keys {
+                for source in sources {
+                    let value = firstString(source, key)
+                    if !value.isEmpty { return value }
+                }
+            }
+            return ""
         }
+
+        let uuid = firstString(json, "photoUUID", "uuid", "session")
+        let medium = field("mUrl", "m")
+        let small = field("sUrl", "s")
+        let original = field("originalUrl", "o", "originUrl")
+        let video = field("videoUrl", "video")
+        let videoStream = video.isEmpty ? "/p/api/v1/stream/v/\(id)" : video
+        let thumb = [medium, small, field("xsUrl", "xs"), field("xxsUrl", "xxs"),
+                     photoStream(id: id, size: "s", uuid: uuid)].first { !$0.isEmpty } ?? ""
+        let full = isVideo ? videoStream : (
+            rawExtensions.contains(ext)
+                ? [medium, small, original, photoStream(id: id, size: "m", uuid: uuid)]
+                : [original, medium, photoStream(id: id, size: "o", uuid: uuid)]
+        ).first { !$0.isEmpty } ?? ""
 
         let width = json.int("width")
         let height = json.int("height")
-        let isLive = json.int("isLive") == 1 && !videoUrl.isEmpty
+        let isLive = !isVideo && json.bool("isLive")
         // 对齐 substringBeforeLast('.')：没有扩展名的文件名原样保留
         let title = fileName.lastIndex(of: ".").map { String(fileName[..<$0]) } ?? fileName
 
@@ -285,12 +311,12 @@ final class FnOsRepository {
             id: String(id),
             title: title.isEmpty ? (isVideo ? "未命名视频" : "未命名照片") : title,
             type: isVideo ? .video : .photo,
-            url: fullUrl.isEmpty ? thumbUrl : fullUrl,
-            thumbnailUrl: thumbUrl.isEmpty ? fullUrl : thumbUrl,
+            url: absolute(full.isEmpty ? thumb : full, baseUrl: baseUrl),
+            thumbnailUrl: absolute(thumb.isEmpty ? full : thumb, baseUrl: baseUrl),
             isLive: isLive,
-            liveUrl: isLive ? absolute(videoUrl, baseUrl: baseUrl) : "",
-            dateTaken: parseDate(json.string("dateTime").isEmpty ? json.string("photoDateTime") : json.string("dateTime")),
-            durationMs: json.int64("durationMs", json.int64("duration")),
+            liveUrl: isLive ? absolute(videoStream, baseUrl: baseUrl) : "",
+            dateTaken: parseDate(firstString(json, "dateTime", "photoDateTime", "createTime", "mtime")),
+            durationMs: isVideo ? Self.durationMs(json) : 0,
             sizeBytes: json.int64("fileSize"),
             resolution: width > 0 && height > 0 ? "\(width)x\(height)" : "",
             albumId: "",
@@ -326,6 +352,19 @@ final class FnOsRepository {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.date(from: head)
+    }
+
+    private static func durationMs(_ json: Json) -> Int64 {
+        let millis = json.int64("durationMs")
+        if millis > 0 { return millis }
+        let seconds = json.int64("mediaDuration")
+        let raw = seconds > 0 ? seconds : max(0, json.int64("duration"))
+        return raw > 86_400 ? raw : raw * 1_000
+    }
+
+    private static func photoStream(id: Int64, size: String, uuid: String) -> String {
+        guard id > 0, !uuid.isEmpty else { return "" }
+        return "/p/api/v1/stream/p/t/\(id)/\(size)/\(uuid)"
     }
 
     private static func absolute(_ relative: String, baseUrl: String) -> String {
@@ -491,7 +530,7 @@ extension FnOsRepository {
         guard data.int("total") <= list.count else { throw FnOsError("子目录列表未读取完整") }
 
         var seen = Set<String>()
-        return try list.compactMap { json in
+        let folders: [NasFolder] = try list.compactMap { json in
             let rawPath = json.string(parentPath == nil ? "folderPath" : "path")
             let path = rawPath == "/" ? rawPath : rawPath.replacingOccurrences(
                 of: "/+$", with: "", options: .regularExpression
@@ -512,6 +551,60 @@ extension FnOsRepository {
                 photoCount: json.int("photoCount"),
                 videoCount: json.int("videoCount")
             )
+        }
+        return try await attachFolderCovers(folders, parentPath: parentPath)
+    }
+
+    private func attachFolderCovers(_ folders: [NasFolder], parentPath: String?) async throws -> [NasFolder] {
+        let groups = Dictionary(grouping: folders) { folder in
+            parentPath ?? (folder.path as NSString).deletingLastPathComponent
+        }
+        var covers: [String: String] = [:]
+        for (parent, children) in groups {
+            for offset in stride(from: 0, to: children.count, by: 50) {
+                try Task.checkCancellation()
+                let batch = Array(children.dropFirst(offset).prefix(50))
+                let names = batch.map { ($0.path as NSString).lastPathComponent }
+                let data: Json
+                do {
+                    data = try await api.postJson("/p/api/v1/folder_view/cover", body: Json([
+                        "currentPath": parent, "dirNames": names,
+                    ]))
+                } catch {
+                    try Task.checkCancellation()
+                    continue
+                }
+                let entries = data.raw["list"] == nil ? data.array("covers") : data.array("list")
+                let knownPaths = Set(batch.map(\.path))
+                for (index, entry) in entries.enumerated() {
+                    let raw = Self.firstString(entry, "dirPath", "folderPath", "path", "dirName")
+                    let path: String
+                    if raw.isEmpty, entries.count == batch.count {
+                        path = batch[index].path
+                    } else if raw.hasPrefix("/") {
+                        path = raw.replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
+                    } else {
+                        path = (parent as NSString).appendingPathComponent(raw)
+                    }
+                    guard knownPaths.contains(path) else { continue }
+                    let posters = ["cover", "defaultCover", "poster", "posters"].flatMap { entry.array($0) }
+                    for poster in posters {
+                        let id = Int64(Self.firstString(poster, "id", "photoId")) ?? 0
+                        let uuid = Self.firstString(poster, "uuid", "photoUUID", "session")
+                        let stream = Self.photoStream(id: id, size: "xs", uuid: uuid)
+                        if !stream.isEmpty {
+                            covers[path] = Self.absolute(stream, baseUrl: access.baseUrl)
+                            break
+                        }
+                    }
+                }
+            }
+        }
+        try Task.checkCancellation()
+        return folders.map { folder in
+            var result = folder
+            result.coverUrl = covers[folder.path] ?? ""
+            return result
         }
     }
 

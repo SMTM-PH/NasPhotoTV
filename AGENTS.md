@@ -12,7 +12,7 @@
 | 项 | 事实 |
 |---|---|
 | Android 客户端 | `app/`，包名 `com.nasphoto.tv`，Kotlin + Jetpack Compose，**单 Activity**（`MainActivity.kt`），无 Fragment、无 navigation-compose |
-| 版本 | Android `1.2.15`（versionCode 21，`app/build.gradle.kts`）；tvOS `1.2.8`（`apple/`） |
+| 版本 | Android `1.2.15`（versionCode 21，`app/build.gradle.kts`）；tvOS `1.2.15`（build 21，`apple/`） |
 | tvOS 客户端 | `apple/NasPhotoTV/`，SwiftUI，见 `apple/README.md` |
 | 数据源 | **真实飞牛 fnOS NAS**：局域网发现、WSS 登录、签名 HTTP、AccessToken 串流原片；不是 Mock |
 | 设计画布 | 10-foot UI，按 960×540 dp 归一化（`ui/theme/TvDensity.kt`），1920×1080 为验收基准 |

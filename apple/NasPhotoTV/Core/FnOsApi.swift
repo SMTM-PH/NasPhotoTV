@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// 一次连接所需的配置（端口是飞牛的 Web HTTPS 端口，默认 5667）。
 struct FnOsAccess: Equatable {
@@ -146,6 +147,81 @@ actor FnOsApi {
     /// 只读 AI 搜索也使用 POST；序列化一次，保证签名与发送的 JSON 完全一致。
     func postJson(_ path: String, body: Json) async throws -> Json {
         try await requestJson(path, [], body: Self.encode(body.raw))
+    }
+
+    func savePhonePhoto(_ photo: PhonePhoto) async throws {
+        let folders = try await getJson("/p/api/v1/photo/folder/list").array("list")
+        guard let folder = folders.first(where: { $0.bool("isDefault") }) else {
+            throw FnOsError("请先在飞牛相册里设置默认存储文件夹")
+        }
+        guard folder.raw["hasWriteAccess"] == nil || folder.bool("hasWriteAccess") else {
+            throw FnOsError("飞牛相册的默认文件夹没有写入权限")
+        }
+        let path = folder.string("folderPath")
+        guard path.hasPrefix("/"), path != "/", !path.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }),
+              path.rangeOfCharacter(from: .controlCharacters) == nil else {
+            throw FnOsError("飞牛相册的默认存储文件夹无效")
+        }
+        let stagedName = "." + photo.name
+        let destination = path.hasSuffix("/") ? path + stagedName : path + "/" + stagedName
+        let auth = try await ensureSession(force: false)
+        guard let secret = Data(base64Encoded: auth.secret, options: .ignoreUnknownCharacters), !secret.isEmpty,
+              let url = URL(string: access.baseUrl + "/upload"),
+              let encoded = destination.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn:
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.!~*'()/")) else {
+            throw FnOsError("飞牛会话缺少文件上传凭证")
+        }
+        let signature = HMAC<SHA256>.authenticationCode(for: Data(encoded.utf8), using: SymmetricKey(data: secret))
+        let boundary = "NasPhotoTV-" + UUID().uuidString
+        let now = Date()
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 90
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        for (key, value) in [
+            "AccessToken": auth.token, "Trim-Token": auth.token, "Trim-Sign": Data(signature).base64EncodedString(),
+            "Trim-Path": encoded, "Trim-Overwrite": "1", "Trim-Flags": "1",
+            "Trim-Mtim": String(Int(now.timeIntervalSince1970))
+        ] {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        let header = "--\(boundary)\r\nContent-Disposition: form-data; name=\"trim-upload-file\"; filename=\"\(photo.name)\"\r\nContent-Type: \(photo.mime)\r\n\r\n"
+        var body = Data(header.utf8)
+        body.append(photo.data)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        let (_, response) = try await FnOsTransport.shared.session.upload(for: request, from: body)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw FnOsError("飞牛拒绝保存照片文件")
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        let json = Self.encode([
+            "folder_path": path,
+            "file_list": [[
+                "file_create_time": formatter.string(from: now),
+                "original_name": photo.name,
+                "file_name": stagedName
+            ]]
+        ])
+        let result: ExecResult
+        do {
+            // Do not retry a write after losing the response. The first notice may have succeeded.
+            result = try await execute(auth, path: "/p/api/v1/folder_view/upload/notice", params: [], body: json)
+        } catch let refusal as FnOsHttpError where [400, 401, 403, 404, 413, 415, 422].contains(refusal.status) {
+            throw refusal
+        } catch {
+            throw FnOsPhotoImportUncertain()
+        }
+        guard result.code == 0 else { throw FnOsError("飞牛未能将照片加入相册（代码 \(result.code)）") }
+        guard let entry = result.data.array("list").first else { throw FnOsPhotoImportUncertain() }
+        if let error = entry.raw["error"], !(error is NSNull) {
+            let accepted = (error as? NSNumber)?.doubleValue == 0 ||
+                (error as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
+            guard accepted else { throw FnOsError("飞牛拒绝将上传的照片加入相册") }
+        }
     }
 
     func close() {
